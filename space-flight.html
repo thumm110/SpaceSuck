@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Drift — Deep Space Flight</title>
+<style>
+  /* ============ HUD STYLING ============ */
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #000; height: 100%; }
+  canvas { display: block; }
+
+  #hud {
+    position: fixed; inset: 0; pointer-events: none;
+    font-family: "Lucida Console", Monaco, monospace;
+    color: #6ee7d8; text-shadow: 0 0 6px rgba(110,231,216,.6);
+    user-select: none; -webkit-user-select: none;
+  }
+
+  /* Crosshair */
+  #crosshair {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    width: 34px; height: 34px; opacity: .8;
+  }
+  #crosshair::before, #crosshair::after {
+    content:""; position:absolute; background:#6ee7d8;
+    box-shadow: 0 0 5px rgba(110,231,216,.8);
+  }
+  #crosshair::before { left: 50%; top: 0; width: 1px; height: 100%; transform: translateX(-50%); }
+  #crosshair::after  { top: 50%; left: 0; height: 1px; width: 100%; transform: translateY(-50%); }
+  #crosshair .gap {
+    position:absolute; inset: 10px; background:#000; border-radius:50%;
+    border: 1px solid rgba(110,231,216,.5); background: transparent;
+  }
+
+  /* Bottom-left flight data */
+  #flightdata {
+    position: absolute; left: 18px; bottom: 16px;
+    font-size: 13px; line-height: 1.7; letter-spacing: 1px;
+  }
+  #flightdata .big { font-size: 26px; letter-spacing: 2px; }
+  #flightdata .dim { opacity: .55; font-size: 11px; }
+
+  /* Top-center nearest body readout */
+  #nearest {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; letter-spacing: 2px; text-align: center; opacity: .9;
+  }
+  #nearest .name { font-size: 16px; }
+
+  /* Throttle bar (bottom right) */
+  #throttlewrap {
+    position: absolute; right: 18px; bottom: 16px; text-align: right;
+    font-size: 11px; letter-spacing: 1px;
+  }
+  #throttlebar {
+    width: 14px; height: 120px; border: 1px solid rgba(110,231,216,.5);
+    margin-left: auto; margin-top: 6px; position: relative;
+  }
+  #throttlefill {
+    position: absolute; bottom: 0; left: 0; right: 0; height: 0%;
+    background: linear-gradient(to top, #14b8a6, #6ee7d8);
+    box-shadow: 0 0 8px rgba(110,231,216,.7);
+  }
+
+  /* Controls hint */
+  #hint {
+    position: absolute; top: 14px; left: 18px; font-size: 11px;
+    line-height: 1.8; letter-spacing: 1px; opacity: .55;
+  }
+
+  /* Corner brackets — cockpit frame feel */
+  .bracket { position:absolute; width: 40px; height: 40px; opacity:.4; }
+  .bracket.tl { top:8px; left:8px; border-top:1px solid #6ee7d8; border-left:1px solid #6ee7d8; }
+  .bracket.tr { top:8px; right:8px; border-top:1px solid #6ee7d8; border-right:1px solid #6ee7d8; }
+  .bracket.bl { bottom:8px; left:8px; border-bottom:1px solid #6ee7d8; border-left:1px solid #6ee7d8; }
+  .bracket.br { bottom:8px; right:8px; border-bottom:1px solid #6ee7d8; border-right:1px solid #6ee7d8; }
+
+  /* ============ TOUCH CONTROLS (mobile) ============ */
+  .touchbtn {
+    position: fixed; pointer-events: auto;
+    width: 74px; height: 74px; border-radius: 50%;
+    border: 1px solid rgba(110,231,216,.6); color:#6ee7d8;
+    background: rgba(10,25,25,.45);
+    font-family: monospace; font-size: 13px; letter-spacing:1px;
+    display: none; align-items: center; justify-content: center;
+    touch-action: none;
+  }
+  #btnThrust { right: 24px; bottom: 150px; }
+  #btnBrake  { right: 24px; bottom: 60px; }
+  body.touch .touchbtn { display: flex; }
+  body.touch #hint { display: none; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div class="bracket tl"></div><div class="bracket tr"></div>
+  <div class="bracket bl"></div><div class="bracket br"></div>
+
+  <div id="crosshair"><div class="gap"></div></div>
+
+  <div id="hint">
+    MOUSE — steer<br>
+    W / S — throttle up / down<br>
+    SHIFT — boost &nbsp; Q / E — roll<br>
+    X — full stop
+  </div>
+
+  <div id="nearest">
+    <span class="dim">NEAREST BODY</span><br>
+    <span class="name" id="nearName">—</span><br>
+    <span id="nearDist">—</span>
+  </div>
+
+  <div id="flightdata">
+    <span class="dim">VELOCITY</span><br>
+    <span class="big" id="speed">0</span> <span class="dim">u/s</span>
+  </div>
+
+  <div id="throttlewrap">
+    THR<br>
+    <div id="throttlebar"><div id="throttlefill"></div></div>
+  </div>
+</div>
+
+<button class="touchbtn" id="btnThrust">THRUST</button>
+<button class="touchbtn" id="btnBrake">BRAKE</button>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =========================================================================
+   DRIFT — a growable 3D space flight sandbox
+   -------------------------------------------------------------------------
+   How this file is organized (top to bottom):
+     1. CONFIG        — planets/bodies live in one array. Add stuff here.
+     2. SCENE SETUP   — renderer, camera, lights, starfield
+     3. BODY BUILDER  — turns config entries into 3D objects
+     4. SHIP PHYSICS  — velocity, thrust, damping (the flight "feel")
+     5. INPUT         — keyboard, mouse, touch
+     6. GAME LOOP     — runs ~60x/sec, updates everything
+   ========================================================================= */
+
+/* ============ 1. CONFIG — YOUR SOLAR SYSTEM ============
+   Each object here becomes a body in space. To add a planet,
+   copy one of these blocks and change the values. That's it.
+   Units are arbitrary "space units" (u). */
+const BODIES = [
+  {
+    name: "HELIOS", type: "star",
+    radius: 220, color: 0xffc873,
+    position: [0, 0, -3000],
+  },
+  {
+    name: "CINDER", type: "planet",
+    radius: 60, color: 0xc2553a,          // scorched rock world
+    position: [-900, 80, -2200],
+    spin: 0.02,                            // radians/sec self-rotation
+  },
+  {
+    name: "AZURE", type: "planet",
+    radius: 95, color: 0x3a7bc2,          // ocean world
+    position: [700, -120, -1500],
+    spin: 0.015,
+    moon: { radius: 18, distance: 200, speed: 0.25, color: 0x9aa3ad },
+  },
+  {
+    name: "KRONOS", type: "planet",
+    radius: 130, color: 0xc9a86b,         // gas giant
+    position: [-400, 300, -600],
+    spin: 0.01,
+    rings: { inner: 170, outer: 280, color: 0x8a7a5c },
+  },
+  {
+    name: "VERDANT", type: "planet",
+    radius: 45, color: 0x4caf6e,          // small green world
+    position: [1400, 200, -2800],
+    spin: 0.03,
+  },
+];
+
+/* ============ 2. SCENE SETUP ============ */
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 50000);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+// A little ambient so planet dark sides aren't pure black
+scene.add(new THREE.AmbientLight(0x223344, 0.6));
+
+/* --- Starfield: one Points object with thousands of vertices.
+       Way cheaper than thousands of meshes. --- */
+function makeStars(count, spread) {
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(count * 3);
+  for (let i = 0; i < count * 3; i += 3) {
+    // random point in a big sphere shell so stars surround you
+    const r = spread * (0.4 + 0.6 * Math.random());
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    pos[i]     = r * Math.sin(phi) * Math.cos(theta);
+    pos[i + 1] = r * Math.sin(phi) * Math.sin(theta);
+    pos[i + 2] = r * Math.cos(phi);
+  }
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 2.2, sizeAttenuation: true });
+  return new THREE.Points(geo, mat);
+}
+scene.add(makeStars(6000, 20000));
+
+// A few faint colored "nebula" star layers for depth
+const neb1 = makeStars(1200, 18000); neb1.material.color.set(0x88aaff); neb1.material.size = 3.5;
+const neb2 = makeStars(1200, 16000); neb2.material.color.set(0xff9977); neb2.material.size = 3.0;
+scene.add(neb1, neb2);
+
+/* ============ 3. BODY BUILDER ============ */
+const liveBodies = []; // we keep references for the HUD + animation
+
+function buildBody(cfg) {
+  const group = new THREE.Group();
+  group.position.set(...cfg.position);
+
+  if (cfg.type === "star") {
+    // Stars glow on their own (emissive) and light everything else
+    const mat = new THREE.MeshBasicMaterial({ color: cfg.color });
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(cfg.radius, 48, 32), mat);
+    group.add(mesh);
+
+    const light = new THREE.PointLight(0xffe0b0, 2.2, 0, 2);
+    group.add(light);
+
+    // Soft glow halo: a sprite with a radial-gradient canvas texture
+    const cnv = document.createElement("canvas");
+    cnv.width = cnv.height = 256;
+    const ctx = cnv.getContext("2d");
+    const g = ctx.createRadialGradient(128,128,10, 128,128,128);
+    g.addColorStop(0, "rgba(255,220,160,0.9)");
+    g.addColorStop(0.4, "rgba(255,180,100,0.25)");
+    g.addColorStop(1, "rgba(255,180,100,0)");
+    ctx.fillStyle = g; ctx.fillRect(0,0,256,256);
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: new THREE.CanvasTexture(cnv), transparent: true, depthWrite: false
+    }));
+    glow.scale.setScalar(cfg.radius * 6);
+    group.add(glow);
+  } else {
+    // Planets: lit material + slight roughness variation via flat shading
+    const mat = new THREE.MeshStandardMaterial({
+      color: cfg.color, roughness: 0.9, metalness: 0.05, flatShading: true
+    });
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(cfg.radius, 36, 24), mat);
+    mesh.name = "surface";
+    group.add(mesh);
+
+    if (cfg.rings) {
+      const ringGeo = new THREE.RingGeometry(cfg.rings.inner, cfg.rings.outer, 64);
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: cfg.rings.color, side: THREE.DoubleSide,
+        transparent: true, opacity: 0.55
+      });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = Math.PI / 2.4; // tilt them a bit
+      group.add(ring);
+    }
+
+    if (cfg.moon) {
+      const moon = new THREE.Mesh(
+        new THREE.SphereGeometry(cfg.moon.radius, 20, 14),
+        new THREE.MeshStandardMaterial({ color: cfg.moon.color, roughness: 1, flatShading: true })
+      );
+      moon.userData.orbit = { distance: cfg.moon.distance, speed: cfg.moon.speed, angle: Math.random() * 6.28 };
+      moon.name = "moon";
+      group.add(moon);
+    }
+  }
+
+  scene.add(group);
+  liveBodies.push({ cfg, group });
+}
+BODIES.forEach(buildBody);
+
+/* ============ 4. SHIP PHYSICS ============
+   The "ship" is just the camera plus a velocity vector.
+   Each frame:  velocity += forward * throttle;  velocity *= damping;
+   That tiny damping (0.995) is what makes it feel like drifting
+   through space instead of driving on rails. */
+const ship = {
+  velocity: new THREE.Vector3(),
+  throttle: 0,          // 0..1, set by W/S
+  maxAccel: 220,        // units/sec² at full throttle
+  boostMult: 2.5,
+  damping: 0.995,       // per-frame velocity retention (space has no drag; this is a fun cheat)
+  turnSpeed: 1.6,       // how fast mouse steering turns the nose
+};
+camera.position.set(0, 0, 600); // start well back from the system
+
+/* ============ 5. INPUT ============ */
+const keys = {};
+addEventListener("keydown", e => keys[e.code] = true);
+addEventListener("keyup",   e => keys[e.code] = false);
+
+// Mouse steering: how far the cursor is from screen center = turn rate.
+// (No pointer-lock needed, works in the artifact preview.)
+const steer = { x: 0, y: 0 };
+addEventListener("mousemove", e => {
+  steer.x = (e.clientX / innerWidth  - 0.5) * 2;  // -1 .. 1
+  steer.y = (e.clientY / innerHeight - 0.5) * 2;
+});
+
+// ---- Touch: drag to steer, hold buttons to thrust/brake ----
+let touchThrust = false, touchBrake = false;
+const isTouch = matchMedia("(pointer: coarse)").matches;
+if (isTouch) document.body.classList.add("touch");
+
+let steerTouchId = null, steerStart = null;
+addEventListener("touchstart", e => {
+  for (const t of e.changedTouches) {
+    // ignore touches that begin on the buttons
+    if (t.target.classList && t.target.classList.contains("touchbtn")) continue;
+    if (steerTouchId === null) { steerTouchId = t.identifier; steerStart = { x: t.clientX, y: t.clientY }; }
+  }
+}, { passive: true });
+addEventListener("touchmove", e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === steerTouchId) {
+      steer.x = Math.max(-1, Math.min(1, (t.clientX - steerStart.x) / 120));
+      steer.y = Math.max(-1, Math.min(1, (t.clientY - steerStart.y) / 120));
+    }
+  }
+}, { passive: true });
+addEventListener("touchend", e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === steerTouchId) { steerTouchId = null; steer.x = 0; steer.y = 0; }
+  }
+});
+const bindHold = (id, setter) => {
+  const el = document.getElementById(id);
+  el.addEventListener("touchstart", e => { e.preventDefault(); setter(true); });
+  el.addEventListener("touchend",   e => { e.preventDefault(); setter(false); });
+};
+bindHold("btnThrust", v => touchThrust = v);
+bindHold("btnBrake",  v => touchBrake  = v);
+
+/* ============ 6. GAME LOOP ============ */
+const clock = new THREE.Clock();
+const speedEl = document.getElementById("speed");
+const nearNameEl = document.getElementById("nearName");
+const nearDistEl = document.getElementById("nearDist");
+const throttleFill = document.getElementById("throttlefill");
+const tmpDir = new THREE.Vector3();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05); // cap dt so tab-switching doesn't teleport you
+
+  /* ---- throttle ---- */
+  if (keys["KeyW"] || touchThrust) ship.throttle = Math.min(1, ship.throttle + dt * 1.2);
+  if (keys["KeyS"] || touchBrake)  ship.throttle = Math.max(0, ship.throttle - dt * 1.2);
+  if (keys["KeyX"]) { ship.throttle = 0; ship.velocity.multiplyScalar(0.9); } // panic brake
+
+  /* ---- steering: rotate the camera based on cursor offset ----
+     Small deadzone in the middle so the ship holds steady. */
+  const dead = 0.08;
+  const sx = Math.abs(steer.x) > dead ? steer.x : 0;
+  const sy = Math.abs(steer.y) > dead ? steer.y : 0;
+  camera.rotateY(-sx * ship.turnSpeed * dt); // yaw
+  camera.rotateX(-sy * ship.turnSpeed * dt); // pitch
+  if (keys["KeyQ"]) camera.rotateZ( 1.5 * dt); // roll left
+  if (keys["KeyE"]) camera.rotateZ(-1.5 * dt); // roll right
+
+  /* ---- thrust along wherever the nose points ---- */
+  camera.getWorldDirection(tmpDir); // unit vector: where we're facing
+  const boost = (keys["ShiftLeft"] || keys["ShiftRight"]) ? ship.boostMult : 1;
+  ship.velocity.addScaledVector(tmpDir, ship.throttle * ship.maxAccel * boost * dt);
+  ship.velocity.multiplyScalar(ship.damping);
+  camera.position.addScaledVector(ship.velocity, dt);
+
+  /* ---- animate bodies: spin planets, orbit moons ---- */
+  for (const b of liveBodies) {
+    if (b.cfg.spin) {
+      const surf = b.group.getObjectByName("surface");
+      if (surf) surf.rotation.y += b.cfg.spin * dt * 10;
+    }
+    const moon = b.group.getObjectByName("moon");
+    if (moon) {
+      const o = moon.userData.orbit;
+      o.angle += o.speed * dt;
+      moon.position.set(Math.cos(o.angle) * o.distance, 0, Math.sin(o.angle) * o.distance);
+    }
+  }
+
+  /* ---- HUD: speed + nearest body ---- */
+  speedEl.textContent = Math.round(ship.velocity.length());
+  throttleFill.style.height = (ship.throttle * 100) + "%";
+
+  let nearest = null, nearestDist = Infinity;
+  for (const b of liveBodies) {
+    const d = camera.position.distanceTo(b.group.position) - b.cfg.radius;
+    if (d < nearestDist) { nearestDist = d; nearest = b; }
+  }
+  if (nearest) {
+    nearNameEl.textContent = nearest.cfg.name;
+    nearDistEl.textContent = Math.round(nearestDist).toLocaleString() + " u";
+  }
+
+  renderer.render(scene, camera);
+}
+animate();
+
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
