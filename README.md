@@ -33,8 +33,11 @@ Touch devices get on-screen thrust/brake/reverse buttons and drag steering.
   rings, and a 400-rock asteroid belt in a single draw call
 - **Flight model** — throttle with reverse, boost, frame-rate-independent
   drag, collision bounces off every body
-- **Synthesized audio** — Web Audio engine hum that follows the throttle;
-  no sound files
+- **Atmospheric entry** — dive below a quarter-radius of any world with an
+  atmosphere: the sky bleeds in (ember-orange if you come in hot), cloud
+  wisps streak past, the camera rumbles, and the air drags you
+- **Synthesized audio** — Web Audio engine hum that follows the throttle,
+  plus a rumble that rises during atmospheric entry; no sound files
 - **Ship + camera rig** — cockpit view and a chase cam with easing lag so
   you see the ship bank through turns
 

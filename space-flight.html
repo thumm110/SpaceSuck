@@ -53,6 +53,17 @@
     font-size: 15px; letter-spacing: 4px; visibility: hidden;
     animation: blink .5s steps(2) infinite;
   }
+  #entrytag {
+    position: absolute; top: 21%; left: 50%; transform: translateX(-50%);
+    color: #ffb066; text-shadow: 0 0 10px rgba(255,176,102,.8);
+    font-size: 12px; letter-spacing: 4px; visibility: hidden;
+  }
+  /* full-screen tint that fades in as you sink into an atmosphere;
+     sits above the canvas, below the HUD */
+  #atmo {
+    position: fixed; inset: 0; pointer-events: none;
+    opacity: 0;
+  }
   @keyframes blink { 50% { opacity: 0; } }
   #throttlewrap {
     position: absolute; right: 18px; bottom: 16px; text-align: right;
@@ -105,6 +116,7 @@
 </head>
 <body>
 <div id="loading">GENERATING WORLDS…</div>
+<div id="atmo"></div>
 <div id="hud">
   <div class="bracket tl"></div><div class="bracket tr"></div>
   <div class="bracket bl"></div><div class="bracket br"></div>
@@ -122,6 +134,7 @@
     <span id="nearDist">—</span>
   </div>
   <div id="alarm">⚠ PROXIMITY ⚠</div>
+  <div id="entrytag">◆ ATMOSPHERIC ENTRY ◆</div>
   <div id="flightdata">
     <span class="dim">VELOCITY</span><br>
     <span class="big" id="speed">0</span> <span class="dim">u/s</span>
@@ -153,23 +166,22 @@
 </script>
 <script>
 /* =========================================================================
-   SPACESUCK v9 — planetfall scale
+   SPACESUCK v10 — kissing the sky
    -------------------------------------------------------------------------
-   New since v8 (see git log for the full story):
+   New since v9 (see git log for the full story):
 
-     • PLANETS ARE WORLDS NOW — every radius ×3 (AZURE is 285u, the sun
-       660u) and distances ×1.5 more on top of v7's spread. The payoff is
-       up close: on a big sphere the horizon flattens out beneath you
-       instead of curving away like a beach ball. Groundwork for
-       atmosphere entry later.
-     • Rings, moon orbit, and the asteroid belt scaled to match (belt is
-       700 rocks now, still one draw call). Sphere meshes got more
-       segments so big planets keep a smooth horizon at low altitude.
-     • Proximity alarm range scales with the body you're approaching.
+     • ATMOSPHERIC ENTRY, the "middle path" — no scene change, just the
+       fantasy: sink below ~¼ radius over any body with an atmosphere and
+       the sky color bleeds in (shifting toward ember-orange if you're
+       fast), soft cloud wisps streak past, the camera rumbles, a low
+       roar rises in the mix, and the air itself drags you — all scaled
+       by depth, speed, and that planet's atmoStrength. Climb out and
+       every effect melts away. HUD shows ◆ ATMOSPHERIC ENTRY ◆.
+       Stepping stone to real terrain flyover later.
 
    Controls (v8): W thrust / S reverse / X full stop, A/D roll,
    arrows turn & pitch, mouse freelook (click to capture), SHIFT boost,
-   V view. Auto-bank lean is cosmetic; the physics never roll.
+   V view. Scale (v9): radii ×3, worlds feel like worlds.
    ========================================================================= */
 
 if (typeof THREE === "undefined") {
@@ -795,6 +807,22 @@ const dustMat = new THREE.PointsMaterial({ color: 0xaad4cc, size: 1.6, transpare
 const dust = new THREE.Points(dustGeo, dustMat);
 scene.add(dust);
 
+/* ============ 8b. ATMOSPHERE WISPS ============
+   Fat soft particles that streak past during atmospheric entry — same
+   wrap-around-the-ship trick as the dust, just bigger, softer, and
+   tinted to the local sky. Invisible (opacity 0) outside an atmosphere. */
+const WISP_COUNT = 60, WISP_SIZE = 900, WISP_HALF = WISP_SIZE / 2;
+const wispGeo = new THREE.BufferGeometry();
+const wispPos = new Float32Array(WISP_COUNT * 3);
+for (let i = 0; i < wispPos.length; i++) wispPos[i] = (Math.random() - 0.5) * WISP_SIZE;
+wispGeo.setAttribute("position", new THREE.BufferAttribute(wispPos, 3));
+const wispMat = new THREE.PointsMaterial({
+  size: 70, map: softBlobTexture("rgba(255,255,255,0.9)"),
+  transparent: true, opacity: 0, depthWrite: false,
+});
+const wisps = new THREE.Points(wispGeo, wispMat);
+scene.add(wisps);
+
 /* ============ 9. ENGINE AUDIO ============ */
 let audio = null;
 function initAudio() {
@@ -808,7 +836,18 @@ function initAudio() {
   osc1.connect(filter); osc2.connect(filter);
   filter.connect(gain); gain.connect(ctx.destination);
   osc1.start(); osc2.start();
-  audio = { ctx, gain, filter, osc1, osc2 };
+
+  // entry rumble: looping low-pass noise, silent until you hit atmosphere
+  const nbuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+  const nd = nbuf.getChannelData(0);
+  for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+  const nsrc = ctx.createBufferSource(); nsrc.buffer = nbuf; nsrc.loop = true;
+  const nfilter = ctx.createBiquadFilter(); nfilter.type = "lowpass"; nfilter.frequency.value = 110;
+  const ngain = ctx.createGain(); ngain.gain.value = 0;
+  nsrc.connect(nfilter); nfilter.connect(ngain); ngain.connect(ctx.destination);
+  nsrc.start();
+
+  audio = { ctx, gain, filter, osc1, osc2, rumble: ngain };
 }
 function thump(strength) {
   if (!audio) return;
@@ -938,6 +977,14 @@ const tmpNormal = new THREE.Vector3();
 let prevNearestDist = Infinity;
 let prevNearestBody = null;
 
+/* atmospheric entry state — depth is 0 in space, →1 near the surface */
+let entryDepth = 0;
+const atmoEl = document.getElementById("atmo");
+const entryTagEl = document.getElementById("entrytag");
+const atmoColor = new THREE.Color();
+const heatColor = new THREE.Color(0xffa050);   // come in hot, sky goes ember
+const wispTint = new THREE.Color();
+
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -995,6 +1042,9 @@ function animate() {
   // drag: pow(damping, dt*60) applies the same drag PER SECOND on any
   // monitor — plain multiplyScalar(damping) would double the drag at 144Hz
   ship.velocity.multiplyScalar(Math.pow(ship.damping, dt * 60));
+  // atmospheric drag — the air grabs you; melts away as you climb out
+  // (entryDepth is last frame's value, which at 60fps is close enough)
+  if (entryDepth > 0) ship.velocity.multiplyScalar(Math.pow(1 - 0.028 * entryDepth, dt * 60));
   shipObj.position.addScaledVector(ship.velocity, dt);
 
   /* ---- collisions (against the ship's position) ---- */
@@ -1088,6 +1138,15 @@ function animate() {
   const spd = ship.velocity.length();
   dustMat.opacity = Math.min(0.65, spd / 350);
 
+  /* ---- wisps wrap around the ship the same way ---- */
+  const wp = wisps.geometry.attributes.position.array;
+  for (let i = 0; i < wp.length; i += 3) {
+    wp[i]   = (((wp[i]   - cx + WISP_HALF) % WISP_SIZE) + WISP_SIZE) % WISP_SIZE - WISP_HALF + cx;
+    wp[i+1] = (((wp[i+1] - cy + WISP_HALF) % WISP_SIZE) + WISP_SIZE) % WISP_SIZE - WISP_HALF + cy;
+    wp[i+2] = (((wp[i+2] - cz + WISP_HALF) % WISP_SIZE) + WISP_SIZE) % WISP_SIZE - WISP_HALF + cz;
+  }
+  wisps.geometry.attributes.position.needsUpdate = true;
+
   if (audio) {
     const t = Math.abs(ship.throttle);
     const boosting = boost > 1 && ship.throttle > 0;
@@ -1127,6 +1186,41 @@ function animate() {
   alarmEl.style.visibility = (nearestDist < alarmRange && closingSpeed > 60) ? "visible" : "hidden";
   prevNearestDist = nearestDist;
   prevNearestBody = nearest;
+
+  /* ---- atmospheric entry: the "middle path" — effects, not scenes ----
+     Below a quarter-radius of altitude over any body with an atmosphere,
+     the sky bleeds in, wisps streak past, the camera rumbles, the air
+     drags (up in the throttle section), and a rumble rises in the mix.
+     Come in fast and the tint shifts toward reentry-ember orange. */
+  entryDepth = 0;
+  if (nearest && nearest.cfg.atmosphere) {
+    // 0.45 radii of effect band — thick enough that entry is a MOMENT
+    // (a few seconds of building effects), not a single frame
+    const shell = nearest.cfg.radius * 0.45;
+    entryDepth = Math.max(0, Math.min(1, 1 - nearestDist / shell)) *
+                 (nearest.cfg.atmoStrength ?? 0.8);
+  }
+  if (entryDepth > 0.01) {
+    const speedFrac = Math.min(1, spd / 300);
+    const heat = Math.max(0, Math.min(1, (spd - 250) / 450)) * entryDepth;
+    atmoColor.set(nearest.cfg.atmosphere).lerp(heatColor, heat);
+    atmoEl.style.backgroundColor = "#" + atmoColor.getHexString();
+    atmoEl.style.opacity = (entryDepth * (0.22 + 0.3 * speedFrac)).toFixed(3);
+    wispTint.set(0xffffff).lerp(atmoColor, 0.4);
+    wispMat.color.copy(wispTint);
+    wispMat.opacity = entryDepth * Math.min(1, spd / 120) * 0.8;
+    const shake = entryDepth * speedFrac * 0.4;
+    camera.position.x += (Math.random() - 0.5) * shake;
+    camera.position.y += (Math.random() - 0.5) * shake;
+    camera.position.z += (Math.random() - 0.5) * shake;
+    entryTagEl.style.visibility = "visible";
+    if (audio) audio.rumble.gain.value = entryDepth * speedFrac * 0.6;
+  } else {
+    atmoEl.style.opacity = 0;
+    wispMat.opacity = 0;
+    entryTagEl.style.visibility = "hidden";
+    if (audio) audio.rumble.gain.value = 0;
+  }
 
   renderer.render(scene, camera);
 }
