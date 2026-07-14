@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Drift v5 — Deep Space Flight</title>
+<title>Drift v6 — Deep Space Flight</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #000; height: 100%; }
   canvas { display: block; }
@@ -110,10 +110,10 @@
   <div class="bracket bl"></div><div class="bracket br"></div>
   <div id="crosshair"></div>
   <div id="hint">
-    MOUSE — steer<br>
-    W — thrust &nbsp; S — stop &nbsp; R — reverse<br>
-    V — toggle view<br>
-    SHIFT — boost &nbsp; A / D — roll left / right
+    CLICK — capture mouse (steer) &nbsp; ESC — release<br>
+    W — thrust &nbsp; S — brake / reverse<br>
+    A / D — turn &nbsp; Q / E — roll<br>
+    SHIFT — boost &nbsp; V — toggle view
   </div>
   <div id="viewtag">VIEW: COCKPIT</div>
   <div id="nearest">
@@ -142,31 +142,48 @@
 <button class="touchbtn" id="btnRev">REVERSE</button>
 <button class="touchbtn" id="btnView">VIEW</button>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- three.js lives NEXT TO this file now (no internet needed). If it's
+     missing we fall back to the CDN; if both fail you get a real error
+     message instead of an infinite loading screen. -->
+<script src="three.min.js"></script>
+<script>
+  if (typeof THREE === "undefined") {
+    document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>');
+  }
+</script>
 <script>
 /* =========================================================================
-   DRIFT v5 — you have a ship now
+   DRIFT v6 — flight school
    -------------------------------------------------------------------------
-   THE BIG ARCHITECTURAL CHANGE:
-   In v1–v4 the camera WAS the ship — physics moved the camera directly.
-   Now there's a proper split:
+   New since v5 (all feel/correctness fixes, no new content):
 
-     shipObj (invisible Group) — carries position, rotation, velocity.
-       └─ shipMesh — the visible fighter, built from ~12 primitives.
-
-     camera — just a viewpoint:
-       • COCKPIT view: snaps exactly onto shipObj every frame
-         (ship model hidden so it doesn't block your face)
-       • CHASE view: eases toward a point behind-and-above the ship.
-         The easing lag is the secret sauce — when you whip the nose
-         around, the camera takes a beat to catch up, and you SEE the
-         ship bank across the screen. Instant camera = no feeling.
-
-   The ship model is welded together from stock Three.js shapes:
-   boxes, cones, cylinders — no 3D modeling software, all code.
-   Engine nozzles glow teal with throttle; nose retro-thrusters glow
-   amber when you're in reverse.
+     • POINTER LOCK steering — click the canvas and the browser captures
+       your mouse (ESC releases it). We now read RELATIVE motion
+       (e.movementX/Y), so the ship only turns while the mouse is MOVING.
+       v5 read absolute cursor position, which meant any off-center pointer
+       spun you forever.
+     • WASD controls — W thrust, S brake-then-reverse, A/D turn. Roll
+       moved to Q/E. R and X still work as reverse/brake alternates.
+     • Frame-rate-independent physics — v5 applied drag per FRAME, so a
+       144Hz monitor had twice the drag of a 60Hz one. Every per-frame
+       multiplier is now Math.pow(factor, dt*60): identical feel at any Hz.
+     • three.js is loaded from a local file (works offline) with a CDN
+       fallback and a visible error if both fail.
+     • Spawn aims at the sun with AZURE in frame — first frame is the view,
+       not empty void.
+     • The starfield shell is pinned to the ship — in v5 it was centered on
+       the origin, so flying ~15,000u out ejected you from the universe.
+     • Proximity alarm no longer false-triggers when the "nearest body"
+       title changes hands between two planets.
+     • Terrestrial planets render at 2048×1024 (4× the pixels) so close
+       fly-bys look crisp instead of blurry.
    ========================================================================= */
+
+if (typeof THREE === "undefined") {
+  document.getElementById("loading").textContent =
+    "COULD NOT LOAD three.js — keep three.min.js next to this file, or reconnect to the internet";
+  throw new Error("three.js failed to load");
+}
 
 /* ============ 1. CONFIG — YOUR SOLAR SYSTEM ============ */
 const BODIES = [
@@ -270,7 +287,8 @@ function makeFbm(noise3) {
 }
 
 /* ============ 3. PLANET TEXTURE GENERATORS ============ */
-const TEX_W = 1024, TEX_H = 512;
+const TEX_W = 1024, TEX_H = 512;          // rocky / gas planets
+const TEX_W_HI = 2048, TEX_H_HI = 1024;   // terrestrial planets — the ones you fly close to
 
 function hexToRgb(hex) {
   const c = new THREE.Color(hex);
@@ -289,23 +307,24 @@ function canvasFromData(data, w, h) {
 }
 
 function genTerrestrial(cfg) {
+  const W = TEX_W_HI, H = TEX_H_HI;   // hi-res: these are the planets you buzz the surface of
   const fbm = makeFbm(makeNoise(makePerm(cfg.seed)));
   const pal = {
     deep: hexToRgb(cfg.palette.deep),   shallow: hexToRgb(cfg.palette.shallow),
     sand: hexToRgb(cfg.palette.sand),   low: hexToRgb(cfg.palette.low),
     high: hexToRgb(cfg.palette.high),   snow: hexToRgb(cfg.palette.snow),
   };
-  const color = new Uint8ClampedArray(TEX_W * TEX_H * 4);
-  const bump  = new Uint8ClampedArray(TEX_W * TEX_H * 4);
-  const rough = new Uint8ClampedArray(TEX_W * TEX_H * 4);
+  const color = new Uint8ClampedArray(W * H * 4);
+  const bump  = new Uint8ClampedArray(W * H * 4);
+  const rough = new Uint8ClampedArray(W * H * 4);
   const SEA = 0.52, SCALE = 2.3;
 
-  for (let y = 0; y < TEX_H; y++) {
-    const phi = (y + 0.5) / TEX_H * Math.PI;
+  for (let y = 0; y < H; y++) {
+    const phi = (y + 0.5) / H * Math.PI;
     const sinP = Math.sin(phi), cosP = Math.cos(phi);
     const lat = Math.abs(cosP);
-    for (let x = 0; x < TEX_W; x++) {
-      const theta = (x + 0.5) / TEX_W * Math.PI * 2;
+    for (let x = 0; x < W; x++) {
+      const theta = (x + 0.5) / W * Math.PI * 2;
       const px = sinP * Math.cos(theta), py = cosP, pz = sinP * Math.sin(theta);
 
       let h = fbm(px * SCALE + 10, py * SCALE + 10, pz * SCALE + 10, 6);
@@ -329,7 +348,7 @@ function genTerrestrial(cfg) {
         roughness = 235;
       }
 
-      const i = (y * TEX_W + x) * 4;
+      const i = (y * W + x) * 4;
       color[i] = rgb[0]; color[i+1] = rgb[1]; color[i+2] = rgb[2]; color[i+3] = 255;
       const bh = h < SEA ? 90 : 90 + ((h - SEA) / (1 - SEA)) * 165;
       bump[i] = bump[i+1] = bump[i+2] = bh; bump[i+3] = 255;
@@ -337,9 +356,9 @@ function genTerrestrial(cfg) {
     }
   }
   return {
-    map: canvasFromData(color, TEX_W, TEX_H),
-    bumpMap: canvasFromData(bump, TEX_W, TEX_H),
-    roughnessMap: canvasFromData(rough, TEX_W, TEX_H),
+    map: canvasFromData(color, W, H),
+    bumpMap: canvasFromData(bump, W, H),
+    roughnessMap: canvasFromData(rough, W, H),
   };
 }
 
@@ -495,10 +514,16 @@ function makeStars(count, spread) {
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
   return new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xffffff, size: 2.2, sizeAttenuation: true }));
 }
-scene.add(makeStars(6000, 20000));
+/* Everything sky-distance lives in one group that gets re-centered on the
+   ship every frame. Stars this far away shouldn't parallax anyway, and it
+   means you can never fly out the side of the universe. */
+const skyShell = new THREE.Group();
+scene.add(skyShell);
+
+skyShell.add(makeStars(6000, 20000));
 const neb1 = makeStars(1200, 18000); neb1.material.color.set(0x88aaff); neb1.material.size = 3.5;
 const neb2 = makeStars(1200, 16000); neb2.material.color.set(0xff9977); neb2.material.size = 3.0;
-scene.add(neb1, neb2);
+skyShell.add(neb1, neb2);
 
 function softBlobTexture(colorCss) {
   const cnv = document.createElement("canvas");
@@ -521,7 +546,7 @@ for (let i = 0; i < 9; i++) {
   const phi = Math.acos(2 * Math.random() - 1);
   sp.position.set(r*Math.sin(phi)*Math.cos(theta), r*Math.sin(phi)*Math.sin(theta), r*Math.cos(phi));
   sp.scale.setScalar(6000 + Math.random() * 6000);
-  scene.add(sp);
+  skyShell.add(sp);
 }
 
 function makeLabel(text) {
@@ -815,6 +840,11 @@ const ship = {
 };
 const shipObj = new THREE.Group();
 shipObj.position.set(0, 0, 600);
+/* Aim the spawn so the first frame is a view, not empty void: HELIOS dead
+   ahead with AZURE off to the right. lookAt() points +Z at the target but
+   our nose is -Z, so we look at the target's mirror through the ship. */
+const spawnTarget = new THREE.Vector3(280, -50, -2200);
+shipObj.lookAt(shipObj.position.clone().multiplyScalar(2).sub(spawnTarget));
 scene.add(shipObj);
 
 const { mesh: shipMesh, engineGlows, retroGlows } = buildShipMesh();
@@ -838,11 +868,23 @@ addEventListener("keydown", e => {
 });
 addEventListener("keyup", e => keys[e.code] = false);
 
-const steer = { x: 0, y: 0 };
-addEventListener("mousemove", e => {
-  steer.x = (e.clientX / innerWidth  - 0.5) * 2;
-  steer.y = (e.clientY / innerHeight - 0.5) * 2;
+/* Pointer Lock: click the canvas → the browser hides the cursor and hands
+   us RELATIVE mouse motion (e.movementX/Y). The ship only turns while the
+   mouse is actually moving — let go of the mouse, the ship flies straight.
+   ESC releases the lock (that's built into the browser, not our code). */
+let mouseDX = 0, mouseDY = 0;   // deltas accumulated since last frame
+renderer.domElement.addEventListener("click", () => {
+  if (document.pointerLockElement !== renderer.domElement)
+    renderer.domElement.requestPointerLock();
 });
+addEventListener("mousemove", e => {
+  if (document.pointerLockElement === renderer.domElement) {
+    mouseDX += e.movementX;
+    mouseDY += e.movementY;
+  }
+});
+
+const steer = { x: 0, y: 0 };   // rate-based steering — still used by touch drag
 
 let touchThrust = false, touchBrake = false, touchRev = false;
 if (matchMedia("(pointer: coarse)").matches) document.body.classList.add("touch");
@@ -891,33 +933,61 @@ const revTag = document.getElementById("revtag");
 const tmpDir = new THREE.Vector3();
 const tmpNormal = new THREE.Vector3();
 let prevNearestDist = Infinity;
+let prevNearestBody = null;
 
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
 
-  if (keys["KeyW"] || touchThrust) ship.throttle = Math.min(1, ship.throttle + dt * 1.2);
-  // S = STOP: zero the throttle and scrub velocity until you're parked
-  if (keys["KeyS"] || touchBrake || keys["KeyX"]) {
-    ship.throttle = 0;
-    ship.velocity.multiplyScalar(0.9);
-  }
-  if (keys["KeyR"] || touchRev) ship.throttle = Math.max(ship.minThrottle, ship.throttle - dt * 1.2);
+  /* ---- steering ---- */
+  // pointer-lock freelook: deltas are "pixels of mouse travel", already
+  // frame-rate independent — we just drain whatever accumulated
+  const MOUSE_SENS = 0.0022;
+  shipObj.rotateY(-mouseDX * MOUSE_SENS);
+  shipObj.rotateX(-mouseDY * MOUSE_SENS);
+  mouseDX = 0; mouseDY = 0;
 
-  /* ---- steering rotates the SHIP now, not the camera ---- */
+  // touch drag steering (rate-based, unchanged from v5)
   const dead = 0.08;
   const sx = Math.abs(steer.x) > dead ? steer.x : 0;
   const sy = Math.abs(steer.y) > dead ? steer.y : 0;
   shipObj.rotateY(-sx * ship.turnSpeed * dt);
   shipObj.rotateX(-sy * ship.turnSpeed * dt);
-  if (keys["KeyA"]) shipObj.rotateZ( 1.5 * dt); // roll left
-  if (keys["KeyD"]) shipObj.rotateZ(-1.5 * dt); // roll right
+
+  if (keys["KeyA"]) shipObj.rotateY( ship.turnSpeed * dt);  // turn left
+  if (keys["KeyD"]) shipObj.rotateY(-ship.turnSpeed * dt);  // turn right
+  if (keys["KeyQ"]) shipObj.rotateZ( 1.5 * dt);             // roll left
+  if (keys["KeyE"]) shipObj.rotateZ(-1.5 * dt);             // roll right
 
   shipObj.getWorldDirection(tmpDir);
   tmpDir.negate(); // getWorldDirection points +Z for Groups; our nose is -Z
+
+  /* ---- throttle ---- */
+  if (keys["KeyW"] || touchThrust) ship.throttle = Math.min(1, ship.throttle + dt * 1.2);
+
+  // S = brake-then-reverse: while you still have forward speed it acts as
+  // a handbrake; once you're basically parked, holding it eases the
+  // throttle negative and backs you up. R skips straight to reverse.
+  const fwdSpd = ship.velocity.dot(tmpDir);
+  if (keys["KeyS"]) {
+    if (fwdSpd > 5 && ship.throttle >= 0) {
+      ship.throttle = 0;
+      ship.velocity.multiplyScalar(Math.pow(0.9, dt * 60));
+    } else {
+      ship.throttle = Math.max(ship.minThrottle, ship.throttle - dt * 1.2);
+    }
+  }
+  if (touchBrake || keys["KeyX"]) {   // pure brake, never reverses
+    ship.throttle = 0;
+    ship.velocity.multiplyScalar(Math.pow(0.9, dt * 60));
+  }
+  if (keys["KeyR"] || touchRev) ship.throttle = Math.max(ship.minThrottle, ship.throttle - dt * 1.2);
+
   const boost = (keys["ShiftLeft"] || keys["ShiftRight"]) ? ship.boostMult : 1;
   ship.velocity.addScaledVector(tmpDir, ship.throttle * ship.maxAccel * boost * dt);
-  ship.velocity.multiplyScalar(ship.damping);
+  // drag: pow(damping, dt*60) applies the same drag PER SECOND on any
+  // monitor — plain multiplyScalar(damping) would double the drag at 144Hz
+  ship.velocity.multiplyScalar(Math.pow(ship.damping, dt * 60));
   shipObj.position.addScaledVector(ship.velocity, dt);
 
   /* ---- collisions (against the ship's position) ---- */
@@ -993,6 +1063,9 @@ function animate() {
   for (const belt of belts) belt.rotation.y += 0.02 * dt;
   for (const c of cloudLayers) c.mesh.rotation.y += c.speed * dt;
 
+  /* ---- the sky rides along — you can never leave the starfield ---- */
+  skyShell.position.copy(shipObj.position);
+
   /* ---- space dust wraps around the SHIP ---- */
   const p = dust.geometry.attributes.position.array;
   const cx = shipObj.position.x, cy = shipObj.position.y, cz = shipObj.position.z;
@@ -1034,9 +1107,13 @@ function animate() {
     nearNameEl.textContent = nearest.cfg.name;
     nearDistEl.textContent = Math.round(nearestDist).toLocaleString() + " u";
   }
+  // closing speed only means something if we're comparing distances to the
+  // SAME body — when the "nearest" title changes hands, skip one frame
+  if (nearest !== prevNearestBody) prevNearestDist = nearestDist;
   const closingSpeed = (prevNearestDist - nearestDist) / dt;
   alarmEl.style.visibility = (nearestDist < 250 && closingSpeed > 60) ? "visible" : "hidden";
   prevNearestDist = nearestDist;
+  prevNearestBody = nearest;
 
   renderer.render(scene, camera);
 }
