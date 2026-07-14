@@ -3,10 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Drift v3 — Deep Space Flight</title>
+<title>Drift v4 — Deep Space Flight</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #000; height: 100%; }
   canvas { display: block; }
+
+  #loading {
+    position: fixed; inset: 0; background: #000; z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+    font-family: monospace; color: #6ee7d8; letter-spacing: 4px;
+    font-size: 14px; text-shadow: 0 0 8px rgba(110,231,216,.7);
+  }
 
   #hud {
     position: fixed; inset: 0; pointer-events: none;
@@ -36,8 +43,6 @@
     font-size: 12px; letter-spacing: 2px; text-align: center; opacity: .9;
   }
   #nearest .name { font-size: 16px; }
-
-  /* proximity alarm */
   #alarm {
     position: absolute; top: 62%; left: 50%; transform: translateX(-50%);
     color: #ff5544; text-shadow: 0 0 10px rgba(255,80,60,.8);
@@ -45,8 +50,6 @@
     animation: blink .5s steps(2) infinite;
   }
   @keyframes blink { 50% { opacity: 0; } }
-
-  /* throttle bar with center marker: teal above = forward, amber below = reverse */
   #throttlewrap {
     position: absolute; right: 18px; bottom: 16px; text-align: right;
     font-size: 11px; letter-spacing: 1px;
@@ -96,6 +99,7 @@
 </style>
 </head>
 <body>
+<div id="loading">GENERATING WORLDS…</div>
 <div id="hud">
   <div class="bracket tl"></div><div class="bracket tr"></div>
   <div class="bracket bl"></div><div class="bracket br"></div>
@@ -134,63 +138,376 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 /* =========================================================================
-   DRIFT v3
+   DRIFT v4 — "Callister-grade" planets
    -------------------------------------------------------------------------
-   New since v2:
-     • Reverse thrust — throttle now runs from -0.5 to +1.0. Holding S past
-       zero eases you backward. Perfect for backing away from a planet
-       you're admiring. HUD bar splits: teal forward, amber reverse.
-     • Collision physics — you now bounce off planets, moons, and the sun
-       instead of ghosting through. Plus a flashing PROXIMITY alarm when
-       you're closing in fast.
-     • 3D name labels — each planet's name floats above it in space.
-     • Engine audio — a synthesized hum (Web Audio API, no sound files)
-       whose pitch and volume follow your throttle. Collisions thump.
-       Browsers block audio until you interact, so it starts on your
-       first key press or tap.
+   The old planets were random paint splotches. v4 planets are built from
+   FRACTAL NOISE — the same idea behind Minecraft terrain and film VFX:
+
+     1. Value noise: a grid of random numbers, smoothly blended between.
+        One layer looks like soft lumps.
+     2. fBm ("fractal Brownian motion"): stack several layers — each one
+        twice the detail, half the strength. Big layer = continents,
+        middle layers = mountain ranges, small layers = coastline fuzz.
+     3. We sample that noise in 3D *on the sphere's surface*, so the
+        texture wraps seamlessly — no ugly seam, no pinched poles.
+     4. The height value at each pixel picks a color: deep ocean →
+        shallows → beach → plains → mountains → snow, with latitude
+        deciding where the ice caps go.
+
+   That height data gets reused three ways per planet:
+     • color map  — what you see
+     • bump map   — fakes 3D relief, mountains catch the sunlight
+     • roughness map — oceans are smooth (sun glints off them),
+                       land is matte. This sells "water" HARD.
+
+   Plus: a separate drifting cloud sphere, and a real atmosphere — a
+   custom shader that glows only at the planet's edge (fresnel rim),
+   like Earth's blue limb in orbital photos.
    ========================================================================= */
 
-/* ============ 1. CONFIG — YOUR SOLAR SYSTEM ============ */
+/* ============ 1. CONFIG — YOUR SOLAR SYSTEM ============
+   New per-planet fields:
+     seed     — change it, get a whole different world. Same seed = same world.
+     style    — "terrestrial" (oceans/continents), "gas", "rocky"
+     clouds   — cloud layer on/off
+     palette  — colors for the terrain bands (terrestrial/rocky) */
 const BODIES = [
   {
     name: "HELIOS", type: "star",
-    radius: 220, color: 0xffc873,
+    radius: 220, color: 0xffc873, seed: 7,
     position: [0, 0, -3000],
   },
   {
-    name: "CINDER", type: "planet", style: "rocky",
-    radius: 60, color: 0xc2553a,
+    name: "CINDER", type: "planet", style: "rocky", seed: 11,
+    radius: 60,
     position: [-900, 80, -2200],
     spin: 0.02,
-    atmosphere: 0xff6633,
+    atmosphere: 0xcc5522, atmoStrength: 0.5,
+    palette: { dark: 0x4a2318, mid: 0x9c4a2e, light: 0xd98d5f },
   },
   {
-    name: "AZURE", type: "planet", style: "ocean",
-    radius: 95, color: 0x3a7bc2,
+    name: "AZURE", type: "planet", style: "terrestrial", seed: 42,
+    radius: 95,
     position: [700, -120, -1500],
     spin: 0.015,
-    atmosphere: 0x66aaff,
-    moon: { radius: 18, distance: 200, speed: 0.25, color: 0x9aa3ad },
+    clouds: true,
+    atmosphere: 0x5599ff, atmoStrength: 1.0,
+    palette: {
+      deep: 0x0a2d52, shallow: 0x1a6b8f, sand: 0xc2b280,
+      low: 0x3d7a3d, high: 0x6b5d45, snow: 0xf0f5fa,
+    },
+    moon: { radius: 18, distance: 220, speed: 0.25, color: 0x9aa3ad, seed: 5 },
   },
   {
-    name: "KRONOS", type: "planet", style: "gas",
-    radius: 130, color: 0xc9a86b,
+    name: "KRONOS", type: "planet", style: "gas", seed: 23,
+    radius: 130,
     position: [-400, 300, -600],
     spin: 0.01,
-    atmosphere: 0xddbb77,
+    atmosphere: 0xddbb77, atmoStrength: 0.7,
+    palette: { dark: 0x7a5c38, mid: 0xc9a86b, light: 0xf0dcae },
     rings: { inner: 170, outer: 280, color: 0x8a7a5c },
     belt: { inner: 300, outer: 420, count: 400 },
   },
   {
-    name: "VERDANT", type: "planet", style: "ocean",
-    radius: 45, color: 0x4caf6e,
+    name: "VERDANT", type: "planet", style: "terrestrial", seed: 99,
+    radius: 45,
     position: [1400, 200, -2800],
     spin: 0.03,
-    atmosphere: 0x88ffaa,
+    clouds: true,
+    atmosphere: 0x77ffaa, atmoStrength: 0.9,
+    palette: {
+      deep: 0x0d3d33, shallow: 0x1f7a5c, sand: 0xb5c28a,
+      low: 0x3f8f2e, high: 0x5c7a3d, snow: 0xeafaef,
+    },
   },
 ];
 
-/* ============ 2. SCENE SETUP ============ */
+/* ============ 2. NOISE ENGINE ============ */
+
+// Seeded random number generator (mulberry32) — same seed, same "random"
+// sequence every time. This is why seed:42 always builds the same planet.
+function mulberry32(seed) {
+  return function() {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// Build a shuffled lookup table for fast hashing (array reads, no trig —
+// this is what makes generating half a million pixels tolerable)
+function makePerm(seed) {
+  const rand = mulberry32(seed);
+  const p = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) p[i] = i;
+  for (let i = 255; i > 0; i--) {
+    const j = (rand() * (i + 1)) | 0;
+    [p[i], p[j]] = [p[j], p[i]];
+  }
+  const perm = new Uint8Array(512);
+  for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
+  return perm;
+}
+
+// 3D value noise: random value at each grid corner, smoothly blended.
+// Returns 0..1. "Smoothly" = the fade curve t²(3-2t), which kills the
+// grid-line artifacts you'd get from plain linear blending.
+function makeNoise(perm) {
+  const fade = t => t * t * (3 - 2 * t);
+  const corner = (xi, yi, zi) => perm[(perm[(perm[xi & 255] + yi) & 255] + zi) & 255] / 255;
+  return function noise3(x, y, z) {
+    const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+    const xf = fade(x - xi), yf = fade(y - yi), zf = fade(z - zi);
+    const c000 = corner(xi, yi, zi),     c100 = corner(xi+1, yi, zi);
+    const c010 = corner(xi, yi+1, zi),   c110 = corner(xi+1, yi+1, zi);
+    const c001 = corner(xi, yi, zi+1),   c101 = corner(xi+1, yi, zi+1);
+    const c011 = corner(xi, yi+1, zi+1), c111 = corner(xi+1, yi+1, zi+1);
+    const x00 = c000 + (c100 - c000) * xf, x10 = c010 + (c110 - c010) * xf;
+    const x01 = c001 + (c101 - c001) * xf, x11 = c011 + (c111 - c011) * xf;
+    const y0 = x00 + (x10 - x00) * yf, y1 = x01 + (x11 - x01) * yf;
+    return y0 + (y1 - y0) * zf;
+  };
+}
+
+// fBm: stack octaves of noise. Big + medium + small detail = terrain.
+function makeFbm(noise3) {
+  return function fbm(x, y, z, octaves) {
+    let sum = 0, amp = 0.5, freq = 1, norm = 0;
+    for (let o = 0; o < octaves; o++) {
+      sum += noise3(x * freq, y * freq, z * freq) * amp;
+      norm += amp;
+      amp *= 0.5; freq *= 2;
+    }
+    return sum / norm; // normalized back to 0..1
+  };
+}
+
+/* ============ 3. PLANET TEXTURE GENERATORS ============
+   Each generator walks every pixel of a 1024x512 canvas. For each pixel
+   it finds the matching 3D point on the sphere, samples fBm there, and
+   writes color + height + roughness. */
+
+const TEX_W = 1024, TEX_H = 512;
+
+function hexToRgb(hex) {
+  const c = new THREE.Color(hex);
+  return [c.r * 255, c.g * 255, c.b * 255];
+}
+function lerp3(a, b, t) {
+  return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+}
+function canvasFromData(data, w, h) {
+  const cnv = document.createElement("canvas");
+  cnv.width = w; cnv.height = h;
+  cnv.getContext("2d").putImageData(new ImageData(data, w, h), 0, 0);
+  const tex = new THREE.CanvasTexture(cnv);
+  tex.wrapS = THREE.RepeatWrapping;
+  return tex;
+}
+
+function genTerrestrial(cfg) {
+  const fbm = makeFbm(makeNoise(makePerm(cfg.seed)));
+  const pal = {
+    deep: hexToRgb(cfg.palette.deep),   shallow: hexToRgb(cfg.palette.shallow),
+    sand: hexToRgb(cfg.palette.sand),   low: hexToRgb(cfg.palette.low),
+    high: hexToRgb(cfg.palette.high),   snow: hexToRgb(cfg.palette.snow),
+  };
+  const color = new Uint8ClampedArray(TEX_W * TEX_H * 4);
+  const bump  = new Uint8ClampedArray(TEX_W * TEX_H * 4);
+  const rough = new Uint8ClampedArray(TEX_W * TEX_H * 4);
+  const SEA = 0.52, SCALE = 2.3;
+
+  for (let y = 0; y < TEX_H; y++) {
+    const phi = (y + 0.5) / TEX_H * Math.PI;      // 0 at north pole
+    const sinP = Math.sin(phi), cosP = Math.cos(phi);
+    const lat = Math.abs(cosP);                    // 0 equator, 1 poles
+    for (let x = 0; x < TEX_W; x++) {
+      const theta = (x + 0.5) / TEX_W * Math.PI * 2;
+      // the 3D point on the unit sphere this pixel wraps to:
+      const px = sinP * Math.cos(theta), py = cosP, pz = sinP * Math.sin(theta);
+
+      // terrain height: broad continents + finer detail, stretched for contrast
+      let h = fbm(px * SCALE + 10, py * SCALE + 10, pz * SCALE + 10, 6);
+      h = (h - 0.5) * 2.6 + 0.5;
+      h = Math.max(0, Math.min(1, h));
+
+      // "temperature": cold at poles and at altitude
+      const temp = 1.15 - Math.pow(lat, 1.7) * 1.35 - Math.max(0, h - SEA) * 1.4;
+
+      let rgb, roughness;
+      if (h < SEA) {
+        const depth = (SEA - h) / SEA;             // 0 shore, 1 abyss
+        rgb = lerp3(pal.shallow, pal.deep, Math.min(1, depth * 2.2));
+        if (temp < 0.02) rgb = lerp3(rgb, pal.snow, 0.9);   // frozen sea = ice cap
+        roughness = temp < 0.02 ? 200 : 70;         // liquid water is SHINY
+      } else {
+        const alt = (h - SEA) / (1 - SEA);          // 0 beach, 1 peak
+        if      (alt < 0.06) rgb = pal.sand;
+        else if (alt < 0.45) rgb = lerp3(pal.low, pal.high, alt / 0.45 * 0.5);
+        else                 rgb = lerp3(pal.low, pal.high, 0.5 + (alt - 0.45) * 0.9);
+        if (temp < 0.15) rgb = lerp3(rgb, pal.snow, Math.min(1, (0.15 - temp) * 9));
+        roughness = 235;
+      }
+
+      const i = (y * TEX_W + x) * 4;
+      color[i] = rgb[0]; color[i+1] = rgb[1]; color[i+2] = rgb[2]; color[i+3] = 255;
+      // bump: ocean is flat (constant), land rises with height
+      const bh = h < SEA ? 90 : 90 + ((h - SEA) / (1 - SEA)) * 165;
+      bump[i] = bump[i+1] = bump[i+2] = bh; bump[i+3] = 255;
+      rough[i] = rough[i+1] = rough[i+2] = roughness; rough[i+3] = 255;
+    }
+  }
+  return {
+    map: canvasFromData(color, TEX_W, TEX_H),
+    bumpMap: canvasFromData(bump, TEX_W, TEX_H),
+    roughnessMap: canvasFromData(rough, TEX_W, TEX_H),
+  };
+}
+
+function genRocky(cfg) {
+  const fbm = makeFbm(makeNoise(makePerm(cfg.seed)));
+  const dark = hexToRgb(cfg.palette.dark), mid = hexToRgb(cfg.palette.mid), light = hexToRgb(cfg.palette.light);
+  const color = new Uint8ClampedArray(TEX_W * TEX_H * 4);
+  const bump  = new Uint8ClampedArray(TEX_W * TEX_H * 4);
+
+  for (let y = 0; y < TEX_H; y++) {
+    const phi = (y + 0.5) / TEX_H * Math.PI;
+    const sinP = Math.sin(phi), cosP = Math.cos(phi);
+    for (let x = 0; x < TEX_W; x++) {
+      const theta = (x + 0.5) / TEX_W * Math.PI * 2;
+      const px = sinP * Math.cos(theta), py = cosP, pz = sinP * Math.sin(theta);
+
+      const h = fbm(px * 3 + 5, py * 3 + 5, pz * 3 + 5, 6);
+      // ridged detail: fold the noise to make sharp canyon-like creases
+      const ridge = 1 - Math.abs(fbm(px * 6, py * 6, pz * 6, 4) - 0.5) * 2;
+      const v = Math.max(0, Math.min(1, h * 0.7 + ridge * 0.3));
+
+      const rgb = v < 0.5 ? lerp3(dark, mid, v * 2) : lerp3(mid, light, (v - 0.5) * 2);
+      const i = (y * TEX_W + x) * 4;
+      color[i] = rgb[0]; color[i+1] = rgb[1]; color[i+2] = rgb[2]; color[i+3] = 255;
+      const bh = 60 + v * 195;
+      bump[i] = bump[i+1] = bump[i+2] = bh; bump[i+3] = 255;
+    }
+  }
+  return { map: canvasFromData(color, TEX_W, TEX_H), bumpMap: canvasFromData(bump, TEX_W, TEX_H) };
+}
+
+function genGas(cfg) {
+  const fbm = makeFbm(makeNoise(makePerm(cfg.seed)));
+  const dark = hexToRgb(cfg.palette.dark), mid = hexToRgb(cfg.palette.mid), light = hexToRgb(cfg.palette.light);
+  const color = new Uint8ClampedArray(TEX_W * TEX_H * 4);
+
+  for (let y = 0; y < TEX_H; y++) {
+    const phi = (y + 0.5) / TEX_H * Math.PI;
+    const sinP = Math.sin(phi), cosP = Math.cos(phi);
+    for (let x = 0; x < TEX_W; x++) {
+      const theta = (x + 0.5) / TEX_W * Math.PI * 2;
+      const px = sinP * Math.cos(theta), py = cosP, pz = sinP * Math.sin(theta);
+
+      // DOMAIN WARPING — the one weird trick behind every good gas giant:
+      // instead of coloring clean latitude bands, we let noise push each
+      // pixel's latitude around before picking its band. Straight stripes
+      // become swirling, turbulent flow. Jupiter in one line of math.
+      const warp = (fbm(px * 3, py * 3, pz * 3, 4) - 0.5) * 0.55;
+      const band = Math.sin((py + warp) * 14) * 0.5 + 0.5;
+      const turb = fbm(px * 8 + 30, py * 8 + 30, pz * 8 + 30, 3);
+
+      let rgb = band < 0.5 ? lerp3(dark, mid, band * 2) : lerp3(mid, light, (band - 0.5) * 2);
+      rgb = lerp3(rgb, mid, (turb - 0.5) * 0.4 + 0.2);
+      // a great storm spot: brighten where a low-freq noise peaks hard
+      const storm = fbm(px * 2 + 77, py * 2 + 77, pz * 2 + 77, 3);
+      if (storm > 0.66) rgb = lerp3(rgb, light, Math.min(1, (storm - 0.66) * 8));
+
+      const i = (y * TEX_W + x) * 4;
+      color[i] = rgb[0]; color[i+1] = rgb[1]; color[i+2] = rgb[2]; color[i+3] = 255;
+    }
+  }
+  return { map: canvasFromData(color, TEX_W, TEX_H) };
+}
+
+// cloud layer: noise thresholded into puffy alpha, drawn white
+function genClouds(seed) {
+  const fbm = makeFbm(makeNoise(makePerm(seed + 1000)));
+  const W = 512, H = 256;
+  const data = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) {
+    const phi = (y + 0.5) / H * Math.PI;
+    const sinP = Math.sin(phi), cosP = Math.cos(phi);
+    for (let x = 0; x < W; x++) {
+      const theta = (x + 0.5) / W * Math.PI * 2;
+      const px = sinP * Math.cos(theta), py = cosP, pz = sinP * Math.sin(theta);
+      const n = fbm(px * 3.5, py * 3.5, pz * 3.5, 5);
+      // smoothstep: below 0.52 = clear sky, above 0.62 = solid cloud
+      let a = (n - 0.52) / 0.10;
+      a = Math.max(0, Math.min(1, a));
+      a = a * a * (3 - 2 * a);
+      const i = (y * W + x) * 4;
+      data[i] = data[i+1] = data[i+2] = 255; data[i+3] = a * 230;
+    }
+  }
+  return canvasFromData(data, W, H);
+}
+
+// the sun gets a boiling granulation surface instead of flat orange
+function genSun(cfg) {
+  const fbm = makeFbm(makeNoise(makePerm(cfg.seed)));
+  const W = 512, H = 256;
+  const hot = hexToRgb(0xfff3c9), warm = hexToRgb(cfg.color), deep = hexToRgb(0xe07820);
+  const data = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) {
+    const phi = (y + 0.5) / H * Math.PI;
+    const sinP = Math.sin(phi), cosP = Math.cos(phi);
+    for (let x = 0; x < W; x++) {
+      const theta = (x + 0.5) / W * Math.PI * 2;
+      const n = fbm(sinP*Math.cos(theta)*6, cosP*6, sinP*Math.sin(theta)*6, 5);
+      const rgb = n < 0.5 ? lerp3(deep, warm, n * 2) : lerp3(warm, hot, (n - 0.5) * 2);
+      const i = (y * W + x) * 4;
+      data[i] = rgb[0]; data[i+1] = rgb[1]; data[i+2] = rgb[2]; data[i+3] = 255;
+    }
+  }
+  return canvasFromData(data, W, H);
+}
+
+/* ============ 4. ATMOSPHERE SHADER ============
+   A sphere slightly bigger than the planet, rendered inside-out
+   (BackSide), with a fragment shader that's transparent face-on and
+   glows at grazing angles — so you only see it at the planet's rim.
+   That's the fresnel effect: same reason a lake mirrors the far shore
+   but you see straight down through the water at your feet. */
+function makeAtmosphere(radius, colorHex, strength) {
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      atmoColor: { value: new THREE.Color(colorHex) },
+      strength: { value: strength },
+    },
+    vertexShader: `
+      varying vec3 vNormal;
+      varying vec3 vView;
+      void main() {
+        vNormal = normalize(normalMatrix * normal);
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vView = normalize(-mv.xyz);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform vec3 atmoColor;
+      uniform float strength;
+      varying vec3 vNormal;
+      varying vec3 vView;
+      void main() {
+        float rim = pow(1.0 - abs(dot(vNormal, vView)), 2.5);
+        gl_FragColor = vec4(atmoColor, rim * strength);
+      }`,
+    transparent: true,
+    side: THREE.BackSide,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  return new THREE.Mesh(new THREE.SphereGeometry(radius * 1.14, 48, 32), mat);
+}
+
+/* ============ 5. SCENE SETUP ============ */
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 50000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -198,7 +515,7 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
 
-scene.add(new THREE.AmbientLight(0x223344, 0.7));
+scene.add(new THREE.AmbientLight(0x1c2836, 0.8));
 
 function makeStars(count, spread) {
   const geo = new THREE.BufferGeometry();
@@ -243,93 +560,6 @@ for (let i = 0; i < 9; i++) {
   scene.add(sp);
 }
 
-/* ============ 3. PROCEDURAL TEXTURE PAINTERS ============ */
-function css(hex, mult = 1) {
-  const c = new THREE.Color(hex).multiplyScalar(mult);
-  return `rgb(${(c.r*255)|0},${(c.g*255)|0},${(c.b*255)|0})`;
-}
-
-function paintRocky(hex) {
-  const cnv = document.createElement("canvas");
-  cnv.width = 512; cnv.height = 256;
-  const ctx = cnv.getContext("2d");
-  ctx.fillStyle = css(hex, 0.85); ctx.fillRect(0, 0, 512, 256);
-  for (let i = 0; i < 500; i++) {
-    ctx.fillStyle = css(hex, 0.6 + Math.random() * 0.9);
-    ctx.globalAlpha = 0.15;
-    ctx.beginPath();
-    ctx.arc(Math.random()*512, Math.random()*256, 4 + Math.random()*22, 0, 6.28);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  for (let i = 0; i < 30; i++) {
-    const x = Math.random()*512, y = 30 + Math.random()*196, r = 3 + Math.random()*9;
-    ctx.fillStyle = css(hex, 0.45);
-    ctx.beginPath(); ctx.arc(x, y, r, 0, 6.28); ctx.fill();
-    ctx.strokeStyle = css(hex, 1.5); ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(x, y, r, Math.PI*0.9, Math.PI*1.8); ctx.stroke();
-  }
-  return new THREE.CanvasTexture(cnv);
-}
-
-function paintGas(hex) {
-  const cnv = document.createElement("canvas");
-  cnv.width = 512; cnv.height = 256;
-  const ctx = cnv.getContext("2d");
-  for (let y = 0; y < 256; y++) {
-    const wave = Math.sin(y * 0.10) * 0.22 + Math.sin(y * 0.031 + 2) * 0.18;
-    ctx.fillStyle = css(hex, 0.85 + wave + (Math.random() - 0.5) * 0.05);
-    ctx.fillRect(0, y, 512, 1);
-  }
-  for (let i = 0; i < 24; i++) {
-    ctx.globalAlpha = 0.12;
-    ctx.fillStyle = css(hex, 0.6 + Math.random() * 1.0);
-    ctx.beginPath();
-    ctx.ellipse(Math.random()*512, Math.random()*256, 25 + Math.random()*55, 4 + Math.random()*7, 0, 0, 6.28);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  return new THREE.CanvasTexture(cnv);
-}
-
-function paintOcean(hex) {
-  const cnv = document.createElement("canvas");
-  cnv.width = 512; cnv.height = 256;
-  const ctx = cnv.getContext("2d");
-  ctx.fillStyle = css(hex, 0.9); ctx.fillRect(0, 0, 512, 256);
-  const land = css(new THREE.Color(hex).offsetHSL(-0.12, 0.05, 0.02).getHex(), 1.1);
-  const landDark = css(new THREE.Color(hex).offsetHSL(-0.12, 0.05, -0.06).getHex(), 1);
-  for (let c = 0; c < 7; c++) {
-    let x = Math.random()*512, y = 40 + Math.random()*176;
-    for (let i = 0; i < 60; i++) {
-      ctx.fillStyle = Math.random() < 0.7 ? land : landDark;
-      ctx.beginPath();
-      ctx.arc(x, y, 5 + Math.random()*14, 0, 6.28);
-      ctx.fill();
-      x = (x + (Math.random()-0.5)*30 + 512) % 512;
-      y = Math.max(20, Math.min(236, y + (Math.random()-0.5)*22));
-    }
-  }
-  ctx.fillStyle = "rgba(240,248,255,0.9)";
-  ctx.fillRect(0, 0, 512, 14);
-  ctx.fillRect(0, 242, 512, 14);
-  ctx.fillStyle = "rgba(240,248,255,0.35)";
-  ctx.fillRect(0, 14, 512, 8);
-  ctx.fillRect(0, 234, 512, 8);
-  for (let i = 0; i < 70; i++) {
-    ctx.globalAlpha = 0.10 + Math.random()*0.10;
-    ctx.fillStyle = "#ffffff";
-    ctx.beginPath();
-    ctx.ellipse(Math.random()*512, Math.random()*256, 15 + Math.random()*35, 3 + Math.random()*5, 0, 0, 6.28);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  return new THREE.CanvasTexture(cnv);
-}
-
-const PAINTERS = { rocky: paintRocky, gas: paintGas, ocean: paintOcean };
-
-/* ---- NEW: 3D name labels. Text drawn on a canvas, shown as a sprite. ---- */
 function makeLabel(text) {
   const cnv = document.createElement("canvas");
   cnv.width = 512; cnv.height = 128;
@@ -339,27 +569,29 @@ function makeLabel(text) {
   ctx.shadowColor = "rgba(110,231,216,0.9)"; ctx.shadowBlur = 18;
   ctx.fillStyle = "#bffef4";
   ctx.fillText(text, 256, 64);
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+  return new THREE.Sprite(new THREE.SpriteMaterial({
     map: new THREE.CanvasTexture(cnv),
     transparent: true, depthWrite: false, opacity: 0.85,
   }));
-  return sprite;
 }
 
-/* ============ 4. BODY BUILDER ============ */
+/* ============ 6. BODY BUILDER ============ */
 const liveBodies = [];
 const belts = [];
+const cloudLayers = [];
 
 function buildBody(cfg) {
   const group = new THREE.Group();
   group.position.set(...cfg.position);
 
   if (cfg.type === "star") {
-    group.add(new THREE.Mesh(
+    const sun = new THREE.Mesh(
       new THREE.SphereGeometry(cfg.radius, 48, 32),
-      new THREE.MeshBasicMaterial({ color: cfg.color })
-    ));
-    group.add(new THREE.PointLight(0xffe0b0, 2.2, 0, 2));
+      new THREE.MeshBasicMaterial({ map: genSun(cfg) })
+    );
+    sun.name = "surface";
+    group.add(sun);
+    group.add(new THREE.PointLight(0xfff0d5, 2.4, 0, 2));
     const glow = new THREE.Sprite(new THREE.SpriteMaterial({
       map: softBlobTexture("rgba(255,215,150,0.85)"),
       transparent: true, depthWrite: false,
@@ -367,24 +599,42 @@ function buildBody(cfg) {
     glow.scale.setScalar(cfg.radius * 7);
     group.add(glow);
   } else {
-    const painter = PAINTERS[cfg.style] || paintRocky;
-    const tex = painter(cfg.color);
-    tex.wrapS = THREE.RepeatWrapping;
-    const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(cfg.radius, 48, 32),
-      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95, metalness: 0.0 })
-    );
+    let texs, matOpts = { metalness: 0.0 };
+    if (cfg.style === "terrestrial") {
+      texs = genTerrestrial(cfg);
+      matOpts.roughness = 1.0;                 // roughnessMap multiplies this
+      matOpts.roughnessMap = texs.roughnessMap;
+      matOpts.bumpMap = texs.bumpMap;
+    } else if (cfg.style === "gas") {
+      texs = genGas(cfg);
+      matOpts.roughness = 0.85;
+    } else {
+      texs = genRocky(cfg);
+      matOpts.roughness = 0.95;
+      matOpts.bumpMap = texs.bumpMap;
+    }
+    matOpts.map = texs.map;
+
+    const mat = new THREE.MeshStandardMaterial(matOpts);
+    if (mat.bumpMap) mat.bumpScale = cfg.radius * 0.02;
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(cfg.radius, 64, 48), mat);
     mesh.name = "surface";
     group.add(mesh);
 
+    if (cfg.clouds) {
+      const cloudMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(cfg.radius * 1.025, 48, 32),
+        new THREE.MeshStandardMaterial({
+          map: genClouds(cfg.seed),
+          transparent: true, depthWrite: false, roughness: 1,
+        })
+      );
+      group.add(cloudMesh);
+      cloudLayers.push({ mesh: cloudMesh, speed: (cfg.spin || 0.01) * 6 });
+    }
+
     if (cfg.atmosphere) {
-      const c = new THREE.Color(cfg.atmosphere);
-      const halo = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: softBlobTexture(`rgba(${(c.r*255)|0},${(c.g*255)|0},${(c.b*255)|0},0.55)`),
-        transparent: true, depthWrite: false,
-      }));
-      halo.scale.setScalar(cfg.radius * 2.75);
-      group.add(halo);
+      group.add(makeAtmosphere(cfg.radius, cfg.atmosphere, cfg.atmoStrength ?? 0.8));
     }
 
     if (cfg.rings) {
@@ -426,16 +676,19 @@ function buildBody(cfg) {
     }
 
     if (cfg.moon) {
-      const moon = new THREE.Mesh(
-        new THREE.SphereGeometry(cfg.moon.radius, 20, 14),
-        new THREE.MeshStandardMaterial({ map: paintRocky(cfg.moon.color), roughness: 1 })
-      );
+      const moonTexs = genRocky({ seed: cfg.moon.seed ?? 3, palette: {
+        dark: 0x555a60, mid: 0x8d939b, light: 0xc4c9cf,
+      }});
+      const moonMat = new THREE.MeshStandardMaterial({
+        map: moonTexs.map, bumpMap: moonTexs.bumpMap, roughness: 1,
+      });
+      moonMat.bumpScale = cfg.moon.radius * 0.03;
+      const moon = new THREE.Mesh(new THREE.SphereGeometry(cfg.moon.radius, 32, 24), moonMat);
       moon.userData.orbit = { distance: cfg.moon.distance, speed: cfg.moon.speed, angle: Math.random() * 6.28 };
       moon.name = "moon";
       group.add(moon);
     }
 
-    // floating name tag above the planet
     const label = makeLabel(cfg.name);
     label.position.y = cfg.radius * 1.7;
     label.scale.set(cfg.radius * 2.2, cfg.radius * 0.55, 1);
@@ -445,24 +698,18 @@ function buildBody(cfg) {
   scene.add(group);
   liveBodies.push({ cfg, group });
 }
-BODIES.forEach(buildBody);
 
-/* ============ 5. SPACE DUST ============ */
+/* ============ 7. SPACE DUST ============ */
 const DUST_COUNT = 350, DUST_SIZE = 500, DUST_HALF = DUST_SIZE / 2;
 const dustGeo = new THREE.BufferGeometry();
 const dustPos = new Float32Array(DUST_COUNT * 3);
 for (let i = 0; i < dustPos.length; i++) dustPos[i] = (Math.random() - 0.5) * DUST_SIZE;
 dustGeo.setAttribute("position", new THREE.BufferAttribute(dustPos, 3));
 const dustMat = new THREE.PointsMaterial({ color: 0xaad4cc, size: 1.6, transparent: true, opacity: 0, depthWrite: false });
-scene.add(new THREE.Points(dustGeo, dustMat));
-const dust = scene.children[scene.children.length - 1];
+const dust = new THREE.Points(dustGeo, dustMat);
+scene.add(dust);
 
-/* ============ 6. ENGINE AUDIO ============
-   No sound files — we synthesize the hum with the Web Audio API:
-   two slightly-detuned sawtooth oscillators (the detune makes it "throb"
-   like real machinery — same beat-frequency effect as two compressors
-   running side by side) fed through a lowpass filter so it rumbles
-   instead of buzzes. Volume + pitch track the throttle each frame. */
+/* ============ 8. ENGINE AUDIO ============ */
 let audio = null;
 function initAudio() {
   if (audio) return;
@@ -477,33 +724,26 @@ function initAudio() {
   osc1.start(); osc2.start();
   audio = { ctx, gain, filter, osc1, osc2 };
 }
-// collision thump: a short burst of filtered noise
 function thump(strength) {
   if (!audio) return;
   const { ctx } = audio;
   const len = ctx.sampleRate * 0.15;
   const buf = ctx.createBuffer(1, len, ctx.sampleRate);
   const data = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len); // fade out
+  for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
   const src = ctx.createBufferSource(); src.buffer = buf;
   const f = ctx.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 150;
   const g = ctx.createGain(); g.gain.value = Math.min(0.5, strength / 400);
   src.connect(f); f.connect(g); g.connect(ctx.destination);
   src.start();
 }
-// browsers require a user gesture before audio can start
-["keydown", "mousedown", "touchstart"].forEach(ev =>
-  addEventListener(ev, initAudio, { once: false })
-);
+["keydown", "mousedown", "touchstart"].forEach(ev => addEventListener(ev, initAudio));
 
-/* ============ 7. SHIP PHYSICS ============
-   Throttle range is now -0.5 .. +1.0.
-   Positive = forward thrust, negative = reverse thrust (half power,
-   just like real maneuvering thrusters are weaker than the mains). */
+/* ============ 9. SHIP PHYSICS ============ */
 const ship = {
   velocity: new THREE.Vector3(),
   throttle: 0,
-  minThrottle: -0.5,     // NEW: reverse limit
+  minThrottle: -0.5,
   maxAccel: 220,
   boostMult: 2.5,
   damping: 0.995,
@@ -511,7 +751,7 @@ const ship = {
 };
 camera.position.set(0, 0, 600);
 
-/* ============ 8. INPUT ============ */
+/* ============ 10. INPUT ============ */
 const keys = {};
 addEventListener("keydown", e => keys[e.code] = true);
 addEventListener("keyup",   e => keys[e.code] = false);
@@ -554,7 +794,7 @@ bindHold("btnThrust", v => touchThrust = v);
 bindHold("btnBrake",  v => touchBrake  = v);
 bindHold("btnRev",    v => touchRev    = v);
 
-/* ============ 9. GAME LOOP ============ */
+/* ============ 11. GAME LOOP ============ */
 const clock = new THREE.Clock();
 const speedEl = document.getElementById("speed");
 const nearNameEl = document.getElementById("nearName");
@@ -571,18 +811,14 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
 
-  /* ---- throttle ---- */
   if (keys["KeyW"] || touchThrust) ship.throttle = Math.min(1, ship.throttle + dt * 1.2);
-  // brake (S) eases the throttle toward ZERO from either direction — never past it
   if (keys["KeyS"] || touchBrake) {
     if (ship.throttle > 0)      ship.throttle = Math.max(0, ship.throttle - dt * 1.2);
     else if (ship.throttle < 0) ship.throttle = Math.min(0, ship.throttle + dt * 1.2);
   }
-  // reverse is its own control now: R key (or REVERSE button on touch)
   if (keys["KeyR"] || touchRev) ship.throttle = Math.max(ship.minThrottle, ship.throttle - dt * 1.2);
   if (keys["KeyX"]) { ship.throttle = 0; ship.velocity.multiplyScalar(0.9); }
 
-  /* ---- steering ---- */
   const dead = 0.08;
   const sx = Math.abs(steer.x) > dead ? steer.x : 0;
   const sy = Math.abs(steer.y) > dead ? steer.y : 0;
@@ -591,33 +827,26 @@ function animate() {
   if (keys["KeyQ"]) camera.rotateZ( 1.5 * dt);
   if (keys["KeyE"]) camera.rotateZ(-1.5 * dt);
 
-  /* ---- thrust: throttle sign handles forward vs reverse ---- */
   camera.getWorldDirection(tmpDir);
   const boost = (keys["ShiftLeft"] || keys["ShiftRight"]) ? ship.boostMult : 1;
   ship.velocity.addScaledVector(tmpDir, ship.throttle * ship.maxAccel * boost * dt);
   ship.velocity.multiplyScalar(ship.damping);
   camera.position.addScaledVector(ship.velocity, dt);
 
-  /* ---- COLLISION: check every body (and moons) ----
-     If we've penetrated a body's surface: push the ship back out along
-     the surface normal, then remove the inward part of our velocity and
-     flip a fraction of it (a soft bounce, not a superball). */
-  const COLLIDE_BUFFER = 12; // hull clearance in units
+  const COLLIDE_BUFFER = 12;
   for (const b of liveBodies) {
-    // main body
     tmpNormal.subVectors(camera.position, b.group.position);
     let dist = tmpNormal.length();
     let minDist = b.cfg.radius + COLLIDE_BUFFER;
     if (dist < minDist) {
       tmpNormal.normalize();
       camera.position.copy(b.group.position).addScaledVector(tmpNormal, minDist);
-      const into = ship.velocity.dot(tmpNormal); // negative = moving inward
+      const into = ship.velocity.dot(tmpNormal);
       if (into < 0) {
         thump(-into);
-        ship.velocity.addScaledVector(tmpNormal, -into * 1.3); // cancel + 30% bounce
+        ship.velocity.addScaledVector(tmpNormal, -into * 1.3);
       }
     }
-    // its moon, if any (moon position is relative to the planet group)
     const moon = b.group.getObjectByName("moon");
     if (moon) {
       tmpNormal.copy(moon.position).add(b.group.position).sub(camera.position).negate();
@@ -635,11 +864,10 @@ function animate() {
     }
   }
 
-  /* ---- animate bodies ---- */
   for (const b of liveBodies) {
-    if (b.cfg.spin) {
+    if (b.cfg.spin || b.cfg.type === "star") {
       const surf = b.group.getObjectByName("surface");
-      if (surf) surf.rotation.y += b.cfg.spin * dt * 10;
+      if (surf) surf.rotation.y += (b.cfg.spin || 0.004) * dt * 10;
     }
     const moon = b.group.getObjectByName("moon");
     if (moon) {
@@ -649,8 +877,9 @@ function animate() {
     }
   }
   for (const belt of belts) belt.rotation.y += 0.02 * dt;
+  // clouds drift slightly faster than the ground below — reads as weather
+  for (const c of cloudLayers) c.mesh.rotation.y += c.speed * dt;
 
-  /* ---- space dust ---- */
   const p = dust.geometry.attributes.position.array;
   const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
   for (let i = 0; i < p.length; i += 3) {
@@ -662,7 +891,6 @@ function animate() {
   const spd = ship.velocity.length();
   dustMat.opacity = Math.min(0.65, spd / 350);
 
-  /* ---- engine audio follows throttle ---- */
   if (audio) {
     const t = Math.abs(ship.throttle);
     const boosting = boost > 1 && ship.throttle > 0;
@@ -670,10 +898,9 @@ function animate() {
     audio.filter.frequency.value = 180 + t * 500 + (boosting ? 400 : 0);
     const f = 44 + t * 38 + (boosting ? 14 : 0);
     audio.osc1.frequency.value = f;
-    audio.osc2.frequency.value = f * 1.014; // stays slightly detuned
+    audio.osc2.frequency.value = f * 1.014;
   }
 
-  /* ---- HUD ---- */
   speedEl.textContent = Math.round(spd);
   revTag.style.visibility = ship.throttle < -0.01 ? "visible" : "hidden";
   if (ship.throttle >= 0) {
@@ -693,15 +920,22 @@ function animate() {
     nearNameEl.textContent = nearest.cfg.name;
     nearDistEl.textContent = Math.round(nearestDist).toLocaleString() + " u";
   }
-  // proximity alarm: close AND closing fast
   const closingSpeed = (prevNearestDist - nearestDist) / dt;
-  alarmEl.style.visibility =
-    (nearestDist < 250 && closingSpeed > 60) ? "visible" : "hidden";
+  alarmEl.style.visibility = (nearestDist < 250 && closingSpeed > 60) ? "visible" : "hidden";
   prevNearestDist = nearestDist;
 
   renderer.render(scene, camera);
 }
-animate();
+
+/* ---- boot: let the loading screen paint, then generate the worlds.
+   (Texture generation walks ~2 million pixels of noise math — it takes
+   a second or two, so we show GENERATING WORLDS instead of a frozen
+   black screen.) ---- */
+setTimeout(() => {
+  BODIES.forEach(buildBody);
+  document.getElementById("loading").style.display = "none";
+  animate();
+}, 60);
 
 addEventListener("resize", () => {
   camera.aspect = innerWidth / innerHeight;
