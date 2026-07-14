@@ -153,20 +153,23 @@
 </script>
 <script>
 /* =========================================================================
-   SPACESUCK v8 — pilot's remap
+   SPACESUCK v9 — planetfall scale
    -------------------------------------------------------------------------
-   New since v7 (see git log for the full story):
+   New since v8 (see git log for the full story):
 
-     • CONTROL REMAP, straight from the test pilot: A/D now ROLL left and
-       right; all turning lives on the arrow keys (←/→ turn, ↑/↓ pitch)
-       and the mouse. S is pure reverse thrust — it ramps the throttle
-       negative exactly the way W ramps it positive. X is the full
-       shutdown: throttle to zero, scrub velocity until you're parked.
-       Q/E and R are retired.
+     • PLANETS ARE WORLDS NOW — every radius ×3 (AZURE is 285u, the sun
+       660u) and distances ×1.5 more on top of v7's spread. The payoff is
+       up close: on a big sphere the horizon flattens out beneath you
+       instead of curving away like a beach ball. Groundwork for
+       atmosphere entry later.
+     • Rings, moon orbit, and the asteroid belt scaled to match (belt is
+       700 rocks now, still one draw call). Sphere meshes got more
+       segments so big planets keep a smooth horizon at low altitude.
+     • Proximity alarm range scales with the body you're approaching.
 
-   Still in from v7: auto-bank lean into turns (cosmetic only — the
-   physics never roll), pointer-lock mouse steering, 4× world spread as
-   step one toward multiple solar systems.
+   Controls (v8): W thrust / S reverse / X full stop, A/D roll,
+   arrows turn & pitch, mouse freelook (click to capture), SHIFT boost,
+   V view. Auto-bank lean is cosmetic; the physics never roll.
    ========================================================================= */
 
 if (typeof THREE === "undefined") {
@@ -176,24 +179,27 @@ if (typeof THREE === "undefined") {
 }
 
 /* ============ 1. CONFIG — YOUR SOLAR SYSTEM ============ */
+/* v9 scale: radii ×3 (planets read as WORLDS up close — the horizon
+   flattens instead of curving away like a beach ball) and distances
+   ×1.5 on top of v7's spread so the sky stays uncrowded. */
 const BODIES = [
   {
     name: "HELIOS", type: "star",
-    radius: 220, color: 0xffc873, seed: 7,
-    position: [0, 0, -12000],
+    radius: 660, color: 0xffc873, seed: 7,
+    position: [0, 0, -18000],
   },
   {
     name: "CINDER", type: "planet", style: "rocky", seed: 11,
-    radius: 60,
-    position: [-3600, 320, -8800],
+    radius: 180,
+    position: [-5400, 480, -13200],
     spin: 0.02,
     atmosphere: 0xcc5522, atmoStrength: 0.5,
     palette: { dark: 0x4a2318, mid: 0x9c4a2e, light: 0xd98d5f },
   },
   {
     name: "AZURE", type: "planet", style: "terrestrial", seed: 42,
-    radius: 95,
-    position: [2800, -480, -6000],
+    radius: 285,
+    position: [4200, -720, -9000],
     spin: 0.015,
     clouds: true,
     atmosphere: 0x5599ff, atmoStrength: 1.0,
@@ -201,22 +207,22 @@ const BODIES = [
       deep: 0x0a2d52, shallow: 0x1a6b8f, sand: 0xc2b280,
       low: 0x3d7a3d, high: 0x6b5d45, snow: 0xf0f5fa,
     },
-    moon: { radius: 18, distance: 220, speed: 0.25, color: 0x9aa3ad, seed: 5 },
+    moon: { radius: 54, distance: 660, speed: 0.25, color: 0x9aa3ad, seed: 5 },
   },
   {
     name: "KRONOS", type: "planet", style: "gas", seed: 23,
-    radius: 130,
-    position: [-1600, 1200, -2400],
+    radius: 390,
+    position: [-2400, 1800, -3600],
     spin: 0.01,
     atmosphere: 0xddbb77, atmoStrength: 0.7,
     palette: { dark: 0x7a5c38, mid: 0xc9a86b, light: 0xf0dcae },
-    rings: { inner: 170, outer: 280, color: 0x8a7a5c },
-    belt: { inner: 300, outer: 420, count: 400 },
+    rings: { inner: 510, outer: 840, color: 0x8a7a5c },
+    belt: { inner: 900, outer: 1260, count: 700 },
   },
   {
     name: "VERDANT", type: "planet", style: "terrestrial", seed: 99,
-    radius: 45,
-    position: [5600, 800, -11200],
+    radius: 135,
+    position: [8400, 1200, -16800],
     spin: 0.03,
     clouds: true,
     atmosphere: 0x77ffaa, atmoStrength: 0.9,
@@ -477,7 +483,7 @@ function makeAtmosphere(radius, colorHex, strength) {
     depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
-  return new THREE.Mesh(new THREE.SphereGeometry(radius * 1.14, 48, 32), mat);
+  return new THREE.Mesh(new THREE.SphereGeometry(radius * 1.14, 64, 48), mat);
 }
 
 /* ============ 5. SCENE SETUP ============ */
@@ -664,7 +670,7 @@ function buildBody(cfg) {
 
   if (cfg.type === "star") {
     const sun = new THREE.Mesh(
-      new THREE.SphereGeometry(cfg.radius, 48, 32),
+      new THREE.SphereGeometry(cfg.radius, 64, 48),
       new THREE.MeshBasicMaterial({ map: genSun(cfg) })
     );
     sun.name = "surface";
@@ -695,13 +701,15 @@ function buildBody(cfg) {
 
     const mat = new THREE.MeshStandardMaterial(matOpts);
     if (mat.bumpMap) mat.bumpScale = cfg.radius * 0.02;
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(cfg.radius, 64, 48), mat);
+    // more segments than v8 — at 3× radius a coarse sphere shows its
+    // polygon edges on the horizon when you fly low
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(cfg.radius, 96, 64), mat);
     mesh.name = "surface";
     group.add(mesh);
 
     if (cfg.clouds) {
       const cloudMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(cfg.radius * 1.025, 48, 32),
+        new THREE.SphereGeometry(cfg.radius * 1.025, 64, 48),
         new THREE.MeshStandardMaterial({
           map: genClouds(cfg.seed),
           transparent: true, depthWrite: false, roughness: 1,
@@ -740,9 +748,9 @@ function buildBody(cfg) {
       for (let i = 0; i < cfg.belt.count; i++) {
         const ang = Math.random() * Math.PI * 2;
         const dist = cfg.belt.inner + Math.random() * (cfg.belt.outer - cfg.belt.inner);
-        dummy.position.set(Math.cos(ang) * dist, (Math.random() - 0.5) * 26, Math.sin(ang) * dist);
+        dummy.position.set(Math.cos(ang) * dist, (Math.random() - 0.5) * 60, Math.sin(ang) * dist);
         dummy.rotation.set(Math.random()*6.28, Math.random()*6.28, Math.random()*6.28);
-        dummy.scale.setScalar(1.5 + Math.random() * 6);
+        dummy.scale.setScalar(4 + Math.random() * 12);
         dummy.updateMatrix();
         rocks.setMatrixAt(i, dummy.matrix);
       }
@@ -833,7 +841,7 @@ shipObj.position.set(0, 0, 600);
 /* Aim the spawn so the first frame is a view, not empty void: HELIOS dead
    ahead with AZURE off to the right. lookAt() points +Z at the target but
    our nose is -Z, so we look at the target's mirror through the ship. */
-const spawnTarget = new THREE.Vector3(900, -150, -9000);
+const spawnTarget = new THREE.Vector3(1300, -220, -13500);
 shipObj.lookAt(shipObj.position.clone().multiplyScalar(2).sub(spawnTarget));
 scene.add(shipObj);
 
@@ -1113,7 +1121,10 @@ function animate() {
   // SAME body — when the "nearest" title changes hands, skip one frame
   if (nearest !== prevNearestBody) prevNearestDist = nearestDist;
   const closingSpeed = (prevNearestDist - nearestDist) / dt;
-  alarmEl.style.visibility = (nearestDist < 250 && closingSpeed > 60) ? "visible" : "hidden";
+  // alarm range scales with the body — a 660u sun deserves more warning
+  // room than a 135u planet
+  const alarmRange = Math.max(250, nearest.cfg.radius * 0.8);
+  alarmEl.style.visibility = (nearestDist < alarmRange && closingSpeed > 60) ? "visible" : "hidden";
   prevNearestDist = nearestDist;
   prevNearestBody = nearest;
 
