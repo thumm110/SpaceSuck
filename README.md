@@ -13,6 +13,7 @@ when the page loads.
 |---|---|
 | Click | Capture the mouse (freelook steering) — ESC releases |
 | Mouse | Pitch / yaw |
+| Right-drag | Orbit the ship 360° (showcase) — wheel zooms |
 | W | Thrust |
 | S | Reverse thrust |
 | X | Full stop |

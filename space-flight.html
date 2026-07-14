@@ -123,6 +123,7 @@
   <div id="crosshair"></div>
   <div id="hint">
     CLICK — capture mouse (steer) &nbsp; ESC — release<br>
+    RIGHT-DRAG — orbit the ship &nbsp; WHEEL — zoom<br>
     W — thrust &nbsp; S — reverse &nbsp; X — full stop<br>
     A / D — roll &nbsp; ← / → — turn &nbsp; ↑ / ↓ — nose down / up<br>
     SHIFT — boost &nbsp; V — toggle view
@@ -169,24 +170,21 @@
 <script src="GLTFLoader.js"></script>
 <script>
 /* =========================================================================
-   SPACESUCK v11 — the real ship
+   SPACESUCK v12 — the walkaround
    -------------------------------------------------------------------------
-   New since v10 (see git log for the full story):
+   New since v11 (see git log for the full story):
 
-     • THE BLENDER FIGHTER — the ship is now ship.glb, designed in
-       Blender (~/Blender/spaceship/spaceship.blend) and exported
-       headlessly from the .blend. Named parts do real work: engine
-       glows anchor to ThrusterL/R, retro glows to ProngTipL/R, and the
-       EngineGlow material gets self-illumination. The authored idle
-       float (ShipRootAction) loops through an AnimationMixer, so the
-       ship gently bobs at rest — visual only, physics untouched. The
-       old primitive fighter remains as the instant-load placeholder
-       and offline fallback.
+     • SHOWCASE ORBIT — hold RIGHT-CLICK and the mouse swings the camera
+       360° around the ship (wheel zooms, 8–40u). The orbit seeds itself
+       from wherever the camera already is, so there's no jump cut, and
+       the hull renders even from cockpit view. Keyboard still flies the
+       ship while you film it. Release to return to your normal view.
 
-   v10: atmospheric entry effects (sink below ~¼ radius of any world
-   with an atmosphere). Controls (v8): W thrust / S reverse / X full
-   stop, A/D roll, arrows turn & pitch (flight-stick), mouse freelook,
-   SHIFT boost, V view.
+   v11: the ship is the Blender fighter (ship.glb) — named parts anchor
+   the engine/retro glows, ShipRootAction is the idle float. v10:
+   atmospheric entry effects. Controls (v8): W thrust / S reverse /
+   X full stop, A/D roll, arrows turn & pitch (flight-stick), mouse
+   freelook, SHIFT boost, V view.
    ========================================================================= */
 
 if (typeof THREE === "undefined") {
@@ -987,8 +985,35 @@ renderer.domElement.addEventListener("click", () => {
   if (document.pointerLockElement !== renderer.domElement)
     renderer.domElement.requestPointerLock();
 });
+
+/* Right-click showcase orbit: hold the right button and the mouse swings
+   the camera 360° around the ship instead of steering it (wheel zooms).
+   Works locked or unlocked, from either view — release to fly on. */
+let orbiting = false;
+let orbitYaw = 0, orbitPitch = 0, orbitRadius = 16;
+addEventListener("contextmenu", e => e.preventDefault());
+addEventListener("mousedown", e => {
+  if (e.button === 2) {
+    orbiting = true;
+    // seed the orbit from where the camera already is — no jump cut
+    const rel = camera.position.clone().sub(shipObj.position);
+    const len = Math.max(rel.length(), 0.001);
+    orbitRadius = Math.min(40, Math.max(8, len));
+    orbitYaw = Math.atan2(rel.x, rel.z);
+    orbitPitch = Math.asin(Math.max(-1, Math.min(1, rel.y / len)));
+  }
+});
+addEventListener("mouseup", e => { if (e.button === 2) orbiting = false; });
+addEventListener("blur", () => orbiting = false);   // released off-window
+addEventListener("wheel", e => {
+  if (orbiting) orbitRadius = Math.min(40, Math.max(8, orbitRadius + e.deltaY * 0.02));
+}, { passive: true });
+
 addEventListener("mousemove", e => {
-  if (document.pointerLockElement === renderer.domElement) {
+  if (orbiting) {
+    orbitYaw   -= e.movementX * 0.005;
+    orbitPitch  = Math.max(-1.25, Math.min(1.25, orbitPitch + e.movementY * 0.005));
+  } else if (document.pointerLockElement === renderer.domElement) {
     mouseDX += e.movementX;
     mouseDY += e.movementY;
   }
@@ -1149,7 +1174,18 @@ function animate() {
   }
 
   /* ---- camera rig ---- */
-  if (firstPerson) {
+  if (orbiting) {
+    // showcase orbit: circle the ship at orbitRadius, always facing it.
+    // The hull renders even from cockpit view — this IS the beauty shot.
+    shipMesh.visible = true;
+    const cp = Math.cos(orbitPitch), sp = Math.sin(orbitPitch);
+    camera.position.set(
+      shipObj.position.x + orbitRadius * cp * Math.sin(orbitYaw),
+      shipObj.position.y + orbitRadius * sp,
+      shipObj.position.z + orbitRadius * cp * Math.cos(orbitYaw)
+    );
+    camera.lookAt(shipObj.position);
+  } else if (firstPerson) {
     shipMesh.visible = false;                 // don't render the hull in your face
     camera.position.copy(shipObj.position);
     // half-strength lean in the cockpit — you tilt your head into the turn
