@@ -14,9 +14,11 @@ when the page loads.
 | Click | Capture the mouse (freelook steering) — ESC releases |
 | Mouse | Pitch / yaw |
 | W | Thrust |
-| S | Brake to a stop, keep holding to reverse |
-| A / D | Turn left / right |
-| Q / E | Roll |
+| S | Reverse thrust |
+| X | Full stop |
+| A / D | Roll left / right |
+| ← / → | Turn left / right |
+| ↑ / ↓ | Nose up / down |
 | Shift | Boost |
 | V | Cockpit / chase view |
 

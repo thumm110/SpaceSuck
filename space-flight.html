@@ -111,8 +111,8 @@
   <div id="crosshair"></div>
   <div id="hint">
     CLICK — capture mouse (steer) &nbsp; ESC — release<br>
-    W — thrust &nbsp; S — brake / reverse<br>
-    A / D — turn &nbsp; ↑ / ↓ — nose up / down &nbsp; Q / E — roll<br>
+    W — thrust &nbsp; S — reverse &nbsp; X — full stop<br>
+    A / D — roll &nbsp; ← / → — turn &nbsp; ↑ / ↓ — nose up / down<br>
     SHIFT — boost &nbsp; V — toggle view
   </div>
   <div id="viewtag">VIEW: COCKPIT</div>
@@ -153,20 +153,20 @@
 </script>
 <script>
 /* =========================================================================
-   SPACESUCK v7 — lean into it
+   SPACESUCK v8 — pilot's remap
    -------------------------------------------------------------------------
-   New since v6 (see git log for the full story):
+   New since v7 (see git log for the full story):
 
-     • ARROW-KEY PITCH — ↑/↓ raise and lower the nose (←/→ double as
-       turn keys), so the full 3D flight envelope works keyboard-only.
-       Mouse freelook is still there for fine aiming.
-     • AUTO-BANK — the ship visually LEANS into turns (~20° at full turn
-       rate, easing in and out), and the cockpit camera tilts half that.
-       Purely cosmetic: the physics object never rolls, so the floaty
-       Newtonian flight model is completely untouched.
-     • 4× WORLD SPREAD — planets now sit 2,400–12,000u out instead of
-       600–3,000u. Boost stops being a toy and becomes your cruise mode
-       between worlds. First step toward multiple solar systems.
+     • CONTROL REMAP, straight from the test pilot: A/D now ROLL left and
+       right; all turning lives on the arrow keys (←/→ turn, ↑/↓ pitch)
+       and the mouse. S is pure reverse thrust — it ramps the throttle
+       negative exactly the way W ramps it positive. X is the full
+       shutdown: throttle to zero, scrub velocity until you're parked.
+       Q/E and R are retired.
+
+   Still in from v7: auto-bank lean into turns (cosmetic only — the
+   physics never roll), pointer-lock mouse steering, 4× world spread as
+   step one toward multiple solar systems.
    ========================================================================= */
 
 if (typeof THREE === "undefined") {
@@ -951,14 +951,14 @@ function animate() {
   shipObj.rotateX(-sy * ship.turnSpeed * dt);
 
   let keyYaw = 0, keyPitch = 0;
-  if (keys["KeyA"] || keys["ArrowLeft"])  keyYaw += 1;   // turn left
-  if (keys["KeyD"] || keys["ArrowRight"]) keyYaw -= 1;   // turn right
+  if (keys["ArrowLeft"])  keyYaw += 1;                   // turn left
+  if (keys["ArrowRight"]) keyYaw -= 1;                   // turn right
   if (keys["ArrowUp"])   keyPitch += 1;                  // nose up
   if (keys["ArrowDown"]) keyPitch -= 1;                  // nose down
   shipObj.rotateY(keyYaw   * ship.turnSpeed * dt);
   shipObj.rotateX(keyPitch * ship.turnSpeed * dt);
-  if (keys["KeyQ"]) shipObj.rotateZ( 1.5 * dt);          // roll left
-  if (keys["KeyE"]) shipObj.rotateZ(-1.5 * dt);          // roll right
+  if (keys["KeyA"]) shipObj.rotateZ( 1.5 * dt);          // roll left
+  if (keys["KeyD"]) shipObj.rotateZ(-1.5 * dt);          // roll right
 
   /* ---- auto-bank: the ship LEANS into turns, purely visual ----
      Physics (shipObj) never rolls; only the mesh / camera tilt, so the
@@ -972,25 +972,15 @@ function animate() {
   tmpDir.negate(); // getWorldDirection points +Z for Groups; our nose is -Z
 
   /* ---- throttle ---- */
+  // W and S are mirror twins: W ramps the throttle up, S ramps it down
+  // through zero into reverse. X is the full shutdown — throttle to zero
+  // and scrub velocity until you're parked.
   if (keys["KeyW"] || touchThrust) ship.throttle = Math.min(1, ship.throttle + dt * 1.2);
-
-  // S = brake-then-reverse: while you still have forward speed it acts as
-  // a handbrake; once you're basically parked, holding it eases the
-  // throttle negative and backs you up. R skips straight to reverse.
-  const fwdSpd = ship.velocity.dot(tmpDir);
-  if (keys["KeyS"]) {
-    if (fwdSpd > 5 && ship.throttle >= 0) {
-      ship.throttle = 0;
-      ship.velocity.multiplyScalar(Math.pow(0.9, dt * 60));
-    } else {
-      ship.throttle = Math.max(ship.minThrottle, ship.throttle - dt * 1.2);
-    }
-  }
-  if (touchBrake || keys["KeyX"]) {   // pure brake, never reverses
+  if (keys["KeyS"] || touchRev)    ship.throttle = Math.max(ship.minThrottle, ship.throttle - dt * 1.2);
+  if (keys["KeyX"] || touchBrake) {
     ship.throttle = 0;
     ship.velocity.multiplyScalar(Math.pow(0.9, dt * 60));
   }
-  if (keys["KeyR"] || touchRev) ship.throttle = Math.max(ship.minThrottle, ship.throttle - dt * 1.2);
 
   const boost = (keys["ShiftLeft"] || keys["ShiftRight"]) ? ship.boostMult : 1;
   ship.velocity.addScaledVector(tmpDir, ship.throttle * ship.maxAccel * boost * dt);
