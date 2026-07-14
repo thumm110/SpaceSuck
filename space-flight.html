@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Drift v2 — Deep Space Flight</title>
+<title>Drift v3 — Deep Space Flight</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #000; height: 100%; }
   canvas { display: block; }
@@ -30,11 +30,23 @@
   }
   #flightdata .big { font-size: 26px; letter-spacing: 2px; }
   #flightdata .dim { opacity: .55; font-size: 11px; }
+  #revtag { color: #ffb066; text-shadow: 0 0 6px rgba(255,176,102,.6); visibility: hidden; }
   #nearest {
     position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
     font-size: 12px; letter-spacing: 2px; text-align: center; opacity: .9;
   }
   #nearest .name { font-size: 16px; }
+
+  /* proximity alarm */
+  #alarm {
+    position: absolute; top: 62%; left: 50%; transform: translateX(-50%);
+    color: #ff5544; text-shadow: 0 0 10px rgba(255,80,60,.8);
+    font-size: 15px; letter-spacing: 4px; visibility: hidden;
+    animation: blink .5s steps(2) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* throttle bar with center marker: teal above = forward, amber below = reverse */
   #throttlewrap {
     position: absolute; right: 18px; bottom: 16px; text-align: right;
     font-size: 11px; letter-spacing: 1px;
@@ -43,10 +55,19 @@
     width: 14px; height: 120px; border: 1px solid rgba(110,231,216,.5);
     margin-left: auto; margin-top: 6px; position: relative;
   }
-  #throttlefill {
-    position: absolute; bottom: 0; left: 0; right: 0; height: 0%;
+  #throttlezero {
+    position: absolute; left: -4px; right: -4px; bottom: 33%;
+    height: 1px; background: rgba(110,231,216,.8);
+  }
+  #throttlefwd {
+    position: absolute; bottom: 33%; left: 0; right: 0; height: 0%;
     background: linear-gradient(to top, #14b8a6, #6ee7d8);
     box-shadow: 0 0 8px rgba(110,231,216,.7);
+  }
+  #throttlerev {
+    position: absolute; top: 67%; left: 0; right: 0; height: 0%;
+    background: linear-gradient(to bottom, #d98d3a, #ffb066);
+    box-shadow: 0 0 8px rgba(255,176,102,.7);
   }
   #hint {
     position: absolute; top: 14px; left: 18px; font-size: 11px;
@@ -63,12 +84,13 @@
     width: 74px; height: 74px; border-radius: 50%;
     border: 1px solid rgba(110,231,216,.6); color:#6ee7d8;
     background: rgba(10,25,25,.45);
-    font-family: monospace; font-size: 13px; letter-spacing:1px;
+    font-family: monospace; font-size: 12px; letter-spacing:1px;
     display: none; align-items: center; justify-content: center;
     touch-action: none;
   }
-  #btnThrust { right: 24px; bottom: 150px; }
-  #btnBrake  { right: 24px; bottom: 60px; }
+  #btnThrust { right: 24px; bottom: 240px; }
+  #btnBrake  { right: 24px; bottom: 150px; }
+  #btnRev    { right: 24px; bottom: 60px; border-color: rgba(255,176,102,.6); color: #ffb066; }
   body.touch .touchbtn { display: flex; }
   body.touch #hint { display: none; }
 </style>
@@ -80,49 +102,55 @@
   <div id="crosshair"></div>
   <div id="hint">
     MOUSE — steer<br>
-    W / S — throttle up / down<br>
-    SHIFT — boost &nbsp; Q / E — roll<br>
-    X — full stop
+    W / S — throttle up / brake (stops at zero)<br>
+    R — reverse thrust<br>
+    SHIFT — boost &nbsp; Q / E — roll &nbsp; X — full stop
   </div>
   <div id="nearest">
     <span class="dim">NEAREST BODY</span><br>
     <span class="name" id="nearName">—</span><br>
     <span id="nearDist">—</span>
   </div>
+  <div id="alarm">⚠ PROXIMITY ⚠</div>
   <div id="flightdata">
     <span class="dim">VELOCITY</span><br>
     <span class="big" id="speed">0</span> <span class="dim">u/s</span>
+    <span id="revtag">◀ REV</span>
   </div>
   <div id="throttlewrap">
     THR<br>
-    <div id="throttlebar"><div id="throttlefill"></div></div>
+    <div id="throttlebar">
+      <div id="throttlefwd"></div>
+      <div id="throttlerev"></div>
+      <div id="throttlezero"></div>
+    </div>
   </div>
 </div>
 
 <button class="touchbtn" id="btnThrust">THRUST</button>
 <button class="touchbtn" id="btnBrake">BRAKE</button>
+<button class="touchbtn" id="btnRev">REVERSE</button>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 /* =========================================================================
-   DRIFT v2 — now with actual scenery
+   DRIFT v3
    -------------------------------------------------------------------------
-   New since v1:
-     • Procedural planet textures — every planet's surface is painted onto
-       a hidden <canvas> at load time (continents, gas bands, craters),
-       then wrapped around the sphere. No image files needed.
-     • Atmosphere glow — a soft halo sprite behind each planet. The planet
-       itself blocks the middle of the sprite, so only the rim shows. Cheap
-       trick, looks like an atmosphere.
-     • Asteroid belt — 400 rocks around Kronos using InstancedMesh
-       (one draw call for all 400 — this matters for frame rate).
-     • Space dust — tiny particles near the ship that wrap around you.
-       This is what finally makes speed FEEL fast.
+   New since v2:
+     • Reverse thrust — throttle now runs from -0.5 to +1.0. Holding S past
+       zero eases you backward. Perfect for backing away from a planet
+       you're admiring. HUD bar splits: teal forward, amber reverse.
+     • Collision physics — you now bounce off planets, moons, and the sun
+       instead of ghosting through. Plus a flashing PROXIMITY alarm when
+       you're closing in fast.
+     • 3D name labels — each planet's name floats above it in space.
+     • Engine audio — a synthesized hum (Web Audio API, no sound files)
+       whose pitch and volume follow your throttle. Collisions thump.
+       Browsers block audio until you interact, so it starts on your
+       first key press or tap.
    ========================================================================= */
 
-/* ============ 1. CONFIG — YOUR SOLAR SYSTEM ============
-   New fields: style ("rocky" | "gas" | "ocean") picks the texture painter,
-   atmosphere is an optional glow color. */
+/* ============ 1. CONFIG — YOUR SOLAR SYSTEM ============ */
 const BODIES = [
   {
     name: "HELIOS", type: "star",
@@ -151,7 +179,7 @@ const BODIES = [
     spin: 0.01,
     atmosphere: 0xddbb77,
     rings: { inner: 170, outer: 280, color: 0x8a7a5c },
-    belt: { inner: 300, outer: 420, count: 400 },   // NEW: asteroid belt
+    belt: { inner: 300, outer: 420, count: 400 },
   },
   {
     name: "VERDANT", type: "planet", style: "ocean",
@@ -184,15 +212,13 @@ function makeStars(count, spread) {
     pos[i + 2] = r * Math.cos(phi);
   }
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 2.2, sizeAttenuation: true });
-  return new THREE.Points(geo, mat);
+  return new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xffffff, size: 2.2, sizeAttenuation: true }));
 }
 scene.add(makeStars(6000, 20000));
 const neb1 = makeStars(1200, 18000); neb1.material.color.set(0x88aaff); neb1.material.size = 3.5;
 const neb2 = makeStars(1200, 16000); neb2.material.color.set(0xff9977); neb2.material.size = 3.0;
 scene.add(neb1, neb2);
 
-/* --- Distant nebula clouds: big soft additive sprites way out there --- */
 function softBlobTexture(colorCss) {
   const cnv = document.createElement("canvas");
   cnv.width = cnv.height = 256;
@@ -207,8 +233,7 @@ const nebulaColors = ["rgba(90,60,160,0.16)", "rgba(160,60,90,0.13)", "rgba(40,1
 for (let i = 0; i < 9; i++) {
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({
     map: softBlobTexture(nebulaColors[i % 3]),
-    transparent: true, depthWrite: false,
-    blending: THREE.AdditiveBlending,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   }));
   const r = 15000;
   const theta = Math.random() * Math.PI * 2;
@@ -218,12 +243,7 @@ for (let i = 0; i < 9; i++) {
   scene.add(sp);
 }
 
-/* ============ 3. PROCEDURAL TEXTURE PAINTERS ============
-   Each painter draws onto a 512x256 canvas (2:1 ratio because that's how
-   a sphere unwraps — like a world map). Three.js then wraps it around
-   the SphereGeometry automatically. */
-
-// helper: THREE.Color -> css string, with a brightness tweak
+/* ============ 3. PROCEDURAL TEXTURE PAINTERS ============ */
 function css(hex, mult = 1) {
   const c = new THREE.Color(hex).multiplyScalar(mult);
   return `rgb(${(c.r*255)|0},${(c.g*255)|0},${(c.b*255)|0})`;
@@ -234,8 +254,6 @@ function paintRocky(hex) {
   cnv.width = 512; cnv.height = 256;
   const ctx = cnv.getContext("2d");
   ctx.fillStyle = css(hex, 0.85); ctx.fillRect(0, 0, 512, 256);
-
-  // mottled terrain: hundreds of soft random splotches, light and dark
   for (let i = 0; i < 500; i++) {
     ctx.fillStyle = css(hex, 0.6 + Math.random() * 0.9);
     ctx.globalAlpha = 0.15;
@@ -243,7 +261,6 @@ function paintRocky(hex) {
     ctx.arc(Math.random()*512, Math.random()*256, 4 + Math.random()*22, 0, 6.28);
     ctx.fill();
   }
-  // craters: dark floor + bright rim highlight on one side
   ctx.globalAlpha = 1;
   for (let i = 0; i < 30; i++) {
     const x = Math.random()*512, y = 30 + Math.random()*196, r = 3 + Math.random()*9;
@@ -259,22 +276,16 @@ function paintGas(hex) {
   const cnv = document.createElement("canvas");
   cnv.width = 512; cnv.height = 256;
   const ctx = cnv.getContext("2d");
-
-  // horizontal bands: brightness follows a couple of sine waves + noise,
-  // so bands cluster like Jupiter instead of looking like a barcode
   for (let y = 0; y < 256; y++) {
     const wave = Math.sin(y * 0.10) * 0.22 + Math.sin(y * 0.031 + 2) * 0.18;
-    const b = 0.85 + wave + (Math.random() - 0.5) * 0.05;
-    ctx.fillStyle = css(hex, b);
+    ctx.fillStyle = css(hex, 0.85 + wave + (Math.random() - 0.5) * 0.05);
     ctx.fillRect(0, y, 512, 1);
   }
-  // storm swirls: elongated soft ovals smeared along the bands
   for (let i = 0; i < 24; i++) {
     ctx.globalAlpha = 0.12;
     ctx.fillStyle = css(hex, 0.6 + Math.random() * 1.0);
-    const y = Math.random()*256;
     ctx.beginPath();
-    ctx.ellipse(Math.random()*512, y, 25 + Math.random()*55, 4 + Math.random()*7, 0, 0, 6.28);
+    ctx.ellipse(Math.random()*512, Math.random()*256, 25 + Math.random()*55, 4 + Math.random()*7, 0, 0, 6.28);
     ctx.fill();
   }
   ctx.globalAlpha = 1;
@@ -286,9 +297,6 @@ function paintOcean(hex) {
   cnv.width = 512; cnv.height = 256;
   const ctx = cnv.getContext("2d");
   ctx.fillStyle = css(hex, 0.9); ctx.fillRect(0, 0, 512, 256);
-
-  // continents: clusters of overlapping blobs that wander from a seed point
-  // (a cheap "random walk" — each blob lands near the previous one)
   const land = css(new THREE.Color(hex).offsetHSL(-0.12, 0.05, 0.02).getHex(), 1.1);
   const landDark = css(new THREE.Color(hex).offsetHSL(-0.12, 0.05, -0.06).getHex(), 1);
   for (let c = 0; c < 7; c++) {
@@ -298,18 +306,16 @@ function paintOcean(hex) {
       ctx.beginPath();
       ctx.arc(x, y, 5 + Math.random()*14, 0, 6.28);
       ctx.fill();
-      x = (x + (Math.random()-0.5)*30 + 512) % 512;  // wrap horizontally
+      x = (x + (Math.random()-0.5)*30 + 512) % 512;
       y = Math.max(20, Math.min(236, y + (Math.random()-0.5)*22));
     }
   }
-  // polar ice caps
   ctx.fillStyle = "rgba(240,248,255,0.9)";
   ctx.fillRect(0, 0, 512, 14);
   ctx.fillRect(0, 242, 512, 14);
   ctx.fillStyle = "rgba(240,248,255,0.35)";
   ctx.fillRect(0, 14, 512, 8);
   ctx.fillRect(0, 234, 512, 8);
-  // clouds: faint white streaks
   for (let i = 0; i < 70; i++) {
     ctx.globalAlpha = 0.10 + Math.random()*0.10;
     ctx.fillStyle = "#ffffff";
@@ -323,35 +329,47 @@ function paintOcean(hex) {
 
 const PAINTERS = { rocky: paintRocky, gas: paintGas, ocean: paintOcean };
 
+/* ---- NEW: 3D name labels. Text drawn on a canvas, shown as a sprite. ---- */
+function makeLabel(text) {
+  const cnv = document.createElement("canvas");
+  cnv.width = 512; cnv.height = 128;
+  const ctx = cnv.getContext("2d");
+  ctx.font = "bold 56px monospace";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.shadowColor = "rgba(110,231,216,0.9)"; ctx.shadowBlur = 18;
+  ctx.fillStyle = "#bffef4";
+  ctx.fillText(text, 256, 64);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(cnv),
+    transparent: true, depthWrite: false, opacity: 0.85,
+  }));
+  return sprite;
+}
+
 /* ============ 4. BODY BUILDER ============ */
 const liveBodies = [];
-const belts = []; // spinning asteroid belts
+const belts = [];
 
 function buildBody(cfg) {
   const group = new THREE.Group();
   group.position.set(...cfg.position);
 
   if (cfg.type === "star") {
-    const mesh = new THREE.Mesh(
+    group.add(new THREE.Mesh(
       new THREE.SphereGeometry(cfg.radius, 48, 32),
       new THREE.MeshBasicMaterial({ color: cfg.color })
-    );
-    group.add(mesh);
+    ));
     group.add(new THREE.PointLight(0xffe0b0, 2.2, 0, 2));
-
     const glow = new THREE.Sprite(new THREE.SpriteMaterial({
       map: softBlobTexture("rgba(255,215,150,0.85)"),
       transparent: true, depthWrite: false,
     }));
     glow.scale.setScalar(cfg.radius * 7);
-    glow.name = "sunglow";
     group.add(glow);
   } else {
-    // pick the texture painter for this planet's style
     const painter = PAINTERS[cfg.style] || paintRocky;
     const tex = painter(cfg.color);
     tex.wrapS = THREE.RepeatWrapping;
-
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(cfg.radius, 48, 32),
       new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95, metalness: 0.0 })
@@ -359,9 +377,6 @@ function buildBody(cfg) {
     mesh.name = "surface";
     group.add(mesh);
 
-    // atmosphere: halo sprite at the planet's center. The planet mesh is
-    // closer to the camera than the sprite's center, so it hides the middle
-    // of the glow — only the rim peeks out. Instant atmosphere.
     if (cfg.atmosphere) {
       const c = new THREE.Color(cfg.atmosphere);
       const halo = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -375,32 +390,24 @@ function buildBody(cfg) {
     if (cfg.rings) {
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(cfg.rings.inner, cfg.rings.outer, 64),
-        new THREE.MeshBasicMaterial({
-          color: cfg.rings.color, side: THREE.DoubleSide,
-          transparent: true, opacity: 0.5,
-        })
+        new THREE.MeshBasicMaterial({ color: cfg.rings.color, side: THREE.DoubleSide, transparent: true, opacity: 0.5 })
       );
       ring.rotation.x = Math.PI / 2.4;
       group.add(ring);
-      // a thinner, brighter inner band for detail
       const ring2 = new THREE.Mesh(
         new THREE.RingGeometry(cfg.rings.inner * 0.92, cfg.rings.inner * 0.98, 64),
-        new THREE.MeshBasicMaterial({
-          color: cfg.rings.color, side: THREE.DoubleSide,
-          transparent: true, opacity: 0.8,
-        })
+        new THREE.MeshBasicMaterial({ color: cfg.rings.color, side: THREE.DoubleSide, transparent: true, opacity: 0.8 })
       );
       ring2.rotation.x = Math.PI / 2.4;
       group.add(ring2);
     }
 
-    // asteroid belt: InstancedMesh = ONE mesh drawn N times with different
-    // transforms. 400 separate Mesh objects would tank the frame rate;
-    // this is a single draw call.
     if (cfg.belt) {
-      const rockGeo = new THREE.DodecahedronGeometry(1, 0);
-      const rockMat = new THREE.MeshStandardMaterial({ color: 0x8a8378, roughness: 1, flatShading: true });
-      const rocks = new THREE.InstancedMesh(rockGeo, rockMat, cfg.belt.count);
+      const rocks = new THREE.InstancedMesh(
+        new THREE.DodecahedronGeometry(1, 0),
+        new THREE.MeshStandardMaterial({ color: 0x8a8378, roughness: 1, flatShading: true }),
+        cfg.belt.count
+      );
       const dummy = new THREE.Object3D();
       for (let i = 0; i < cfg.belt.count; i++) {
         const ang = Math.random() * Math.PI * 2;
@@ -412,7 +419,7 @@ function buildBody(cfg) {
         rocks.setMatrixAt(i, dummy.matrix);
       }
       const beltGroup = new THREE.Group();
-      beltGroup.rotation.x = Math.PI / 2.4 - Math.PI / 2; // match ring tilt
+      beltGroup.rotation.x = Math.PI / 2.4 - Math.PI / 2;
       beltGroup.add(rocks);
       group.add(beltGroup);
       belts.push(beltGroup);
@@ -427,6 +434,12 @@ function buildBody(cfg) {
       moon.name = "moon";
       group.add(moon);
     }
+
+    // floating name tag above the planet
+    const label = makeLabel(cfg.name);
+    label.position.y = cfg.radius * 1.7;
+    label.scale.set(cfg.radius * 2.2, cfg.radius * 0.55, 1);
+    group.add(label);
   }
 
   scene.add(group);
@@ -434,26 +447,63 @@ function buildBody(cfg) {
 }
 BODIES.forEach(buildBody);
 
-/* ============ 5. SPACE DUST ============
-   ~350 tiny points floating in a 500-unit box that travels with the ship.
-   Each frame we "wrap" any particle that falls out the back of the box to
-   the front. Your brain reads the streaming motion as speed. Their
-   brightness scales with velocity so they vanish when you're parked. */
+/* ============ 5. SPACE DUST ============ */
 const DUST_COUNT = 350, DUST_SIZE = 500, DUST_HALF = DUST_SIZE / 2;
 const dustGeo = new THREE.BufferGeometry();
 const dustPos = new Float32Array(DUST_COUNT * 3);
 for (let i = 0; i < dustPos.length; i++) dustPos[i] = (Math.random() - 0.5) * DUST_SIZE;
 dustGeo.setAttribute("position", new THREE.BufferAttribute(dustPos, 3));
-const dustMat = new THREE.PointsMaterial({
-  color: 0xaad4cc, size: 1.6, transparent: true, opacity: 0, depthWrite: false
-});
-const dust = new THREE.Points(dustGeo, dustMat);
-scene.add(dust);
+const dustMat = new THREE.PointsMaterial({ color: 0xaad4cc, size: 1.6, transparent: true, opacity: 0, depthWrite: false });
+scene.add(new THREE.Points(dustGeo, dustMat));
+const dust = scene.children[scene.children.length - 1];
 
-/* ============ 6. SHIP PHYSICS ============ */
+/* ============ 6. ENGINE AUDIO ============
+   No sound files — we synthesize the hum with the Web Audio API:
+   two slightly-detuned sawtooth oscillators (the detune makes it "throb"
+   like real machinery — same beat-frequency effect as two compressors
+   running side by side) fed through a lowpass filter so it rumbles
+   instead of buzzes. Volume + pitch track the throttle each frame. */
+let audio = null;
+function initAudio() {
+  if (audio) return;
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const gain = ctx.createGain(); gain.gain.value = 0;
+  const filter = ctx.createBiquadFilter();
+  filter.type = "lowpass"; filter.frequency.value = 220;
+  const osc1 = ctx.createOscillator(); osc1.type = "sawtooth"; osc1.frequency.value = 48;
+  const osc2 = ctx.createOscillator(); osc2.type = "sawtooth"; osc2.frequency.value = 48.7;
+  osc1.connect(filter); osc2.connect(filter);
+  filter.connect(gain); gain.connect(ctx.destination);
+  osc1.start(); osc2.start();
+  audio = { ctx, gain, filter, osc1, osc2 };
+}
+// collision thump: a short burst of filtered noise
+function thump(strength) {
+  if (!audio) return;
+  const { ctx } = audio;
+  const len = ctx.sampleRate * 0.15;
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len); // fade out
+  const src = ctx.createBufferSource(); src.buffer = buf;
+  const f = ctx.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 150;
+  const g = ctx.createGain(); g.gain.value = Math.min(0.5, strength / 400);
+  src.connect(f); f.connect(g); g.connect(ctx.destination);
+  src.start();
+}
+// browsers require a user gesture before audio can start
+["keydown", "mousedown", "touchstart"].forEach(ev =>
+  addEventListener(ev, initAudio, { once: false })
+);
+
+/* ============ 7. SHIP PHYSICS ============
+   Throttle range is now -0.5 .. +1.0.
+   Positive = forward thrust, negative = reverse thrust (half power,
+   just like real maneuvering thrusters are weaker than the mains). */
 const ship = {
   velocity: new THREE.Vector3(),
   throttle: 0,
+  minThrottle: -0.5,     // NEW: reverse limit
   maxAccel: 220,
   boostMult: 2.5,
   damping: 0.995,
@@ -461,7 +511,7 @@ const ship = {
 };
 camera.position.set(0, 0, 600);
 
-/* ============ 7. INPUT ============ */
+/* ============ 8. INPUT ============ */
 const keys = {};
 addEventListener("keydown", e => keys[e.code] = true);
 addEventListener("keyup",   e => keys[e.code] = false);
@@ -472,7 +522,7 @@ addEventListener("mousemove", e => {
   steer.y = (e.clientY / innerHeight - 0.5) * 2;
 });
 
-let touchThrust = false, touchBrake = false;
+let touchThrust = false, touchBrake = false, touchRev = false;
 if (matchMedia("(pointer: coarse)").matches) document.body.classList.add("touch");
 
 let steerTouchId = null, steerStart = null;
@@ -497,30 +547,42 @@ addEventListener("touchend", e => {
 });
 const bindHold = (id, setter) => {
   const el = document.getElementById(id);
-  el.addEventListener("touchstart", e => { e.preventDefault(); setter(true); });
+  el.addEventListener("touchstart", e => { e.preventDefault(); initAudio(); setter(true); });
   el.addEventListener("touchend",   e => { e.preventDefault(); setter(false); });
 };
 bindHold("btnThrust", v => touchThrust = v);
 bindHold("btnBrake",  v => touchBrake  = v);
+bindHold("btnRev",    v => touchRev    = v);
 
-/* ============ 8. GAME LOOP ============ */
+/* ============ 9. GAME LOOP ============ */
 const clock = new THREE.Clock();
 const speedEl = document.getElementById("speed");
 const nearNameEl = document.getElementById("nearName");
 const nearDistEl = document.getElementById("nearDist");
-const throttleFill = document.getElementById("throttlefill");
+const throttleFwd = document.getElementById("throttlefwd");
+const throttleRev = document.getElementById("throttlerev");
+const alarmEl = document.getElementById("alarm");
+const revTag = document.getElementById("revtag");
 const tmpDir = new THREE.Vector3();
+const tmpNormal = new THREE.Vector3();
+let prevNearestDist = Infinity;
 
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
 
-  // throttle
+  /* ---- throttle ---- */
   if (keys["KeyW"] || touchThrust) ship.throttle = Math.min(1, ship.throttle + dt * 1.2);
-  if (keys["KeyS"] || touchBrake)  ship.throttle = Math.max(0, ship.throttle - dt * 1.2);
+  // brake (S) eases the throttle toward ZERO from either direction — never past it
+  if (keys["KeyS"] || touchBrake) {
+    if (ship.throttle > 0)      ship.throttle = Math.max(0, ship.throttle - dt * 1.2);
+    else if (ship.throttle < 0) ship.throttle = Math.min(0, ship.throttle + dt * 1.2);
+  }
+  // reverse is its own control now: R key (or REVERSE button on touch)
+  if (keys["KeyR"] || touchRev) ship.throttle = Math.max(ship.minThrottle, ship.throttle - dt * 1.2);
   if (keys["KeyX"]) { ship.throttle = 0; ship.velocity.multiplyScalar(0.9); }
 
-  // steering
+  /* ---- steering ---- */
   const dead = 0.08;
   const sx = Math.abs(steer.x) > dead ? steer.x : 0;
   const sy = Math.abs(steer.y) > dead ? steer.y : 0;
@@ -529,14 +591,51 @@ function animate() {
   if (keys["KeyQ"]) camera.rotateZ( 1.5 * dt);
   if (keys["KeyE"]) camera.rotateZ(-1.5 * dt);
 
-  // thrust
+  /* ---- thrust: throttle sign handles forward vs reverse ---- */
   camera.getWorldDirection(tmpDir);
   const boost = (keys["ShiftLeft"] || keys["ShiftRight"]) ? ship.boostMult : 1;
   ship.velocity.addScaledVector(tmpDir, ship.throttle * ship.maxAccel * boost * dt);
   ship.velocity.multiplyScalar(ship.damping);
   camera.position.addScaledVector(ship.velocity, dt);
 
-  // animate bodies
+  /* ---- COLLISION: check every body (and moons) ----
+     If we've penetrated a body's surface: push the ship back out along
+     the surface normal, then remove the inward part of our velocity and
+     flip a fraction of it (a soft bounce, not a superball). */
+  const COLLIDE_BUFFER = 12; // hull clearance in units
+  for (const b of liveBodies) {
+    // main body
+    tmpNormal.subVectors(camera.position, b.group.position);
+    let dist = tmpNormal.length();
+    let minDist = b.cfg.radius + COLLIDE_BUFFER;
+    if (dist < minDist) {
+      tmpNormal.normalize();
+      camera.position.copy(b.group.position).addScaledVector(tmpNormal, minDist);
+      const into = ship.velocity.dot(tmpNormal); // negative = moving inward
+      if (into < 0) {
+        thump(-into);
+        ship.velocity.addScaledVector(tmpNormal, -into * 1.3); // cancel + 30% bounce
+      }
+    }
+    // its moon, if any (moon position is relative to the planet group)
+    const moon = b.group.getObjectByName("moon");
+    if (moon) {
+      tmpNormal.copy(moon.position).add(b.group.position).sub(camera.position).negate();
+      dist = tmpNormal.length();
+      minDist = b.cfg.moon.radius + COLLIDE_BUFFER;
+      if (dist < minDist) {
+        tmpNormal.normalize();
+        camera.position.copy(b.group.position).add(moon.position).addScaledVector(tmpNormal, minDist);
+        const into = ship.velocity.dot(tmpNormal);
+        if (into < 0) {
+          thump(-into);
+          ship.velocity.addScaledVector(tmpNormal, -into * 1.3);
+        }
+      }
+    }
+  }
+
+  /* ---- animate bodies ---- */
   for (const b of liveBodies) {
     if (b.cfg.spin) {
       const surf = b.group.getObjectByName("surface");
@@ -549,27 +648,42 @@ function animate() {
       moon.position.set(Math.cos(o.angle) * o.distance, 0, Math.sin(o.angle) * o.distance);
     }
   }
-  // slow belt rotation
   for (const belt of belts) belt.rotation.y += 0.02 * dt;
 
-  /* space dust: keep every particle inside a box centered on the camera.
-     If one drifts out (because YOU moved), teleport it to the opposite
-     side of the box — an endless supply of dust with only 350 particles. */
+  /* ---- space dust ---- */
   const p = dust.geometry.attributes.position.array;
   const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
   for (let i = 0; i < p.length; i += 3) {
-    // ((offset % size) + size) % size handles negatives correctly in JS
     p[i]   = (((p[i]   - cx + DUST_HALF) % DUST_SIZE) + DUST_SIZE) % DUST_SIZE - DUST_HALF + cx;
     p[i+1] = (((p[i+1] - cy + DUST_HALF) % DUST_SIZE) + DUST_SIZE) % DUST_SIZE - DUST_HALF + cy;
     p[i+2] = (((p[i+2] - cz + DUST_HALF) % DUST_SIZE) + DUST_SIZE) % DUST_SIZE - DUST_HALF + cz;
   }
   dust.geometry.attributes.position.needsUpdate = true;
   const spd = ship.velocity.length();
-  dustMat.opacity = Math.min(0.65, spd / 350); // invisible when parked
+  dustMat.opacity = Math.min(0.65, spd / 350);
 
-  // HUD
+  /* ---- engine audio follows throttle ---- */
+  if (audio) {
+    const t = Math.abs(ship.throttle);
+    const boosting = boost > 1 && ship.throttle > 0;
+    audio.gain.gain.value = t * 0.10 * (boosting ? 1.7 : 1);
+    audio.filter.frequency.value = 180 + t * 500 + (boosting ? 400 : 0);
+    const f = 44 + t * 38 + (boosting ? 14 : 0);
+    audio.osc1.frequency.value = f;
+    audio.osc2.frequency.value = f * 1.014; // stays slightly detuned
+  }
+
+  /* ---- HUD ---- */
   speedEl.textContent = Math.round(spd);
-  throttleFill.style.height = (ship.throttle * 100) + "%";
+  revTag.style.visibility = ship.throttle < -0.01 ? "visible" : "hidden";
+  if (ship.throttle >= 0) {
+    throttleFwd.style.height = (ship.throttle * 67) + "%";
+    throttleRev.style.height = "0%";
+  } else {
+    throttleFwd.style.height = "0%";
+    throttleRev.style.height = (Math.abs(ship.throttle) / 0.5 * 33) + "%";
+  }
+
   let nearest = null, nearestDist = Infinity;
   for (const b of liveBodies) {
     const d = camera.position.distanceTo(b.group.position) - b.cfg.radius;
@@ -579,6 +693,11 @@ function animate() {
     nearNameEl.textContent = nearest.cfg.name;
     nearDistEl.textContent = Math.round(nearestDist).toLocaleString() + " u";
   }
+  // proximity alarm: close AND closing fast
+  const closingSpeed = (prevNearestDist - nearestDist) / dt;
+  alarmEl.style.visibility =
+    (nearestDist < 250 && closingSpeed > 60) ? "visible" : "hidden";
+  prevNearestDist = nearestDist;
 
   renderer.render(scene, camera);
 }
