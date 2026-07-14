@@ -3,9 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Drift — Deep Space Flight</title>
+<title>Drift v2 — Deep Space Flight</title>
 <style>
-  /* ============ HUD STYLING ============ */
   html, body { margin: 0; padding: 0; overflow: hidden; background: #000; height: 100%; }
   canvas { display: block; }
 
@@ -15,8 +14,6 @@
     color: #6ee7d8; text-shadow: 0 0 6px rgba(110,231,216,.6);
     user-select: none; -webkit-user-select: none;
   }
-
-  /* Crosshair */
   #crosshair {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
     width: 34px; height: 34px; opacity: .8;
@@ -27,27 +24,17 @@
   }
   #crosshair::before { left: 50%; top: 0; width: 1px; height: 100%; transform: translateX(-50%); }
   #crosshair::after  { top: 50%; left: 0; height: 1px; width: 100%; transform: translateY(-50%); }
-  #crosshair .gap {
-    position:absolute; inset: 10px; background:#000; border-radius:50%;
-    border: 1px solid rgba(110,231,216,.5); background: transparent;
-  }
-
-  /* Bottom-left flight data */
   #flightdata {
     position: absolute; left: 18px; bottom: 16px;
     font-size: 13px; line-height: 1.7; letter-spacing: 1px;
   }
   #flightdata .big { font-size: 26px; letter-spacing: 2px; }
   #flightdata .dim { opacity: .55; font-size: 11px; }
-
-  /* Top-center nearest body readout */
   #nearest {
     position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
     font-size: 12px; letter-spacing: 2px; text-align: center; opacity: .9;
   }
   #nearest .name { font-size: 16px; }
-
-  /* Throttle bar (bottom right) */
   #throttlewrap {
     position: absolute; right: 18px; bottom: 16px; text-align: right;
     font-size: 11px; letter-spacing: 1px;
@@ -61,21 +48,16 @@
     background: linear-gradient(to top, #14b8a6, #6ee7d8);
     box-shadow: 0 0 8px rgba(110,231,216,.7);
   }
-
-  /* Controls hint */
   #hint {
     position: absolute; top: 14px; left: 18px; font-size: 11px;
     line-height: 1.8; letter-spacing: 1px; opacity: .55;
   }
-
-  /* Corner brackets — cockpit frame feel */
   .bracket { position:absolute; width: 40px; height: 40px; opacity:.4; }
   .bracket.tl { top:8px; left:8px; border-top:1px solid #6ee7d8; border-left:1px solid #6ee7d8; }
   .bracket.tr { top:8px; right:8px; border-top:1px solid #6ee7d8; border-right:1px solid #6ee7d8; }
   .bracket.bl { bottom:8px; left:8px; border-bottom:1px solid #6ee7d8; border-left:1px solid #6ee7d8; }
   .bracket.br { bottom:8px; right:8px; border-bottom:1px solid #6ee7d8; border-right:1px solid #6ee7d8; }
 
-  /* ============ TOUCH CONTROLS (mobile) ============ */
   .touchbtn {
     position: fixed; pointer-events: auto;
     width: 74px; height: 74px; border-radius: 50%;
@@ -95,27 +77,22 @@
 <div id="hud">
   <div class="bracket tl"></div><div class="bracket tr"></div>
   <div class="bracket bl"></div><div class="bracket br"></div>
-
-  <div id="crosshair"><div class="gap"></div></div>
-
+  <div id="crosshair"></div>
   <div id="hint">
     MOUSE — steer<br>
     W / S — throttle up / down<br>
     SHIFT — boost &nbsp; Q / E — roll<br>
     X — full stop
   </div>
-
   <div id="nearest">
     <span class="dim">NEAREST BODY</span><br>
     <span class="name" id="nearName">—</span><br>
     <span id="nearDist">—</span>
   </div>
-
   <div id="flightdata">
     <span class="dim">VELOCITY</span><br>
     <span class="big" id="speed">0</span> <span class="dim">u/s</span>
   </div>
-
   <div id="throttlewrap">
     THR<br>
     <div id="throttlebar"><div id="throttlefill"></div></div>
@@ -128,21 +105,24 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 /* =========================================================================
-   DRIFT — a growable 3D space flight sandbox
+   DRIFT v2 — now with actual scenery
    -------------------------------------------------------------------------
-   How this file is organized (top to bottom):
-     1. CONFIG        — planets/bodies live in one array. Add stuff here.
-     2. SCENE SETUP   — renderer, camera, lights, starfield
-     3. BODY BUILDER  — turns config entries into 3D objects
-     4. SHIP PHYSICS  — velocity, thrust, damping (the flight "feel")
-     5. INPUT         — keyboard, mouse, touch
-     6. GAME LOOP     — runs ~60x/sec, updates everything
+   New since v1:
+     • Procedural planet textures — every planet's surface is painted onto
+       a hidden <canvas> at load time (continents, gas bands, craters),
+       then wrapped around the sphere. No image files needed.
+     • Atmosphere glow — a soft halo sprite behind each planet. The planet
+       itself blocks the middle of the sprite, so only the rim shows. Cheap
+       trick, looks like an atmosphere.
+     • Asteroid belt — 400 rocks around Kronos using InstancedMesh
+       (one draw call for all 400 — this matters for frame rate).
+     • Space dust — tiny particles near the ship that wrap around you.
+       This is what finally makes speed FEEL fast.
    ========================================================================= */
 
 /* ============ 1. CONFIG — YOUR SOLAR SYSTEM ============
-   Each object here becomes a body in space. To add a planet,
-   copy one of these blocks and change the values. That's it.
-   Units are arbitrary "space units" (u). */
+   New fields: style ("rocky" | "gas" | "ocean") picks the texture painter,
+   atmosphere is an optional glow color. */
 const BODIES = [
   {
     name: "HELIOS", type: "star",
@@ -150,52 +130,52 @@ const BODIES = [
     position: [0, 0, -3000],
   },
   {
-    name: "CINDER", type: "planet",
-    radius: 60, color: 0xc2553a,          // scorched rock world
+    name: "CINDER", type: "planet", style: "rocky",
+    radius: 60, color: 0xc2553a,
     position: [-900, 80, -2200],
-    spin: 0.02,                            // radians/sec self-rotation
+    spin: 0.02,
+    atmosphere: 0xff6633,
   },
   {
-    name: "AZURE", type: "planet",
-    radius: 95, color: 0x3a7bc2,          // ocean world
+    name: "AZURE", type: "planet", style: "ocean",
+    radius: 95, color: 0x3a7bc2,
     position: [700, -120, -1500],
     spin: 0.015,
+    atmosphere: 0x66aaff,
     moon: { radius: 18, distance: 200, speed: 0.25, color: 0x9aa3ad },
   },
   {
-    name: "KRONOS", type: "planet",
-    radius: 130, color: 0xc9a86b,         // gas giant
+    name: "KRONOS", type: "planet", style: "gas",
+    radius: 130, color: 0xc9a86b,
     position: [-400, 300, -600],
     spin: 0.01,
+    atmosphere: 0xddbb77,
     rings: { inner: 170, outer: 280, color: 0x8a7a5c },
+    belt: { inner: 300, outer: 420, count: 400 },   // NEW: asteroid belt
   },
   {
-    name: "VERDANT", type: "planet",
-    radius: 45, color: 0x4caf6e,          // small green world
+    name: "VERDANT", type: "planet", style: "ocean",
+    radius: 45, color: 0x4caf6e,
     position: [1400, 200, -2800],
     spin: 0.03,
+    atmosphere: 0x88ffaa,
   },
 ];
 
 /* ============ 2. SCENE SETUP ============ */
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 50000);
-
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
 
-// A little ambient so planet dark sides aren't pure black
-scene.add(new THREE.AmbientLight(0x223344, 0.6));
+scene.add(new THREE.AmbientLight(0x223344, 0.7));
 
-/* --- Starfield: one Points object with thousands of vertices.
-       Way cheaper than thousands of meshes. --- */
 function makeStars(count, spread) {
   const geo = new THREE.BufferGeometry();
   const pos = new Float32Array(count * 3);
   for (let i = 0; i < count * 3; i += 3) {
-    // random point in a big sphere shell so stars surround you
     const r = spread * (0.4 + 0.6 * Math.random());
     const theta = Math.random() * Math.PI * 2;
     const phi = Math.acos(2 * Math.random() - 1);
@@ -208,66 +188,240 @@ function makeStars(count, spread) {
   return new THREE.Points(geo, mat);
 }
 scene.add(makeStars(6000, 20000));
-
-// A few faint colored "nebula" star layers for depth
 const neb1 = makeStars(1200, 18000); neb1.material.color.set(0x88aaff); neb1.material.size = 3.5;
 const neb2 = makeStars(1200, 16000); neb2.material.color.set(0xff9977); neb2.material.size = 3.0;
 scene.add(neb1, neb2);
 
-/* ============ 3. BODY BUILDER ============ */
-const liveBodies = []; // we keep references for the HUD + animation
+/* --- Distant nebula clouds: big soft additive sprites way out there --- */
+function softBlobTexture(colorCss) {
+  const cnv = document.createElement("canvas");
+  cnv.width = cnv.height = 256;
+  const ctx = cnv.getContext("2d");
+  const g = ctx.createRadialGradient(128,128,10, 128,128,128);
+  g.addColorStop(0, colorCss);
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = g; ctx.fillRect(0,0,256,256);
+  return new THREE.CanvasTexture(cnv);
+}
+const nebulaColors = ["rgba(90,60,160,0.16)", "rgba(160,60,90,0.13)", "rgba(40,110,140,0.15)"];
+for (let i = 0; i < 9; i++) {
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: softBlobTexture(nebulaColors[i % 3]),
+    transparent: true, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  }));
+  const r = 15000;
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.acos(2 * Math.random() - 1);
+  sp.position.set(r*Math.sin(phi)*Math.cos(theta), r*Math.sin(phi)*Math.sin(theta), r*Math.cos(phi));
+  sp.scale.setScalar(6000 + Math.random() * 6000);
+  scene.add(sp);
+}
+
+/* ============ 3. PROCEDURAL TEXTURE PAINTERS ============
+   Each painter draws onto a 512x256 canvas (2:1 ratio because that's how
+   a sphere unwraps — like a world map). Three.js then wraps it around
+   the SphereGeometry automatically. */
+
+// helper: THREE.Color -> css string, with a brightness tweak
+function css(hex, mult = 1) {
+  const c = new THREE.Color(hex).multiplyScalar(mult);
+  return `rgb(${(c.r*255)|0},${(c.g*255)|0},${(c.b*255)|0})`;
+}
+
+function paintRocky(hex) {
+  const cnv = document.createElement("canvas");
+  cnv.width = 512; cnv.height = 256;
+  const ctx = cnv.getContext("2d");
+  ctx.fillStyle = css(hex, 0.85); ctx.fillRect(0, 0, 512, 256);
+
+  // mottled terrain: hundreds of soft random splotches, light and dark
+  for (let i = 0; i < 500; i++) {
+    ctx.fillStyle = css(hex, 0.6 + Math.random() * 0.9);
+    ctx.globalAlpha = 0.15;
+    ctx.beginPath();
+    ctx.arc(Math.random()*512, Math.random()*256, 4 + Math.random()*22, 0, 6.28);
+    ctx.fill();
+  }
+  // craters: dark floor + bright rim highlight on one side
+  ctx.globalAlpha = 1;
+  for (let i = 0; i < 30; i++) {
+    const x = Math.random()*512, y = 30 + Math.random()*196, r = 3 + Math.random()*9;
+    ctx.fillStyle = css(hex, 0.45);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 6.28); ctx.fill();
+    ctx.strokeStyle = css(hex, 1.5); ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(x, y, r, Math.PI*0.9, Math.PI*1.8); ctx.stroke();
+  }
+  return new THREE.CanvasTexture(cnv);
+}
+
+function paintGas(hex) {
+  const cnv = document.createElement("canvas");
+  cnv.width = 512; cnv.height = 256;
+  const ctx = cnv.getContext("2d");
+
+  // horizontal bands: brightness follows a couple of sine waves + noise,
+  // so bands cluster like Jupiter instead of looking like a barcode
+  for (let y = 0; y < 256; y++) {
+    const wave = Math.sin(y * 0.10) * 0.22 + Math.sin(y * 0.031 + 2) * 0.18;
+    const b = 0.85 + wave + (Math.random() - 0.5) * 0.05;
+    ctx.fillStyle = css(hex, b);
+    ctx.fillRect(0, y, 512, 1);
+  }
+  // storm swirls: elongated soft ovals smeared along the bands
+  for (let i = 0; i < 24; i++) {
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = css(hex, 0.6 + Math.random() * 1.0);
+    const y = Math.random()*256;
+    ctx.beginPath();
+    ctx.ellipse(Math.random()*512, y, 25 + Math.random()*55, 4 + Math.random()*7, 0, 0, 6.28);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  return new THREE.CanvasTexture(cnv);
+}
+
+function paintOcean(hex) {
+  const cnv = document.createElement("canvas");
+  cnv.width = 512; cnv.height = 256;
+  const ctx = cnv.getContext("2d");
+  ctx.fillStyle = css(hex, 0.9); ctx.fillRect(0, 0, 512, 256);
+
+  // continents: clusters of overlapping blobs that wander from a seed point
+  // (a cheap "random walk" — each blob lands near the previous one)
+  const land = css(new THREE.Color(hex).offsetHSL(-0.12, 0.05, 0.02).getHex(), 1.1);
+  const landDark = css(new THREE.Color(hex).offsetHSL(-0.12, 0.05, -0.06).getHex(), 1);
+  for (let c = 0; c < 7; c++) {
+    let x = Math.random()*512, y = 40 + Math.random()*176;
+    for (let i = 0; i < 60; i++) {
+      ctx.fillStyle = Math.random() < 0.7 ? land : landDark;
+      ctx.beginPath();
+      ctx.arc(x, y, 5 + Math.random()*14, 0, 6.28);
+      ctx.fill();
+      x = (x + (Math.random()-0.5)*30 + 512) % 512;  // wrap horizontally
+      y = Math.max(20, Math.min(236, y + (Math.random()-0.5)*22));
+    }
+  }
+  // polar ice caps
+  ctx.fillStyle = "rgba(240,248,255,0.9)";
+  ctx.fillRect(0, 0, 512, 14);
+  ctx.fillRect(0, 242, 512, 14);
+  ctx.fillStyle = "rgba(240,248,255,0.35)";
+  ctx.fillRect(0, 14, 512, 8);
+  ctx.fillRect(0, 234, 512, 8);
+  // clouds: faint white streaks
+  for (let i = 0; i < 70; i++) {
+    ctx.globalAlpha = 0.10 + Math.random()*0.10;
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.ellipse(Math.random()*512, Math.random()*256, 15 + Math.random()*35, 3 + Math.random()*5, 0, 0, 6.28);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  return new THREE.CanvasTexture(cnv);
+}
+
+const PAINTERS = { rocky: paintRocky, gas: paintGas, ocean: paintOcean };
+
+/* ============ 4. BODY BUILDER ============ */
+const liveBodies = [];
+const belts = []; // spinning asteroid belts
 
 function buildBody(cfg) {
   const group = new THREE.Group();
   group.position.set(...cfg.position);
 
   if (cfg.type === "star") {
-    // Stars glow on their own (emissive) and light everything else
-    const mat = new THREE.MeshBasicMaterial({ color: cfg.color });
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(cfg.radius, 48, 32), mat);
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(cfg.radius, 48, 32),
+      new THREE.MeshBasicMaterial({ color: cfg.color })
+    );
     group.add(mesh);
+    group.add(new THREE.PointLight(0xffe0b0, 2.2, 0, 2));
 
-    const light = new THREE.PointLight(0xffe0b0, 2.2, 0, 2);
-    group.add(light);
-
-    // Soft glow halo: a sprite with a radial-gradient canvas texture
-    const cnv = document.createElement("canvas");
-    cnv.width = cnv.height = 256;
-    const ctx = cnv.getContext("2d");
-    const g = ctx.createRadialGradient(128,128,10, 128,128,128);
-    g.addColorStop(0, "rgba(255,220,160,0.9)");
-    g.addColorStop(0.4, "rgba(255,180,100,0.25)");
-    g.addColorStop(1, "rgba(255,180,100,0)");
-    ctx.fillStyle = g; ctx.fillRect(0,0,256,256);
     const glow = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: new THREE.CanvasTexture(cnv), transparent: true, depthWrite: false
+      map: softBlobTexture("rgba(255,215,150,0.85)"),
+      transparent: true, depthWrite: false,
     }));
-    glow.scale.setScalar(cfg.radius * 6);
+    glow.scale.setScalar(cfg.radius * 7);
+    glow.name = "sunglow";
     group.add(glow);
   } else {
-    // Planets: lit material + slight roughness variation via flat shading
-    const mat = new THREE.MeshStandardMaterial({
-      color: cfg.color, roughness: 0.9, metalness: 0.05, flatShading: true
-    });
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(cfg.radius, 36, 24), mat);
+    // pick the texture painter for this planet's style
+    const painter = PAINTERS[cfg.style] || paintRocky;
+    const tex = painter(cfg.color);
+    tex.wrapS = THREE.RepeatWrapping;
+
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(cfg.radius, 48, 32),
+      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95, metalness: 0.0 })
+    );
     mesh.name = "surface";
     group.add(mesh);
 
+    // atmosphere: halo sprite at the planet's center. The planet mesh is
+    // closer to the camera than the sprite's center, so it hides the middle
+    // of the glow — only the rim peeks out. Instant atmosphere.
+    if (cfg.atmosphere) {
+      const c = new THREE.Color(cfg.atmosphere);
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: softBlobTexture(`rgba(${(c.r*255)|0},${(c.g*255)|0},${(c.b*255)|0},0.55)`),
+        transparent: true, depthWrite: false,
+      }));
+      halo.scale.setScalar(cfg.radius * 2.75);
+      group.add(halo);
+    }
+
     if (cfg.rings) {
-      const ringGeo = new THREE.RingGeometry(cfg.rings.inner, cfg.rings.outer, 64);
-      const ringMat = new THREE.MeshBasicMaterial({
-        color: cfg.rings.color, side: THREE.DoubleSide,
-        transparent: true, opacity: 0.55
-      });
-      const ring = new THREE.Mesh(ringGeo, ringMat);
-      ring.rotation.x = Math.PI / 2.4; // tilt them a bit
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(cfg.rings.inner, cfg.rings.outer, 64),
+        new THREE.MeshBasicMaterial({
+          color: cfg.rings.color, side: THREE.DoubleSide,
+          transparent: true, opacity: 0.5,
+        })
+      );
+      ring.rotation.x = Math.PI / 2.4;
       group.add(ring);
+      // a thinner, brighter inner band for detail
+      const ring2 = new THREE.Mesh(
+        new THREE.RingGeometry(cfg.rings.inner * 0.92, cfg.rings.inner * 0.98, 64),
+        new THREE.MeshBasicMaterial({
+          color: cfg.rings.color, side: THREE.DoubleSide,
+          transparent: true, opacity: 0.8,
+        })
+      );
+      ring2.rotation.x = Math.PI / 2.4;
+      group.add(ring2);
+    }
+
+    // asteroid belt: InstancedMesh = ONE mesh drawn N times with different
+    // transforms. 400 separate Mesh objects would tank the frame rate;
+    // this is a single draw call.
+    if (cfg.belt) {
+      const rockGeo = new THREE.DodecahedronGeometry(1, 0);
+      const rockMat = new THREE.MeshStandardMaterial({ color: 0x8a8378, roughness: 1, flatShading: true });
+      const rocks = new THREE.InstancedMesh(rockGeo, rockMat, cfg.belt.count);
+      const dummy = new THREE.Object3D();
+      for (let i = 0; i < cfg.belt.count; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const dist = cfg.belt.inner + Math.random() * (cfg.belt.outer - cfg.belt.inner);
+        dummy.position.set(Math.cos(ang) * dist, (Math.random() - 0.5) * 26, Math.sin(ang) * dist);
+        dummy.rotation.set(Math.random()*6.28, Math.random()*6.28, Math.random()*6.28);
+        dummy.scale.setScalar(1.5 + Math.random() * 6);
+        dummy.updateMatrix();
+        rocks.setMatrixAt(i, dummy.matrix);
+      }
+      const beltGroup = new THREE.Group();
+      beltGroup.rotation.x = Math.PI / 2.4 - Math.PI / 2; // match ring tilt
+      beltGroup.add(rocks);
+      group.add(beltGroup);
+      belts.push(beltGroup);
     }
 
     if (cfg.moon) {
       const moon = new THREE.Mesh(
         new THREE.SphereGeometry(cfg.moon.radius, 20, 14),
-        new THREE.MeshStandardMaterial({ color: cfg.moon.color, roughness: 1, flatShading: true })
+        new THREE.MeshStandardMaterial({ map: paintRocky(cfg.moon.color), roughness: 1 })
       );
       moon.userData.orbit = { distance: cfg.moon.distance, speed: cfg.moon.speed, angle: Math.random() * 6.28 };
       moon.name = "moon";
@@ -280,43 +434,50 @@ function buildBody(cfg) {
 }
 BODIES.forEach(buildBody);
 
-/* ============ 4. SHIP PHYSICS ============
-   The "ship" is just the camera plus a velocity vector.
-   Each frame:  velocity += forward * throttle;  velocity *= damping;
-   That tiny damping (0.995) is what makes it feel like drifting
-   through space instead of driving on rails. */
+/* ============ 5. SPACE DUST ============
+   ~350 tiny points floating in a 500-unit box that travels with the ship.
+   Each frame we "wrap" any particle that falls out the back of the box to
+   the front. Your brain reads the streaming motion as speed. Their
+   brightness scales with velocity so they vanish when you're parked. */
+const DUST_COUNT = 350, DUST_SIZE = 500, DUST_HALF = DUST_SIZE / 2;
+const dustGeo = new THREE.BufferGeometry();
+const dustPos = new Float32Array(DUST_COUNT * 3);
+for (let i = 0; i < dustPos.length; i++) dustPos[i] = (Math.random() - 0.5) * DUST_SIZE;
+dustGeo.setAttribute("position", new THREE.BufferAttribute(dustPos, 3));
+const dustMat = new THREE.PointsMaterial({
+  color: 0xaad4cc, size: 1.6, transparent: true, opacity: 0, depthWrite: false
+});
+const dust = new THREE.Points(dustGeo, dustMat);
+scene.add(dust);
+
+/* ============ 6. SHIP PHYSICS ============ */
 const ship = {
   velocity: new THREE.Vector3(),
-  throttle: 0,          // 0..1, set by W/S
-  maxAccel: 220,        // units/sec² at full throttle
+  throttle: 0,
+  maxAccel: 220,
   boostMult: 2.5,
-  damping: 0.995,       // per-frame velocity retention (space has no drag; this is a fun cheat)
-  turnSpeed: 1.6,       // how fast mouse steering turns the nose
+  damping: 0.995,
+  turnSpeed: 1.6,
 };
-camera.position.set(0, 0, 600); // start well back from the system
+camera.position.set(0, 0, 600);
 
-/* ============ 5. INPUT ============ */
+/* ============ 7. INPUT ============ */
 const keys = {};
 addEventListener("keydown", e => keys[e.code] = true);
 addEventListener("keyup",   e => keys[e.code] = false);
 
-// Mouse steering: how far the cursor is from screen center = turn rate.
-// (No pointer-lock needed, works in the artifact preview.)
 const steer = { x: 0, y: 0 };
 addEventListener("mousemove", e => {
-  steer.x = (e.clientX / innerWidth  - 0.5) * 2;  // -1 .. 1
+  steer.x = (e.clientX / innerWidth  - 0.5) * 2;
   steer.y = (e.clientY / innerHeight - 0.5) * 2;
 });
 
-// ---- Touch: drag to steer, hold buttons to thrust/brake ----
 let touchThrust = false, touchBrake = false;
-const isTouch = matchMedia("(pointer: coarse)").matches;
-if (isTouch) document.body.classList.add("touch");
+if (matchMedia("(pointer: coarse)").matches) document.body.classList.add("touch");
 
 let steerTouchId = null, steerStart = null;
 addEventListener("touchstart", e => {
   for (const t of e.changedTouches) {
-    // ignore touches that begin on the buttons
     if (t.target.classList && t.target.classList.contains("touchbtn")) continue;
     if (steerTouchId === null) { steerTouchId = t.identifier; steerStart = { x: t.clientX, y: t.clientY }; }
   }
@@ -342,7 +503,7 @@ const bindHold = (id, setter) => {
 bindHold("btnThrust", v => touchThrust = v);
 bindHold("btnBrake",  v => touchBrake  = v);
 
-/* ============ 6. GAME LOOP ============ */
+/* ============ 8. GAME LOOP ============ */
 const clock = new THREE.Clock();
 const speedEl = document.getElementById("speed");
 const nearNameEl = document.getElementById("nearName");
@@ -352,31 +513,30 @@ const tmpDir = new THREE.Vector3();
 
 function animate() {
   requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.05); // cap dt so tab-switching doesn't teleport you
+  const dt = Math.min(clock.getDelta(), 0.05);
 
-  /* ---- throttle ---- */
+  // throttle
   if (keys["KeyW"] || touchThrust) ship.throttle = Math.min(1, ship.throttle + dt * 1.2);
   if (keys["KeyS"] || touchBrake)  ship.throttle = Math.max(0, ship.throttle - dt * 1.2);
-  if (keys["KeyX"]) { ship.throttle = 0; ship.velocity.multiplyScalar(0.9); } // panic brake
+  if (keys["KeyX"]) { ship.throttle = 0; ship.velocity.multiplyScalar(0.9); }
 
-  /* ---- steering: rotate the camera based on cursor offset ----
-     Small deadzone in the middle so the ship holds steady. */
+  // steering
   const dead = 0.08;
   const sx = Math.abs(steer.x) > dead ? steer.x : 0;
   const sy = Math.abs(steer.y) > dead ? steer.y : 0;
-  camera.rotateY(-sx * ship.turnSpeed * dt); // yaw
-  camera.rotateX(-sy * ship.turnSpeed * dt); // pitch
-  if (keys["KeyQ"]) camera.rotateZ( 1.5 * dt); // roll left
-  if (keys["KeyE"]) camera.rotateZ(-1.5 * dt); // roll right
+  camera.rotateY(-sx * ship.turnSpeed * dt);
+  camera.rotateX(-sy * ship.turnSpeed * dt);
+  if (keys["KeyQ"]) camera.rotateZ( 1.5 * dt);
+  if (keys["KeyE"]) camera.rotateZ(-1.5 * dt);
 
-  /* ---- thrust along wherever the nose points ---- */
-  camera.getWorldDirection(tmpDir); // unit vector: where we're facing
+  // thrust
+  camera.getWorldDirection(tmpDir);
   const boost = (keys["ShiftLeft"] || keys["ShiftRight"]) ? ship.boostMult : 1;
   ship.velocity.addScaledVector(tmpDir, ship.throttle * ship.maxAccel * boost * dt);
   ship.velocity.multiplyScalar(ship.damping);
   camera.position.addScaledVector(ship.velocity, dt);
 
-  /* ---- animate bodies: spin planets, orbit moons ---- */
+  // animate bodies
   for (const b of liveBodies) {
     if (b.cfg.spin) {
       const surf = b.group.getObjectByName("surface");
@@ -389,11 +549,27 @@ function animate() {
       moon.position.set(Math.cos(o.angle) * o.distance, 0, Math.sin(o.angle) * o.distance);
     }
   }
+  // slow belt rotation
+  for (const belt of belts) belt.rotation.y += 0.02 * dt;
 
-  /* ---- HUD: speed + nearest body ---- */
-  speedEl.textContent = Math.round(ship.velocity.length());
+  /* space dust: keep every particle inside a box centered on the camera.
+     If one drifts out (because YOU moved), teleport it to the opposite
+     side of the box — an endless supply of dust with only 350 particles. */
+  const p = dust.geometry.attributes.position.array;
+  const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
+  for (let i = 0; i < p.length; i += 3) {
+    // ((offset % size) + size) % size handles negatives correctly in JS
+    p[i]   = (((p[i]   - cx + DUST_HALF) % DUST_SIZE) + DUST_SIZE) % DUST_SIZE - DUST_HALF + cx;
+    p[i+1] = (((p[i+1] - cy + DUST_HALF) % DUST_SIZE) + DUST_SIZE) % DUST_SIZE - DUST_HALF + cy;
+    p[i+2] = (((p[i+2] - cz + DUST_HALF) % DUST_SIZE) + DUST_SIZE) % DUST_SIZE - DUST_HALF + cz;
+  }
+  dust.geometry.attributes.position.needsUpdate = true;
+  const spd = ship.velocity.length();
+  dustMat.opacity = Math.min(0.65, spd / 350); // invisible when parked
+
+  // HUD
+  speedEl.textContent = Math.round(spd);
   throttleFill.style.height = (ship.throttle * 100) + "%";
-
   let nearest = null, nearestDist = Infinity;
   for (const b of liveBodies) {
     const d = camera.position.distanceTo(b.group.position) - b.cfg.radius;
