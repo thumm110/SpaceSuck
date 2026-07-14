@@ -897,6 +897,16 @@ const MAX_BANK = 0.35;               // ~20° at a full-rate turn
 const bankQ = new THREE.Quaternion();
 const Z_AXIS = new THREE.Vector3(0, 0, 1);
 
+/* chase-cam containment: the easing lag is the feel, but it needs limits —
+   at full throttle the camera used to fall ~120u behind (ship = a speck),
+   and a whip turn could swing the ship clean out of frame. */
+const MAX_CHASE_DIST = 55;                    // leash: max camera-to-ship gap
+const MAX_OFFSCREEN = THREE.MathUtils.degToRad(28); // keep ship within 28° of center
+const chaseDir = new THREE.Vector3();
+const chaseFwd = new THREE.Vector3();
+const chaseAxis = new THREE.Vector3();
+const chaseFixQ = new THREE.Quaternion();
+
 function toggleView() {
   firstPerson = !firstPerson;
   viewTag.textContent = firstPerson ? "VIEW: COCKPIT" : "VIEW: CHASE";
@@ -1099,6 +1109,30 @@ function animate() {
     const k = 1 - Math.exp(-8 * dt);
     camera.position.lerp(tmpOffset, k);
     camera.quaternion.slerp(shipObj.quaternion, 1 - Math.exp(-6 * dt));
+
+    // leash: at speed the lag grows with velocity — never let the ship
+    // recede past MAX_CHASE_DIST no matter how fast we're going
+    const gap = camera.position.distanceTo(shipObj.position);
+    if (gap > MAX_CHASE_DIST) {
+      camera.position.sub(shipObj.position)
+        .multiplyScalar(MAX_CHASE_DIST / gap)
+        .add(shipObj.position);
+    }
+
+    // frame guarantee: if a hard turn swings the ship more than 28° off
+    // camera center, rotate the camera the MINIMUM amount to catch it —
+    // the easing lag still reads, but the ship can't leave the screen
+    chaseDir.copy(shipObj.position).sub(camera.position).normalize();
+    chaseFwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    const offAngle = chaseFwd.angleTo(chaseDir);
+    if (offAngle > MAX_OFFSCREEN) {
+      chaseAxis.crossVectors(chaseFwd, chaseDir);
+      if (chaseAxis.lengthSq() > 1e-8) {
+        chaseAxis.normalize();
+        chaseFixQ.setFromAxisAngle(chaseAxis, offAngle - MAX_OFFSCREEN);
+        camera.quaternion.premultiply(chaseFixQ);
+      }
+    }
   }
 
   /* ---- engine glows track the throttle ---- */
