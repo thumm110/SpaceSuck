@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Drift v4 — Deep Space Flight</title>
+<title>Drift v5 — Deep Space Flight</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #000; height: 100%; }
   canvas { display: block; }
@@ -38,6 +38,10 @@
   #flightdata .big { font-size: 26px; letter-spacing: 2px; }
   #flightdata .dim { opacity: .55; font-size: 11px; }
   #revtag { color: #ffb066; text-shadow: 0 0 6px rgba(255,176,102,.6); visibility: hidden; }
+  #viewtag {
+    position: absolute; right: 18px; top: 14px;
+    font-size: 11px; letter-spacing: 2px; opacity: .7;
+  }
   #nearest {
     position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
     font-size: 12px; letter-spacing: 2px; text-align: center; opacity: .9;
@@ -94,6 +98,7 @@
   #btnThrust { right: 24px; bottom: 240px; }
   #btnBrake  { right: 24px; bottom: 150px; }
   #btnRev    { right: 24px; bottom: 60px; border-color: rgba(255,176,102,.6); color: #ffb066; }
+  #btnView   { left: 24px; bottom: 60px; width: 60px; height: 60px; font-size: 11px; }
   body.touch .touchbtn { display: flex; }
   body.touch #hint { display: none; }
 </style>
@@ -106,10 +111,11 @@
   <div id="crosshair"></div>
   <div id="hint">
     MOUSE — steer<br>
-    W / S — throttle up / brake (stops at zero)<br>
-    R — reverse thrust<br>
-    SHIFT — boost &nbsp; Q / E — roll &nbsp; X — full stop
+    W — thrust &nbsp; S — stop &nbsp; R — reverse<br>
+    V — toggle view<br>
+    SHIFT — boost &nbsp; A / D — roll left / right
   </div>
+  <div id="viewtag">VIEW: COCKPIT</div>
   <div id="nearest">
     <span class="dim">NEAREST BODY</span><br>
     <span class="name" id="nearName">—</span><br>
@@ -132,45 +138,37 @@
 </div>
 
 <button class="touchbtn" id="btnThrust">THRUST</button>
-<button class="touchbtn" id="btnBrake">BRAKE</button>
+<button class="touchbtn" id="btnBrake">STOP</button>
 <button class="touchbtn" id="btnRev">REVERSE</button>
+<button class="touchbtn" id="btnView">VIEW</button>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 /* =========================================================================
-   DRIFT v4 — "Callister-grade" planets
+   DRIFT v5 — you have a ship now
    -------------------------------------------------------------------------
-   The old planets were random paint splotches. v4 planets are built from
-   FRACTAL NOISE — the same idea behind Minecraft terrain and film VFX:
+   THE BIG ARCHITECTURAL CHANGE:
+   In v1–v4 the camera WAS the ship — physics moved the camera directly.
+   Now there's a proper split:
 
-     1. Value noise: a grid of random numbers, smoothly blended between.
-        One layer looks like soft lumps.
-     2. fBm ("fractal Brownian motion"): stack several layers — each one
-        twice the detail, half the strength. Big layer = continents,
-        middle layers = mountain ranges, small layers = coastline fuzz.
-     3. We sample that noise in 3D *on the sphere's surface*, so the
-        texture wraps seamlessly — no ugly seam, no pinched poles.
-     4. The height value at each pixel picks a color: deep ocean →
-        shallows → beach → plains → mountains → snow, with latitude
-        deciding where the ice caps go.
+     shipObj (invisible Group) — carries position, rotation, velocity.
+       └─ shipMesh — the visible fighter, built from ~12 primitives.
 
-   That height data gets reused three ways per planet:
-     • color map  — what you see
-     • bump map   — fakes 3D relief, mountains catch the sunlight
-     • roughness map — oceans are smooth (sun glints off them),
-                       land is matte. This sells "water" HARD.
+     camera — just a viewpoint:
+       • COCKPIT view: snaps exactly onto shipObj every frame
+         (ship model hidden so it doesn't block your face)
+       • CHASE view: eases toward a point behind-and-above the ship.
+         The easing lag is the secret sauce — when you whip the nose
+         around, the camera takes a beat to catch up, and you SEE the
+         ship bank across the screen. Instant camera = no feeling.
 
-   Plus: a separate drifting cloud sphere, and a real atmosphere — a
-   custom shader that glows only at the planet's edge (fresnel rim),
-   like Earth's blue limb in orbital photos.
+   The ship model is welded together from stock Three.js shapes:
+   boxes, cones, cylinders — no 3D modeling software, all code.
+   Engine nozzles glow teal with throttle; nose retro-thrusters glow
+   amber when you're in reverse.
    ========================================================================= */
 
-/* ============ 1. CONFIG — YOUR SOLAR SYSTEM ============
-   New per-planet fields:
-     seed     — change it, get a whole different world. Same seed = same world.
-     style    — "terrestrial" (oceans/continents), "gas", "rocky"
-     clouds   — cloud layer on/off
-     palette  — colors for the terrain bands (terrestrial/rocky) */
+/* ============ 1. CONFIG — YOUR SOLAR SYSTEM ============ */
 const BODIES = [
   {
     name: "HELIOS", type: "star",
@@ -223,9 +221,6 @@ const BODIES = [
 ];
 
 /* ============ 2. NOISE ENGINE ============ */
-
-// Seeded random number generator (mulberry32) — same seed, same "random"
-// sequence every time. This is why seed:42 always builds the same planet.
 function mulberry32(seed) {
   return function() {
     seed |= 0; seed = seed + 0x6D2B79F5 | 0;
@@ -234,9 +229,6 @@ function mulberry32(seed) {
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   };
 }
-
-// Build a shuffled lookup table for fast hashing (array reads, no trig —
-// this is what makes generating half a million pixels tolerable)
 function makePerm(seed) {
   const rand = mulberry32(seed);
   const p = new Uint8Array(256);
@@ -249,10 +241,6 @@ function makePerm(seed) {
   for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
   return perm;
 }
-
-// 3D value noise: random value at each grid corner, smoothly blended.
-// Returns 0..1. "Smoothly" = the fade curve t²(3-2t), which kills the
-// grid-line artifacts you'd get from plain linear blending.
 function makeNoise(perm) {
   const fade = t => t * t * (3 - 2 * t);
   const corner = (xi, yi, zi) => perm[(perm[(perm[xi & 255] + yi) & 255] + zi) & 255] / 255;
@@ -269,8 +257,6 @@ function makeNoise(perm) {
     return y0 + (y1 - y0) * zf;
   };
 }
-
-// fBm: stack octaves of noise. Big + medium + small detail = terrain.
 function makeFbm(noise3) {
   return function fbm(x, y, z, octaves) {
     let sum = 0, amp = 0.5, freq = 1, norm = 0;
@@ -279,15 +265,11 @@ function makeFbm(noise3) {
       norm += amp;
       amp *= 0.5; freq *= 2;
     }
-    return sum / norm; // normalized back to 0..1
+    return sum / norm;
   };
 }
 
-/* ============ 3. PLANET TEXTURE GENERATORS ============
-   Each generator walks every pixel of a 1024x512 canvas. For each pixel
-   it finds the matching 3D point on the sphere, samples fBm there, and
-   writes color + height + roughness. */
-
+/* ============ 3. PLANET TEXTURE GENERATORS ============ */
 const TEX_W = 1024, TEX_H = 512;
 
 function hexToRgb(hex) {
@@ -319,30 +301,27 @@ function genTerrestrial(cfg) {
   const SEA = 0.52, SCALE = 2.3;
 
   for (let y = 0; y < TEX_H; y++) {
-    const phi = (y + 0.5) / TEX_H * Math.PI;      // 0 at north pole
+    const phi = (y + 0.5) / TEX_H * Math.PI;
     const sinP = Math.sin(phi), cosP = Math.cos(phi);
-    const lat = Math.abs(cosP);                    // 0 equator, 1 poles
+    const lat = Math.abs(cosP);
     for (let x = 0; x < TEX_W; x++) {
       const theta = (x + 0.5) / TEX_W * Math.PI * 2;
-      // the 3D point on the unit sphere this pixel wraps to:
       const px = sinP * Math.cos(theta), py = cosP, pz = sinP * Math.sin(theta);
 
-      // terrain height: broad continents + finer detail, stretched for contrast
       let h = fbm(px * SCALE + 10, py * SCALE + 10, pz * SCALE + 10, 6);
       h = (h - 0.5) * 2.6 + 0.5;
       h = Math.max(0, Math.min(1, h));
 
-      // "temperature": cold at poles and at altitude
       const temp = 1.15 - Math.pow(lat, 1.7) * 1.35 - Math.max(0, h - SEA) * 1.4;
 
       let rgb, roughness;
       if (h < SEA) {
-        const depth = (SEA - h) / SEA;             // 0 shore, 1 abyss
+        const depth = (SEA - h) / SEA;
         rgb = lerp3(pal.shallow, pal.deep, Math.min(1, depth * 2.2));
-        if (temp < 0.02) rgb = lerp3(rgb, pal.snow, 0.9);   // frozen sea = ice cap
-        roughness = temp < 0.02 ? 200 : 70;         // liquid water is SHINY
+        if (temp < 0.02) rgb = lerp3(rgb, pal.snow, 0.9);
+        roughness = temp < 0.02 ? 200 : 70;
       } else {
-        const alt = (h - SEA) / (1 - SEA);          // 0 beach, 1 peak
+        const alt = (h - SEA) / (1 - SEA);
         if      (alt < 0.06) rgb = pal.sand;
         else if (alt < 0.45) rgb = lerp3(pal.low, pal.high, alt / 0.45 * 0.5);
         else                 rgb = lerp3(pal.low, pal.high, 0.5 + (alt - 0.45) * 0.9);
@@ -352,7 +331,6 @@ function genTerrestrial(cfg) {
 
       const i = (y * TEX_W + x) * 4;
       color[i] = rgb[0]; color[i+1] = rgb[1]; color[i+2] = rgb[2]; color[i+3] = 255;
-      // bump: ocean is flat (constant), land rises with height
       const bh = h < SEA ? 90 : 90 + ((h - SEA) / (1 - SEA)) * 165;
       bump[i] = bump[i+1] = bump[i+2] = bh; bump[i+3] = 255;
       rough[i] = rough[i+1] = rough[i+2] = roughness; rough[i+3] = 255;
@@ -379,7 +357,6 @@ function genRocky(cfg) {
       const px = sinP * Math.cos(theta), py = cosP, pz = sinP * Math.sin(theta);
 
       const h = fbm(px * 3 + 5, py * 3 + 5, pz * 3 + 5, 6);
-      // ridged detail: fold the noise to make sharp canyon-like creases
       const ridge = 1 - Math.abs(fbm(px * 6, py * 6, pz * 6, 4) - 0.5) * 2;
       const v = Math.max(0, Math.min(1, h * 0.7 + ridge * 0.3));
 
@@ -405,17 +382,12 @@ function genGas(cfg) {
       const theta = (x + 0.5) / TEX_W * Math.PI * 2;
       const px = sinP * Math.cos(theta), py = cosP, pz = sinP * Math.sin(theta);
 
-      // DOMAIN WARPING — the one weird trick behind every good gas giant:
-      // instead of coloring clean latitude bands, we let noise push each
-      // pixel's latitude around before picking its band. Straight stripes
-      // become swirling, turbulent flow. Jupiter in one line of math.
       const warp = (fbm(px * 3, py * 3, pz * 3, 4) - 0.5) * 0.55;
       const band = Math.sin((py + warp) * 14) * 0.5 + 0.5;
       const turb = fbm(px * 8 + 30, py * 8 + 30, pz * 8 + 30, 3);
 
       let rgb = band < 0.5 ? lerp3(dark, mid, band * 2) : lerp3(mid, light, (band - 0.5) * 2);
       rgb = lerp3(rgb, mid, (turb - 0.5) * 0.4 + 0.2);
-      // a great storm spot: brighten where a low-freq noise peaks hard
       const storm = fbm(px * 2 + 77, py * 2 + 77, pz * 2 + 77, 3);
       if (storm > 0.66) rgb = lerp3(rgb, light, Math.min(1, (storm - 0.66) * 8));
 
@@ -426,7 +398,6 @@ function genGas(cfg) {
   return { map: canvasFromData(color, TEX_W, TEX_H) };
 }
 
-// cloud layer: noise thresholded into puffy alpha, drawn white
 function genClouds(seed) {
   const fbm = makeFbm(makeNoise(makePerm(seed + 1000)));
   const W = 512, H = 256;
@@ -438,7 +409,6 @@ function genClouds(seed) {
       const theta = (x + 0.5) / W * Math.PI * 2;
       const px = sinP * Math.cos(theta), py = cosP, pz = sinP * Math.sin(theta);
       const n = fbm(px * 3.5, py * 3.5, pz * 3.5, 5);
-      // smoothstep: below 0.52 = clear sky, above 0.62 = solid cloud
       let a = (n - 0.52) / 0.10;
       a = Math.max(0, Math.min(1, a));
       a = a * a * (3 - 2 * a);
@@ -449,7 +419,6 @@ function genClouds(seed) {
   return canvasFromData(data, W, H);
 }
 
-// the sun gets a boiling granulation surface instead of flat orange
 function genSun(cfg) {
   const fbm = makeFbm(makeNoise(makePerm(cfg.seed)));
   const W = 512, H = 256;
@@ -469,12 +438,7 @@ function genSun(cfg) {
   return canvasFromData(data, W, H);
 }
 
-/* ============ 4. ATMOSPHERE SHADER ============
-   A sphere slightly bigger than the planet, rendered inside-out
-   (BackSide), with a fragment shader that's transparent face-on and
-   glows at grazing angles — so you only see it at the planet's rim.
-   That's the fresnel effect: same reason a lake mirrors the far shore
-   but you see straight down through the water at your feet. */
+/* ============ 4. ATMOSPHERE SHADER ============ */
 function makeAtmosphere(radius, colorHex, strength) {
   const mat = new THREE.ShaderMaterial({
     uniforms: {
@@ -575,7 +539,106 @@ function makeLabel(text) {
   }));
 }
 
-/* ============ 6. BODY BUILDER ============ */
+/* ============ 6. THE SHIP — welded from stock primitives ============
+   Coordinate convention: the ship faces -Z (same direction the camera
+   looks by default), so "forward" for physics and for the model agree. */
+function buildShipMesh() {
+  const ship = new THREE.Group();
+
+  const hullMat   = new THREE.MeshStandardMaterial({ color: 0x9aa4ad, metalness: 0.7, roughness: 0.35 });
+  const darkMat   = new THREE.MeshStandardMaterial({ color: 0x3a4148, metalness: 0.6, roughness: 0.5 });
+  const accentMat = new THREE.MeshStandardMaterial({ color: 0x14b8a6, metalness: 0.4, roughness: 0.4, emissive: 0x0a5c52, emissiveIntensity: 0.5 });
+  const glassMat  = new THREE.MeshStandardMaterial({ color: 0x1a3448, metalness: 0.9, roughness: 0.1, transparent: true, opacity: 0.9 });
+
+  // fuselage
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.9, 7), hullMat);
+  ship.add(hull);
+
+  // nose cone (cone points +Y by default; rotate so it points -Z)
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.9, 2.6, 6), hullMat);
+  nose.rotation.x = -Math.PI / 2;
+  nose.position.set(0, 0, -4.6);
+  ship.add(nose);
+
+  // cockpit canopy: half-sphere stretched into a teardrop
+  const canopy = new THREE.Mesh(
+    new THREE.SphereGeometry(0.7, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+    glassMat
+  );
+  canopy.scale.set(1, 0.75, 1.7);
+  canopy.position.set(0, 0.45, -1.6);
+  ship.add(canopy);
+
+  // swept wings (dihedral tilt + backward sweep, like an X-wing's cousin)
+  const wingGeo = new THREE.BoxGeometry(3.4, 0.12, 2.1);
+  const wingL = new THREE.Mesh(wingGeo, darkMat);
+  wingL.position.set(-2.5, -0.1, 1.3);
+  wingL.rotation.z = 0.09;   // dihedral: tips slightly up
+  wingL.rotation.y = -0.35;  // sweep: trailing edge back
+  ship.add(wingL);
+  const wingR = new THREE.Mesh(wingGeo, darkMat);
+  wingR.position.set(2.5, -0.1, 1.3);
+  wingR.rotation.z = -0.09;
+  wingR.rotation.y = 0.35;
+  ship.add(wingR);
+
+  // wingtip accent lights
+  const tipGeo = new THREE.BoxGeometry(0.25, 0.2, 1.0);
+  const tipL = new THREE.Mesh(tipGeo, accentMat);
+  tipL.position.set(-4.0, 0.05, 1.85);
+  ship.add(tipL);
+  const tipR = new THREE.Mesh(tipGeo, accentMat);
+  tipR.position.set(4.0, 0.05, 1.85);
+  ship.add(tipR);
+
+  // tail fin
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.4, 1.7), darkMat);
+  fin.position.set(0, 0.9, 2.9);
+  ship.add(fin);
+
+  // dorsal accent stripe
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 6.4), accentMat);
+  stripe.position.set(0, 0.49, -0.2);
+  ship.add(stripe);
+
+  // twin engine nacelles
+  const engGeo = new THREE.CylinderGeometry(0.42, 0.55, 1.8, 10);
+  for (const side of [-1, 1]) {
+    const eng = new THREE.Mesh(engGeo, darkMat);
+    eng.rotation.x = Math.PI / 2;
+    eng.position.set(side * 1.05, -0.05, 3.4);
+    ship.add(eng);
+  }
+
+  // engine glow sprites (teal, rear) — scaled by throttle each frame
+  const engineGlows = [];
+  for (const side of [-1, 1]) {
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: softBlobTexture("rgba(110,231,216,0.95)"),
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    }));
+    glow.position.set(side * 1.05, -0.05, 4.5);
+    glow.scale.setScalar(0.001);
+    ship.add(glow);
+    engineGlows.push(glow);
+  }
+  // retro-thruster glows (amber, nose) — light up in reverse
+  const retroGlows = [];
+  for (const side of [-1, 1]) {
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: softBlobTexture("rgba(255,176,102,0.95)"),
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    }));
+    glow.position.set(side * 0.75, 0, -3.6);
+    glow.scale.setScalar(0.001);
+    ship.add(glow);
+    retroGlows.push(glow);
+  }
+
+  return { mesh: ship, engineGlows, retroGlows };
+}
+
+/* ============ 7. BODY BUILDER ============ */
 const liveBodies = [];
 const belts = [];
 const cloudLayers = [];
@@ -602,7 +665,7 @@ function buildBody(cfg) {
     let texs, matOpts = { metalness: 0.0 };
     if (cfg.style === "terrestrial") {
       texs = genTerrestrial(cfg);
-      matOpts.roughness = 1.0;                 // roughnessMap multiplies this
+      matOpts.roughness = 1.0;
       matOpts.roughnessMap = texs.roughnessMap;
       matOpts.bumpMap = texs.bumpMap;
     } else if (cfg.style === "gas") {
@@ -699,7 +762,7 @@ function buildBody(cfg) {
   liveBodies.push({ cfg, group });
 }
 
-/* ============ 7. SPACE DUST ============ */
+/* ============ 8. SPACE DUST ============ */
 const DUST_COUNT = 350, DUST_SIZE = 500, DUST_HALF = DUST_SIZE / 2;
 const dustGeo = new THREE.BufferGeometry();
 const dustPos = new Float32Array(DUST_COUNT * 3);
@@ -709,7 +772,7 @@ const dustMat = new THREE.PointsMaterial({ color: 0xaad4cc, size: 1.6, transpare
 const dust = new THREE.Points(dustGeo, dustMat);
 scene.add(dust);
 
-/* ============ 8. ENGINE AUDIO ============ */
+/* ============ 9. ENGINE AUDIO ============ */
 let audio = null;
 function initAudio() {
   if (audio) return;
@@ -739,7 +802,8 @@ function thump(strength) {
 }
 ["keydown", "mousedown", "touchstart"].forEach(ev => addEventListener(ev, initAudio));
 
-/* ============ 9. SHIP PHYSICS ============ */
+/* ============ 10. SHIP OBJECT + CAMERA RIG ============
+   shipObj carries all physics. The camera is now just a viewer. */
 const ship = {
   velocity: new THREE.Vector3(),
   throttle: 0,
@@ -749,12 +813,30 @@ const ship = {
   damping: 0.995,
   turnSpeed: 1.6,
 };
-camera.position.set(0, 0, 600);
+const shipObj = new THREE.Group();
+shipObj.position.set(0, 0, 600);
+scene.add(shipObj);
 
-/* ============ 10. INPUT ============ */
+const { mesh: shipMesh, engineGlows, retroGlows } = buildShipMesh();
+shipObj.add(shipMesh);
+
+let firstPerson = true;                          // start in the cockpit
+const CHASE_OFFSET = new THREE.Vector3(0, 4.5, 17); // behind & above, in ship-local space
+const tmpOffset = new THREE.Vector3();
+const viewTag = document.getElementById("viewtag");
+
+function toggleView() {
+  firstPerson = !firstPerson;
+  viewTag.textContent = firstPerson ? "VIEW: COCKPIT" : "VIEW: CHASE";
+}
+
+/* ============ 11. INPUT ============ */
 const keys = {};
-addEventListener("keydown", e => keys[e.code] = true);
-addEventListener("keyup",   e => keys[e.code] = false);
+addEventListener("keydown", e => {
+  if (e.code === "KeyV" && !keys["KeyV"]) toggleView(); // fire once per press
+  keys[e.code] = true;
+});
+addEventListener("keyup", e => keys[e.code] = false);
 
 const steer = { x: 0, y: 0 };
 addEventListener("mousemove", e => {
@@ -793,8 +875,11 @@ const bindHold = (id, setter) => {
 bindHold("btnThrust", v => touchThrust = v);
 bindHold("btnBrake",  v => touchBrake  = v);
 bindHold("btnRev",    v => touchRev    = v);
+document.getElementById("btnView").addEventListener("touchstart", e => {
+  e.preventDefault(); initAudio(); toggleView();
+});
 
-/* ============ 11. GAME LOOP ============ */
+/* ============ 12. GAME LOOP ============ */
 const clock = new THREE.Clock();
 const speedEl = document.getElementById("speed");
 const nearNameEl = document.getElementById("nearName");
@@ -812,35 +897,38 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
 
   if (keys["KeyW"] || touchThrust) ship.throttle = Math.min(1, ship.throttle + dt * 1.2);
-  if (keys["KeyS"] || touchBrake) {
-    if (ship.throttle > 0)      ship.throttle = Math.max(0, ship.throttle - dt * 1.2);
-    else if (ship.throttle < 0) ship.throttle = Math.min(0, ship.throttle + dt * 1.2);
+  // S = STOP: zero the throttle and scrub velocity until you're parked
+  if (keys["KeyS"] || touchBrake || keys["KeyX"]) {
+    ship.throttle = 0;
+    ship.velocity.multiplyScalar(0.9);
   }
   if (keys["KeyR"] || touchRev) ship.throttle = Math.max(ship.minThrottle, ship.throttle - dt * 1.2);
-  if (keys["KeyX"]) { ship.throttle = 0; ship.velocity.multiplyScalar(0.9); }
 
+  /* ---- steering rotates the SHIP now, not the camera ---- */
   const dead = 0.08;
   const sx = Math.abs(steer.x) > dead ? steer.x : 0;
   const sy = Math.abs(steer.y) > dead ? steer.y : 0;
-  camera.rotateY(-sx * ship.turnSpeed * dt);
-  camera.rotateX(-sy * ship.turnSpeed * dt);
-  if (keys["KeyQ"]) camera.rotateZ( 1.5 * dt);
-  if (keys["KeyE"]) camera.rotateZ(-1.5 * dt);
+  shipObj.rotateY(-sx * ship.turnSpeed * dt);
+  shipObj.rotateX(-sy * ship.turnSpeed * dt);
+  if (keys["KeyA"]) shipObj.rotateZ( 1.5 * dt); // roll left
+  if (keys["KeyD"]) shipObj.rotateZ(-1.5 * dt); // roll right
 
-  camera.getWorldDirection(tmpDir);
+  shipObj.getWorldDirection(tmpDir);
+  tmpDir.negate(); // getWorldDirection points +Z for Groups; our nose is -Z
   const boost = (keys["ShiftLeft"] || keys["ShiftRight"]) ? ship.boostMult : 1;
   ship.velocity.addScaledVector(tmpDir, ship.throttle * ship.maxAccel * boost * dt);
   ship.velocity.multiplyScalar(ship.damping);
-  camera.position.addScaledVector(ship.velocity, dt);
+  shipObj.position.addScaledVector(ship.velocity, dt);
 
+  /* ---- collisions (against the ship's position) ---- */
   const COLLIDE_BUFFER = 12;
   for (const b of liveBodies) {
-    tmpNormal.subVectors(camera.position, b.group.position);
+    tmpNormal.subVectors(shipObj.position, b.group.position);
     let dist = tmpNormal.length();
     let minDist = b.cfg.radius + COLLIDE_BUFFER;
     if (dist < minDist) {
       tmpNormal.normalize();
-      camera.position.copy(b.group.position).addScaledVector(tmpNormal, minDist);
+      shipObj.position.copy(b.group.position).addScaledVector(tmpNormal, minDist);
       const into = ship.velocity.dot(tmpNormal);
       if (into < 0) {
         thump(-into);
@@ -849,12 +937,12 @@ function animate() {
     }
     const moon = b.group.getObjectByName("moon");
     if (moon) {
-      tmpNormal.copy(moon.position).add(b.group.position).sub(camera.position).negate();
+      tmpNormal.copy(moon.position).add(b.group.position).sub(shipObj.position).negate();
       dist = tmpNormal.length();
       minDist = b.cfg.moon.radius + COLLIDE_BUFFER;
       if (dist < minDist) {
         tmpNormal.normalize();
-        camera.position.copy(b.group.position).add(moon.position).addScaledVector(tmpNormal, minDist);
+        shipObj.position.copy(b.group.position).add(moon.position).addScaledVector(tmpNormal, minDist);
         const into = ship.velocity.dot(tmpNormal);
         if (into < 0) {
           thump(-into);
@@ -864,6 +952,32 @@ function animate() {
     }
   }
 
+  /* ---- camera rig ---- */
+  if (firstPerson) {
+    shipMesh.visible = false;                 // don't render the hull in your face
+    camera.position.copy(shipObj.position);
+    camera.quaternion.copy(shipObj.quaternion);
+  } else {
+    shipMesh.visible = true;
+    // desired camera spot: CHASE_OFFSET rotated into the ship's frame
+    tmpOffset.copy(CHASE_OFFSET).applyQuaternion(shipObj.quaternion);
+    tmpOffset.add(shipObj.position);
+    // exponential easing — framerate-independent smooth pursuit.
+    // The camera closes ~99.97% of the gap per second but never snaps,
+    // which is what lets you see the ship bank during hard turns.
+    const k = 1 - Math.exp(-8 * dt);
+    camera.position.lerp(tmpOffset, k);
+    camera.quaternion.slerp(shipObj.quaternion, 1 - Math.exp(-6 * dt));
+  }
+
+  /* ---- engine glows track the throttle ---- */
+  const fwdBurn = Math.max(0, ship.throttle) * (boost > 1 ? 1.5 : 1);
+  const revBurn = Math.max(0, -ship.throttle) * 2;
+  const flicker = 0.9 + Math.random() * 0.2;   // a little instability reads as fire
+  for (const g of engineGlows) g.scale.setScalar(Math.max(0.001, fwdBurn * 2.4 * flicker));
+  for (const g of retroGlows)  g.scale.setScalar(Math.max(0.001, revBurn * 1.4 * flicker));
+
+  /* ---- animate bodies ---- */
   for (const b of liveBodies) {
     if (b.cfg.spin || b.cfg.type === "star") {
       const surf = b.group.getObjectByName("surface");
@@ -877,11 +991,11 @@ function animate() {
     }
   }
   for (const belt of belts) belt.rotation.y += 0.02 * dt;
-  // clouds drift slightly faster than the ground below — reads as weather
   for (const c of cloudLayers) c.mesh.rotation.y += c.speed * dt;
 
+  /* ---- space dust wraps around the SHIP ---- */
   const p = dust.geometry.attributes.position.array;
-  const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
+  const cx = shipObj.position.x, cy = shipObj.position.y, cz = shipObj.position.z;
   for (let i = 0; i < p.length; i += 3) {
     p[i]   = (((p[i]   - cx + DUST_HALF) % DUST_SIZE) + DUST_SIZE) % DUST_SIZE - DUST_HALF + cx;
     p[i+1] = (((p[i+1] - cy + DUST_HALF) % DUST_SIZE) + DUST_SIZE) % DUST_SIZE - DUST_HALF + cy;
@@ -913,7 +1027,7 @@ function animate() {
 
   let nearest = null, nearestDist = Infinity;
   for (const b of liveBodies) {
-    const d = camera.position.distanceTo(b.group.position) - b.cfg.radius;
+    const d = shipObj.position.distanceTo(b.group.position) - b.cfg.radius;
     if (d < nearestDist) { nearestDist = d; nearest = b; }
   }
   if (nearest) {
@@ -927,10 +1041,6 @@ function animate() {
   renderer.render(scene, camera);
 }
 
-/* ---- boot: let the loading screen paint, then generate the worlds.
-   (Texture generation walks ~2 million pixels of noise math — it takes
-   a second or two, so we show GENERATING WORLDS instead of a frozen
-   black screen.) ---- */
 setTimeout(() => {
   BODIES.forEach(buildBody);
   document.getElementById("loading").style.display = "none";
