@@ -112,7 +112,7 @@
   <div id="hint">
     CLICK — capture mouse (steer) &nbsp; ESC — release<br>
     W — thrust &nbsp; S — brake / reverse<br>
-    A / D — turn &nbsp; Q / E — roll<br>
+    A / D — turn &nbsp; ↑ / ↓ — nose up / down &nbsp; Q / E — roll<br>
     SHIFT — boost &nbsp; V — toggle view
   </div>
   <div id="viewtag">VIEW: COCKPIT</div>
@@ -153,30 +153,20 @@
 </script>
 <script>
 /* =========================================================================
-   SPACESUCK v6 — flight school
+   SPACESUCK v7 — lean into it
    -------------------------------------------------------------------------
-   New since v5 (all feel/correctness fixes, no new content):
+   New since v6 (see git log for the full story):
 
-     • POINTER LOCK steering — click the canvas and the browser captures
-       your mouse (ESC releases it). We now read RELATIVE motion
-       (e.movementX/Y), so the ship only turns while the mouse is MOVING.
-       v5 read absolute cursor position, which meant any off-center pointer
-       spun you forever.
-     • WASD controls — W thrust, S brake-then-reverse, A/D turn. Roll
-       moved to Q/E. R and X still work as reverse/brake alternates.
-     • Frame-rate-independent physics — v5 applied drag per FRAME, so a
-       144Hz monitor had twice the drag of a 60Hz one. Every per-frame
-       multiplier is now Math.pow(factor, dt*60): identical feel at any Hz.
-     • three.js is loaded from a local file (works offline) with a CDN
-       fallback and a visible error if both fail.
-     • Spawn aims at the sun with AZURE in frame — first frame is the view,
-       not empty void.
-     • The starfield shell is pinned to the ship — in v5 it was centered on
-       the origin, so flying ~15,000u out ejected you from the universe.
-     • Proximity alarm no longer false-triggers when the "nearest body"
-       title changes hands between two planets.
-     • Terrestrial planets render at 2048×1024 (4× the pixels) so close
-       fly-bys look crisp instead of blurry.
+     • ARROW-KEY PITCH — ↑/↓ raise and lower the nose (←/→ double as
+       turn keys), so the full 3D flight envelope works keyboard-only.
+       Mouse freelook is still there for fine aiming.
+     • AUTO-BANK — the ship visually LEANS into turns (~20° at full turn
+       rate, easing in and out), and the cockpit camera tilts half that.
+       Purely cosmetic: the physics object never rolls, so the floaty
+       Newtonian flight model is completely untouched.
+     • 4× WORLD SPREAD — planets now sit 2,400–12,000u out instead of
+       600–3,000u. Boost stops being a toy and becomes your cruise mode
+       between worlds. First step toward multiple solar systems.
    ========================================================================= */
 
 if (typeof THREE === "undefined") {
@@ -190,12 +180,12 @@ const BODIES = [
   {
     name: "HELIOS", type: "star",
     radius: 220, color: 0xffc873, seed: 7,
-    position: [0, 0, -3000],
+    position: [0, 0, -12000],
   },
   {
     name: "CINDER", type: "planet", style: "rocky", seed: 11,
     radius: 60,
-    position: [-900, 80, -2200],
+    position: [-3600, 320, -8800],
     spin: 0.02,
     atmosphere: 0xcc5522, atmoStrength: 0.5,
     palette: { dark: 0x4a2318, mid: 0x9c4a2e, light: 0xd98d5f },
@@ -203,7 +193,7 @@ const BODIES = [
   {
     name: "AZURE", type: "planet", style: "terrestrial", seed: 42,
     radius: 95,
-    position: [700, -120, -1500],
+    position: [2800, -480, -6000],
     spin: 0.015,
     clouds: true,
     atmosphere: 0x5599ff, atmoStrength: 1.0,
@@ -216,7 +206,7 @@ const BODIES = [
   {
     name: "KRONOS", type: "planet", style: "gas", seed: 23,
     radius: 130,
-    position: [-400, 300, -600],
+    position: [-1600, 1200, -2400],
     spin: 0.01,
     atmosphere: 0xddbb77, atmoStrength: 0.7,
     palette: { dark: 0x7a5c38, mid: 0xc9a86b, light: 0xf0dcae },
@@ -226,7 +216,7 @@ const BODIES = [
   {
     name: "VERDANT", type: "planet", style: "terrestrial", seed: 99,
     radius: 45,
-    position: [1400, 200, -2800],
+    position: [5600, 800, -11200],
     spin: 0.03,
     clouds: true,
     atmosphere: 0x77ffaa, atmoStrength: 0.9,
@@ -843,7 +833,7 @@ shipObj.position.set(0, 0, 600);
 /* Aim the spawn so the first frame is a view, not empty void: HELIOS dead
    ahead with AZURE off to the right. lookAt() points +Z at the target but
    our nose is -Z, so we look at the target's mirror through the ship. */
-const spawnTarget = new THREE.Vector3(280, -50, -2200);
+const spawnTarget = new THREE.Vector3(900, -150, -9000);
 shipObj.lookAt(shipObj.position.clone().multiplyScalar(2).sub(spawnTarget));
 scene.add(shipObj);
 
@@ -854,6 +844,11 @@ let firstPerson = true;                          // start in the cockpit
 const CHASE_OFFSET = new THREE.Vector3(0, 4.5, 17); // behind & above, in ship-local space
 const tmpOffset = new THREE.Vector3();
 const viewTag = document.getElementById("viewtag");
+
+let bank = 0;                        // current cosmetic lean, radians
+const MAX_BANK = 0.35;               // ~20° at a full-rate turn
+const bankQ = new THREE.Quaternion();
+const Z_AXIS = new THREE.Vector3(0, 0, 1);
 
 function toggleView() {
   firstPerson = !firstPerson;
@@ -943,7 +938,8 @@ function animate() {
   // pointer-lock freelook: deltas are "pixels of mouse travel", already
   // frame-rate independent — we just drain whatever accumulated
   const MOUSE_SENS = 0.0022;
-  shipObj.rotateY(-mouseDX * MOUSE_SENS);
+  const mouseYaw = -mouseDX * MOUSE_SENS;
+  shipObj.rotateY(mouseYaw);
   shipObj.rotateX(-mouseDY * MOUSE_SENS);
   mouseDX = 0; mouseDY = 0;
 
@@ -954,10 +950,23 @@ function animate() {
   shipObj.rotateY(-sx * ship.turnSpeed * dt);
   shipObj.rotateX(-sy * ship.turnSpeed * dt);
 
-  if (keys["KeyA"]) shipObj.rotateY( ship.turnSpeed * dt);  // turn left
-  if (keys["KeyD"]) shipObj.rotateY(-ship.turnSpeed * dt);  // turn right
-  if (keys["KeyQ"]) shipObj.rotateZ( 1.5 * dt);             // roll left
-  if (keys["KeyE"]) shipObj.rotateZ(-1.5 * dt);             // roll right
+  let keyYaw = 0, keyPitch = 0;
+  if (keys["KeyA"] || keys["ArrowLeft"])  keyYaw += 1;   // turn left
+  if (keys["KeyD"] || keys["ArrowRight"]) keyYaw -= 1;   // turn right
+  if (keys["ArrowUp"])   keyPitch += 1;                  // nose up
+  if (keys["ArrowDown"]) keyPitch -= 1;                  // nose down
+  shipObj.rotateY(keyYaw   * ship.turnSpeed * dt);
+  shipObj.rotateX(keyPitch * ship.turnSpeed * dt);
+  if (keys["KeyQ"]) shipObj.rotateZ( 1.5 * dt);          // roll left
+  if (keys["KeyE"]) shipObj.rotateZ(-1.5 * dt);          // roll right
+
+  /* ---- auto-bank: the ship LEANS into turns, purely visual ----
+     Physics (shipObj) never rolls; only the mesh / camera tilt, so the
+     floaty flight model is untouched. yawFrac = how hard we're turning
+     as a fraction of full keyboard turn rate, from any input source. */
+  const yawFrac = Math.max(-1, Math.min(1,
+    keyYaw - sx + (dt > 0 ? mouseYaw / (ship.turnSpeed * dt) : 0)));
+  bank += (yawFrac * MAX_BANK - bank) * (1 - Math.exp(-5 * dt));
 
   shipObj.getWorldDirection(tmpDir);
   tmpDir.negate(); // getWorldDirection points +Z for Groups; our nose is -Z
@@ -1026,9 +1035,12 @@ function animate() {
   if (firstPerson) {
     shipMesh.visible = false;                 // don't render the hull in your face
     camera.position.copy(shipObj.position);
-    camera.quaternion.copy(shipObj.quaternion);
+    // half-strength lean in the cockpit — you tilt your head into the turn
+    bankQ.setFromAxisAngle(Z_AXIS, bank * 0.5);
+    camera.quaternion.copy(shipObj.quaternion).multiply(bankQ);
   } else {
     shipMesh.visible = true;
+    shipMesh.rotation.z = bank;               // the model leans, the physics don't
     // desired camera spot: CHASE_OFFSET rotated into the ship's frame
     tmpOffset.copy(CHASE_OFFSET).applyQuaternion(shipObj.quaternion);
     tmpOffset.add(shipObj.position);
