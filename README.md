@@ -18,7 +18,7 @@ when the page loads.
 | X | Full stop |
 | A / D | Roll left / right |
 | ← / → | Turn left / right |
-| ↑ / ↓ | Nose up / down |
+| ↑ / ↓ | Nose down / up (flight-stick style) |
 | Shift | Boost |
 | V | Cockpit / chase view |
 

@@ -124,7 +124,7 @@
   <div id="hint">
     CLICK — capture mouse (steer) &nbsp; ESC — release<br>
     W — thrust &nbsp; S — reverse &nbsp; X — full stop<br>
-    A / D — roll &nbsp; ← / → — turn &nbsp; ↑ / ↓ — nose up / down<br>
+    A / D — roll &nbsp; ← / → — turn &nbsp; ↑ / ↓ — nose down / up<br>
     SHIFT — boost &nbsp; V — toggle view
   </div>
   <div id="viewtag">VIEW: COCKPIT</div>
@@ -1008,8 +1008,9 @@ function animate() {
   let keyYaw = 0, keyPitch = 0;
   if (keys["ArrowLeft"])  keyYaw += 1;                   // turn left
   if (keys["ArrowRight"]) keyYaw -= 1;                   // turn right
-  if (keys["ArrowUp"])   keyPitch += 1;                  // nose up
-  if (keys["ArrowDown"]) keyPitch -= 1;                  // nose down
+  // flight-stick convention: push forward = nose down, pull back = nose up
+  if (keys["ArrowUp"])   keyPitch -= 1;                  // nose down
+  if (keys["ArrowDown"]) keyPitch += 1;                  // nose up
   shipObj.rotateY(keyYaw   * ship.turnSpeed * dt);
   shipObj.rotateX(keyPitch * ship.turnSpeed * dt);
   if (keys["KeyA"]) shipObj.rotateZ( 1.5 * dt);          // roll left
