@@ -30,7 +30,7 @@ Touch devices get on-screen thrust/brake/reverse buttons and drag steering.
   sampled on the sphere, driving color, bump, and roughness maps
   (ocean → beach → plains → mountains → snow, with latitude ice caps)
 - **A solar system** — star, rocky/terrestrial/gas planets, an orbiting moon,
-  rings, and a 400-rock asteroid belt in a single draw call
+  rings, and a 700-rock asteroid belt in a single draw call
 - **Flight model** — throttle with reverse, boost, frame-rate-independent
   drag, collision bounces off every body
 - **Atmospheric entry** — dive below a quarter-radius of any world with an
@@ -38,8 +38,9 @@ Touch devices get on-screen thrust/brake/reverse buttons and drag steering.
   wisps streak past, the camera rumbles, and the air drags you
 - **Synthesized audio** — Web Audio engine hum that follows the throttle,
   plus a rumble that rises during atmospheric entry; no sound files
-- **Ship + camera rig** — cockpit view and a chase cam with easing lag so
-  you see the ship bank through turns
+- **Ship + camera rig** — a Blender-designed fighter (`ship.glb`) with an
+  authored idle-float animation, cockpit view, and a chase cam with easing
+  lag so you see the ship bank through turns
 
 ## Run it locally
 

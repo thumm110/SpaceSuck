@@ -164,24 +164,29 @@
     document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>');
   }
 </script>
+<!-- loads ship.glb (the Blender fighter); if this file is missing the
+     game still flies with the built-in primitive placeholder -->
+<script src="GLTFLoader.js"></script>
 <script>
 /* =========================================================================
-   SPACESUCK v10 — kissing the sky
+   SPACESUCK v11 — the real ship
    -------------------------------------------------------------------------
-   New since v9 (see git log for the full story):
+   New since v10 (see git log for the full story):
 
-     • ATMOSPHERIC ENTRY, the "middle path" — no scene change, just the
-       fantasy: sink below ~¼ radius over any body with an atmosphere and
-       the sky color bleeds in (shifting toward ember-orange if you're
-       fast), soft cloud wisps streak past, the camera rumbles, a low
-       roar rises in the mix, and the air itself drags you — all scaled
-       by depth, speed, and that planet's atmoStrength. Climb out and
-       every effect melts away. HUD shows ◆ ATMOSPHERIC ENTRY ◆.
-       Stepping stone to real terrain flyover later.
+     • THE BLENDER FIGHTER — the ship is now ship.glb, designed in
+       Blender (~/Blender/spaceship/spaceship.blend) and exported
+       headlessly from the .blend. Named parts do real work: engine
+       glows anchor to ThrusterL/R, retro glows to ProngTipL/R, and the
+       EngineGlow material gets self-illumination. The authored idle
+       float (ShipRootAction) loops through an AnimationMixer, so the
+       ship gently bobs at rest — visual only, physics untouched. The
+       old primitive fighter remains as the instant-load placeholder
+       and offline fallback.
 
-   Controls (v8): W thrust / S reverse / X full stop, A/D roll,
-   arrows turn & pitch, mouse freelook (click to capture), SHIFT boost,
-   V view. Scale (v9): radii ×3, worlds feel like worlds.
+   v10: atmospheric entry effects (sink below ~¼ radius of any world
+   with an atmosphere). Controls (v8): W thrust / S reverse / X full
+   stop, A/D roll, arrows turn & pitch (flight-stick), mouse freelook,
+   SHIFT boost, V view.
    ========================================================================= */
 
 if (typeof THREE === "undefined") {
@@ -887,6 +892,59 @@ scene.add(shipObj);
 const { mesh: shipMesh, engineGlows, retroGlows } = buildShipMesh();
 shipObj.add(shipMesh);
 
+/* ---- the REAL ship: the Blender fighter (ship.glb) ----
+   Loads async — the primitive placeholder flies until it arrives, and
+   stays as the fallback if the file (or the loader) is missing.
+   Blender +Y-forward exports as glTF -Z-forward, which is exactly our
+   nose convention, so no rotation fixup is needed. The .blend's authored
+   idle float (ShipRootAction — a gentle bob + rock on the root) plays on
+   loop through an AnimationMixer: visual only, physics untouched. */
+let shipMixer = null;
+if (THREE.GLTFLoader) {
+  new THREE.GLTFLoader().load("ship.glb", gltf => {
+    const model = gltf.scene;
+
+    // scale to match the placeholder's presence (~10u nose to tail)
+    const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+    model.scale.setScalar(10 / size.z);
+
+    // thruster nozzles glow with their own material color
+    model.traverse(o => {
+      if (o.isMesh && o.material && o.material.name === "EngineGlow") {
+        o.material.emissive.copy(o.material.color);
+        o.material.emissiveIntensity = 1.5;
+      }
+    });
+
+    // swap hulls: strip the placeholder but KEEP the glow sprites — the
+    // game loop holds references to them
+    for (const child of [...shipMesh.children]) {
+      if (!engineGlows.includes(child) && !retroGlows.includes(child)) shipMesh.remove(child);
+    }
+    shipMesh.add(model);
+
+    // re-anchor the glows to the model's named parts
+    shipMesh.updateMatrixWorld(true);
+    const anchor = (name, glow, back) => {
+      const node = model.getObjectByName(name);
+      if (!node) return;
+      const p = node.getWorldPosition(new THREE.Vector3());
+      glow.position.copy(shipMesh.worldToLocal(p));
+      glow.position.z += back;   // nudge clear of the nozzle
+    };
+    anchor("ThrusterL", engineGlows[0],  0.8);
+    anchor("ThrusterR", engineGlows[1],  0.8);
+    anchor("ProngTipL", retroGlows[0],  -0.6);
+    anchor("ProngTipR", retroGlows[1],  -0.6);
+
+    // the float
+    if (gltf.animations.length) {
+      shipMixer = new THREE.AnimationMixer(model);
+      shipMixer.clipAction(gltf.animations[0]).play();
+    }
+  }, undefined, err => console.warn("ship.glb didn't load — flying the placeholder", err));
+}
+
 let firstPerson = true;                          // start in the cockpit
 const CHASE_OFFSET = new THREE.Vector3(0, 4.5, 17); // behind & above, in ship-local space
 const tmpOffset = new THREE.Vector3();
@@ -1157,6 +1215,7 @@ function animate() {
   }
   for (const belt of belts) belt.rotation.y += 0.02 * dt;
   for (const c of cloudLayers) c.mesh.rotation.y += c.speed * dt;
+  if (shipMixer) shipMixer.update(dt);   // the idle float, authored in Blender
 
   /* ---- the sky rides along — you can never leave the starfield ---- */
   skyShell.position.copy(shipObj.position);
