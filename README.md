@@ -1,4 +1,4 @@
-# Drift — Deep Space Flight
+# SpaceSuck — Deep Space Flight
 
 A procedural space-flight toy in **one HTML file**. No build step, no image
 assets, no dependencies beyond a vendored copy of three.js — every planet
