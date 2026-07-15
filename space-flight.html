@@ -131,7 +131,9 @@
     RIGHT-DRAG — orbit the ship &nbsp; WHEEL — zoom<br>
     W — thrust &nbsp; S — reverse &nbsp; X — full stop<br>
     A / D — roll &nbsp; ← / → — turn &nbsp; ↑ / ↓ — nose down / up<br>
-    SHIFT — boost &nbsp; V — toggle view
+    SHIFT — boost &nbsp; V — toggle view<br>
+    PAD — L-stick fly (turn parked / roll at speed) &nbsp; R-stick look<br>
+    RT / LT thrust &nbsp; X stop &nbsp; LB boost &nbsp; Y view
   </div>
   <div id="viewtag">VIEW: COCKPIT</div>
   <div id="nearest">
@@ -176,9 +178,23 @@
 <script src="GLTFLoader.js"></script>
 <script>
 /* =========================================================================
-   SPACESUCK v13 — boots on the ground
+   SPACESUCK v14 — destinations, not fly-bys
    -------------------------------------------------------------------------
-   New since v12 (see git log for the full story):
+   New since v13:
+
+     • SCALE — Earth is 2500u now (system radii doubled on top of v14's
+       ×2.5, distances ×2.5) with a ~5-minute day (a parked ship rides
+       the rotation) and its own Luna-proportioned moon. Lapping a planet
+       is a journey, and descending through the atmosphere is a phase of
+       flight instead of a blink.
+
+     • CHARLESTON — Earth's first city: ~100 low-poly towers on a
+       flattened coastal plateau around the spaceport pad, downtown
+       rising in the middle, a third of the buildings glowing with lit
+       windows for the night side. Cities are config in build_earth.py
+       (CITIES list) — planets can have zero, one, or many.
+
+   v13 and earlier (see git log for the full story):
 
      • EARTH — the first Blender-built world (build_earth.py → earth.glb):
        flat-shaded low-poly terrain with real continents, polar ice, cloud
@@ -205,27 +221,28 @@ if (typeof THREE === "undefined") {
 }
 
 /* ============ 1. CONFIG — YOUR SOLAR SYSTEM ============ */
-/* Scale story: v9 took radii ×3, v14 takes them ×2.5 AGAIN (distances ×2)
-   — a planet should swallow the view when you're flying around it.
-   Earth is 750u now: a low sightseeing lap is a ~4,700u journey. */
+/* Scale story: v9 ×3 radii; v14 ×2.5; v15 doubles radii AGAIN (distances
+   ×2.5) and pushes Earth to 2500u — the flagship destination. A low
+   sightseeing lap of Earth is a ~15,700u journey now: minutes of flying,
+   not moments. */
 const BODIES = [
   {
     name: "HELIOS", type: "star",
-    radius: 1650, color: 0xffc873, seed: 7,
-    position: [0, 0, -36000],
+    radius: 3300, color: 0xffc873, seed: 7,
+    position: [0, 0, -90000],
   },
   {
     name: "CINDER", type: "planet", style: "rocky", seed: 11,
-    radius: 450,
-    position: [-10800, 960, -26400],
+    radius: 900,
+    position: [-27000, 2400, -66000],
     spin: 0.02,
     atmosphere: 0xcc5522, atmoStrength: 0.5,
     palette: { dark: 0x4a2318, mid: 0x9c4a2e, light: 0xd98d5f },
   },
   {
     name: "AZURE", type: "planet", style: "terrestrial", seed: 42,
-    radius: 712,
-    position: [8400, -1440, -18000],
+    radius: 1425,
+    position: [21000, -3600, -45000],
     spin: 0.015,
     clouds: true,
     atmosphere: 0x5599ff, atmoStrength: 1.0,
@@ -233,23 +250,23 @@ const BODIES = [
       deep: 0x0a2d52, shallow: 0x1a6b8f, sand: 0xc2b280,
       low: 0x3d7a3d, high: 0x6b5d45, snow: 0xf0f5fa,
     },
-    moon: { radius: 135, distance: 1650, speed: 0.15, color: 0x9aa3ad, seed: 5 },
+    moon: { radius: 270, distance: 3300, speed: 0.15, color: 0x9aa3ad, seed: 5 },
   },
   {
     name: "KRONOS", type: "planet", style: "gas", seed: 23,
-    radius: 975,
-    position: [-4800, 3600, -7200],
+    radius: 1950,
+    position: [-12000, 9000, -18000],
     spin: 0.01,
     atmosphere: 0xddbb77, atmoStrength: 0.7,
     palette: { dark: 0x7a5c38, mid: 0xc9a86b, light: 0xf0dcae },
-    rings: { inner: 1275, outer: 2100, color: 0x8a7a5c },
-    belt: { inner: 2250, outer: 3150, count: 1000 },
+    rings: { inner: 2550, outer: 4200, color: 0x8a7a5c },
+    belt: { inner: 4500, outer: 6300, count: 1000 },
   },
   {
     name: "EARTH", type: "planet", style: "gltf", seed: 3,
-    radius: 750,
-    position: [3900, -160, -8800],
-    spin: 0.005,                    // ~2min day; a parked ship RIDES the
+    radius: 2500,                   // the flagship destination
+    position: [9750, -400, -22000],
+    spin: 0.002,                    // ~5min day; a parked ship RIDES the
                                     // rotation (see the landed branch)
     yaw: Math.PI,                   // initial turn so Charleston faces the sun
     file: "earth.glb",              // built by build_earth.py (Blender)
@@ -258,7 +275,7 @@ const BODIES = [
     atmosphere: 0x5f9dff, atmoStrength: 1.05,
     // Luna-true proportions: real Moon = 0.27 Earth radii. Orbits just
     // outside the 3-radii gravity well so approach stays clean.
-    moon: { radius: 200, distance: 2500, speed: 0.08, seed: 8 },
+    moon: { radius: 675, distance: 8000, speed: 0.05, seed: 8 },
     // fallback palette: if earth.glb can't load (file:// with no local
     // server, say) the planet still exists as a procedural sphere
     palette: {
@@ -268,8 +285,8 @@ const BODIES = [
   },
   {
     name: "VERDANT", type: "planet", style: "terrestrial", seed: 99,
-    radius: 337,
-    position: [16800, 2400, -33600],
+    radius: 675,
+    position: [42000, 6000, -84000],
     spin: 0.03,
     clouds: true,
     atmosphere: 0x77ffaa, atmoStrength: 0.9,
@@ -537,7 +554,7 @@ function makeAtmosphere(radius, colorHex, strength) {
 
 /* ============ 5. SCENE SETUP ============ */
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 100000);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 300000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -878,9 +895,9 @@ function buildBody(cfg) {
       for (let i = 0; i < cfg.belt.count; i++) {
         const ang = Math.random() * Math.PI * 2;
         const dist = cfg.belt.inner + Math.random() * (cfg.belt.outer - cfg.belt.inner);
-        dummy.position.set(Math.cos(ang) * dist, (Math.random() - 0.5) * 150, Math.sin(ang) * dist);
+        dummy.position.set(Math.cos(ang) * dist, (Math.random() - 0.5) * 300, Math.sin(ang) * dist);
         dummy.rotation.set(Math.random()*6.28, Math.random()*6.28, Math.random()*6.28);
-        dummy.scale.setScalar(8 + Math.random() * 22);
+        dummy.scale.setScalar(16 + Math.random() * 44);
         dummy.updateMatrix();
         rocks.setMatrixAt(i, dummy.matrix);
       }
@@ -968,6 +985,7 @@ function initAudio() {
   audio = { ctx, gain, filter, osc1, osc2, rumble: ngain };
 }
 function thump(strength) {
+  padRumble(Math.min(1, strength / 300), 150);   // impacts shake the pad too
   if (!audio) return;
   const { ctx } = audio;
   const len = ctx.sampleRate * 0.15;
@@ -994,11 +1012,11 @@ const ship = {
   turnSpeed: 1.6,
 };
 const shipObj = new THREE.Group();
-shipObj.position.set(0, 0, 600);
+shipObj.position.set(0, 0, 3000);
 /* Aim the spawn so the first frame is a view, not empty void: HELIOS dead
    ahead with AZURE off to the right. lookAt() points +Z at the target but
    our nose is -Z, so we look at the target's mirror through the ship. */
-const spawnTarget = new THREE.Vector3(1200, -200, -20000);
+const spawnTarget = new THREE.Vector3(6500, -1100, -67500);
 shipObj.lookAt(shipObj.position.clone().multiplyScalar(2).sub(spawnTarget));
 scene.add(shipObj);
 
@@ -1171,6 +1189,38 @@ document.getElementById("btnView").addEventListener("touchstart", e => {
   e.preventDefault(); initAudio(); toggleView();
 });
 
+/* ============ 11c. GAMEPAD — Xbox pad, standard mapping ============
+   The Gamepad API has no stick events; state is POLLED every frame in
+   the game loop. The browser hides the pad until the first button press
+   on a focused page (privacy), so 'gamepadconnected' fires then.
+   Mapping: LEFT STICK is the whole flight control — parked it turns the
+   nose like a turret; at speed X becomes ROLL and you bank-and-pull to
+   turn like an aircraft (blended by speed, no hard switch). Y is always
+   pitch. RIGHT STICK is the look stick — deflect to swing the camera
+   around the ship, release to fly. RT/LT analog thrust/reverse ·
+   X full stop · LB boost · Y toggle cockpit/chase.
+   Button A (buttons[0]) is RESERVED — blasters are coming. */
+let padIndex = null;
+let padViewHeld = false;      // edge-detect for the view toggle
+let padOrbiting = false;      // right stick currently owns the orbit camera
+let lastPadRumble = 0;
+addEventListener("gamepadconnected", e => { padIndex = e.gamepad.index; initAudio(); });
+addEventListener("gamepaddisconnected", e => { if (e.gamepad.index === padIndex) padIndex = null; });
+const PAD_DEAD = 0.15;        // deadzone: a resting stick must not drift the ship
+const padAxis = v => Math.abs(v) > PAD_DEAD ? (v - Math.sign(v) * PAD_DEAD) / (1 - PAD_DEAD) : 0;
+
+/* rumble: entry roar and touchdown thumps reach your actual hands */
+function padRumble(strength, ms) {
+  if (padIndex === null) return;
+  const gp = navigator.getGamepads()[padIndex];
+  const act = gp && gp.vibrationActuator;
+  if (act) act.playEffect("dual-rumble", {
+    duration: ms,
+    strongMagnitude: Math.min(1, strength),
+    weakMagnitude: Math.min(1, strength * 0.6),
+  }).catch(() => {});
+}
+
 /* ============ 12. GAME LOOP ============ */
 const clock = new THREE.Clock();
 const speedEl = document.getElementById("speed");
@@ -1205,6 +1255,55 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
 
+  /* ---- gamepad: polled every frame ---- */
+  let padLX = 0, padAirFrac = 0, padThrust = 0, padReverse = 0, padStop = false, padBoost = false;
+  if (padIndex !== null) {
+    const gp = navigator.getGamepads()[padIndex];
+    if (gp) {
+      padLX = padAxis(gp.axes[0]);
+      const padLY = padAxis(gp.axes[1]);
+      /* left stick = the whole flight control. Parked, X turns the nose
+         (turret). At speed, X rolls and you bank-and-pull like an
+         aircraft. airFrac crossfades 0→1 between 30 and 150 u/s so the
+         handoff is a blend, never a switch. */
+      padAirFrac = Math.min(1, Math.max(0, (ship.velocity.length() - 30) / 120));
+      shipObj.rotateY(-padLX * (1 - padAirFrac) * ship.turnSpeed * dt);  // turret turn
+      shipObj.rotateZ(-padLX * padAirFrac * 1.8 * dt);                   // aircraft roll
+      shipObj.rotateX( padLY * ship.turnSpeed * dt);    // pitch — pull back = climb
+
+      /* right stick = the LOOK stick: swings the camera around the ship
+         (same orbit as right-drag), snaps back to flying on release */
+      const padRX = padAxis(gp.axes[2]), padRY = padAxis(gp.axes[3]);
+      if (padRX || padRY) {
+        if (!padOrbiting && !orbiting) {
+          // engage: seed the orbit from the live camera — no jump cut
+          const rel = camera.position.clone().sub(shipObj.position);
+          const len = Math.max(rel.length(), 0.001);
+          orbitRadius = Math.min(40, Math.max(8, len));
+          orbitYaw = Math.atan2(rel.x, rel.z);
+          orbitPitch = Math.asin(Math.max(-1, Math.min(1, rel.y / len)));
+          padOrbiting = true;
+        }
+        if (padOrbiting) {
+          orbiting = true;
+          orbitYaw   -= padRX * 2.5 * dt;
+          orbitPitch  = Math.max(-1.25, Math.min(1.25, orbitPitch + padRY * 2.0 * dt));
+        }
+      } else if (padOrbiting) {
+        padOrbiting = false;
+        orbiting = false;
+      }
+      padThrust  = gp.buttons[7] ? gp.buttons[7].value : 0;    // RT — analog throttle
+      padReverse = gp.buttons[6] ? gp.buttons[6].value : 0;    // LT — analog reverse
+      padStop    = !!(gp.buttons[2] && gp.buttons[2].pressed); // X — full stop
+      padBoost   = !!(gp.buttons[4] && gp.buttons[4].pressed); // LB — boost (hold)
+      // gp.buttons[0] (A) is RESERVED for blasters — do not bind
+      const yBtn = !!(gp.buttons[3] && gp.buttons[3].pressed); // Y — view toggle
+      if (yBtn && !padViewHeld) toggleView();
+      padViewHeld = yBtn;
+    }
+  }
+
   /* ---- steering ---- */
   // pointer-lock freelook: deltas are "pixels of mouse travel", already
   // frame-rate independent — we just drain whatever accumulated
@@ -1236,8 +1335,10 @@ function animate() {
      Physics (shipObj) never rolls; only the mesh / camera tilt, so the
      floaty flight model is untouched. yawFrac = how hard we're turning
      as a fraction of full keyboard turn rate, from any input source. */
+  // pad stick only counts as "turning" while it's acting as yaw — at
+  // speed it's a real roll, and the mesh is already physically banked
   const yawFrac = Math.max(-1, Math.min(1,
-    keyYaw - sx + (dt > 0 ? mouseYaw / (ship.turnSpeed * dt) : 0)));
+    keyYaw - sx - padLX * (1 - padAirFrac) + (dt > 0 ? mouseYaw / (ship.turnSpeed * dt) : 0)));
   bank += (yawFrac * MAX_BANK - bank) * (1 - Math.exp(-5 * dt));
 
   shipObj.getWorldDirection(tmpDir);
@@ -1249,12 +1350,17 @@ function animate() {
   // and scrub velocity until you're parked.
   if (keys["KeyW"] || touchThrust) ship.throttle = Math.min(1, ship.throttle + dt * 1.2);
   if (keys["KeyS"] || touchRev)    ship.throttle = Math.max(ship.minThrottle, ship.throttle - dt * 1.2);
-  if (keys["KeyX"] || touchBrake) {
+  // triggers are DIRECT throttle — half a pull is half thrust, hold to
+  // burn, feather for finesse. Keyboard cruise-control (tap W, coast)
+  // still works whenever the triggers are idle.
+  if (padThrust > 0.02)       ship.throttle = padThrust;
+  else if (padReverse > 0.02) ship.throttle = ship.minThrottle * padReverse;
+  if (keys["KeyX"] || touchBrake || padStop) {
     ship.throttle = 0;
     ship.velocity.multiplyScalar(Math.pow(0.9, dt * 60));
   }
 
-  const boost = (keys["ShiftLeft"] || keys["ShiftRight"]) ? ship.boostMult : 1;
+  const boost = (keys["ShiftLeft"] || keys["ShiftRight"] || padBoost) ? ship.boostMult : 1;
   ship.velocity.addScaledVector(tmpDir, ship.throttle * ship.maxAccel * boost * dt);
   // drag: pow(damping, dt*60) applies the same drag PER SECOND on any
   // monitor — plain multiplyScalar(damping) would double the drag at 144Hz
@@ -1527,6 +1633,12 @@ function animate() {
     // first wisps of tint start hundreds of units before "entry" feels true
     entryTagEl.style.visibility = entryDepth > 0.08 ? "visible" : "hidden";
     if (audio) audio.rumble.gain.value = entryDepth * speedFrac * 0.6;
+    // controller rumble rides the same depth × speed curve; re-armed
+    // every ~90ms so back-to-back effects blend into a continuous roar
+    if (performance.now() - lastPadRumble > 90) {
+      padRumble(entryDepth * speedFrac * 0.9, 120);
+      lastPadRumble = performance.now();
+    }
   } else {
     atmoEl.style.opacity = 0;
     wispMat.opacity = 0;

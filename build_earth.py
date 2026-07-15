@@ -19,7 +19,7 @@ Outputs (written next to this script):
                           without opening Blender
 
 The planet is built at radius 100 Blender units; the game scales it up to
-whatever radius the BODIES config says (300 → scale factor 3).
+whatever radius the BODIES config says (2500 → scale factor 25).
 
 How the terrain works, in one breath: every vertex direction on the sphere
 gets a "continent mask" (a sum of soft blobs placed at real Earth lat/lons,
@@ -40,13 +40,30 @@ from mathutils import Vector
 
 # ---------------------------------------------------------------- CONFIG --
 R          = 100.0      # base (sea-level) radius in Blender units
-SUBDIV     = 6          # icosphere subdivisions: 6 → 81,920 triangles
+SUBDIV     = 7          # icosphere subdivisions: 7 → 327,680 triangles.
+                        #   At Earth's 2500u game radius that's ~24u facets —
+                        #   chunky-stylized up close; flattened zones (city,
+                        #   pad) stay smooth. Local hi-res patches are the
+                        #   upgrade path, NOT subdiv 8 (4× the 12MB GLB).
 SEED       = 71
 
 # landing pad — Charleston, SC. lat north+, lon east+ (west is negative)
 PAD_LAT, PAD_LON = 32.9, -80.0
 PAD_H      = 1.012      # pad plateau height (surface multiplier)
 PAD_ANG    = 0.05       # pad flatten radius, radians of arc (~5u at r=100)
+
+# cities — each entry flattens its footprint into the terrain and grows a
+# cluster of low-poly towers on it. Planets can have zero, one, or many:
+# THIS is the list to edit when settling (or abandoning) a world.
+#   ang: city radius in radians of arc (0.10 ≈ 10u here ≈ 250u in-game,
+#        a ~500u-wide metro at Earth's 2500u game radius)
+#   h:   ground plateau height; towers: rough building count
+CITIES = [
+    # center sits ~0.08 rad from the pad: downtown gets to be TALL and the
+    # spaceport lives at the city's edge instead of eating its heart
+    { "name": "Charleston", "lat": 36.8, "lon": -76.8,
+      "ang": 0.10, "h": 1.010, "towers": 130 },
+]
 
 # continents: (lat, lon, width_radians, strength) — soft blobs that sum
 # into a landmass mask. Widths/strengths are ART, tuned via the previews.
@@ -78,6 +95,9 @@ PAL = {
     "grass":   0x4d8f3a, "forest":  0x2f6b2f, "rock": 0x7a6a52,
     "snow":    0xf2f7fa, "ice":     0xe8f2f7,
     "pad":     0x3a4148, "beacon":  0xffb066, "cloud": 0xffffff,
+    "asphalt": 0x24282e,
+    "towerA":  0x6b7280, "towerB": 0x4b5563, "towerC": 0x94a3b8,
+    "towerLit": 0x3a3f4a, "window": 0xffcf8a,
 }
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -171,6 +191,13 @@ def height_field(dirs):
 
     m = 1.0 + elev
 
+    # flatten city footprints (before the pad, so the pad wins the overlap)
+    for c in CITIES:
+        cd = ll_dir(c["lat"], c["lon"])
+        ang_c = np.arccos(np.clip(dirs @ cd, -1.0, 1.0))
+        t = 1.0 - smoothstep(c["ang"], c["ang"] * 1.9, ang_c)
+        m = m * (1.0 - t) + c["h"] * t
+
     # flatten a disc for the landing pad — terrain blends into a plateau
     ang_pad = np.arccos(np.clip(dirs @ PAD_DIR, -1.0, 1.0))
     t = 1.0 - smoothstep(PAD_ANG, PAD_ANG * 2.6, ang_pad)
@@ -198,7 +225,7 @@ def face_colors(dirs):
 
     is_land = elev > 0.0065
 
-    beach = is_land & (elev < 0.014) & (mask < 0.62)
+    beach = is_land & (elev < 0.011) & (mask < 0.58)
     col[beach] = hex_rgb(PAL["sand"])
 
     green_t = smoothstep(0.35, 0.75, n_forest)
@@ -214,6 +241,12 @@ def face_colors(dirs):
 
     icy = ice > 0.25
     col[icy] = hex_rgb(PAL["ice"])
+
+    # city ground: dark asphalt between the buildings
+    for c in CITIES:
+        cd = ll_dir(c["lat"], c["lon"])
+        ang_c = np.arccos(np.clip(dirs @ cd, -1.0, 1.0))
+        col[ang_c < c["ang"] * 0.92] = hex_rgb(PAL["asphalt"])
 
     # pad plateau gets its own concrete color
     ang_pad = np.arccos(np.clip(dirs @ PAD_DIR, -1.0, 1.0))
@@ -301,16 +334,75 @@ pad.rotation_mode = 'QUATERNION'
 pad.rotation_quaternion = pad_quat
 pad.data.materials.append(make_material("Pad", color_hex=PAL["pad"], roughness=0.6))
 
-# beacon: a glowing pylon at the pad's edge — visible from way out
+# beacon: a glowing spire at the pad's edge — the spaceport landmark
+# (0.25×3.2 here = a 6×80u tower in-game, a hair taller than downtown)
 tangent = pad_up.cross(Vector((0, 0, 1))).normalized()
-bpy.ops.mesh.primitive_cylinder_add(radius=0.35, depth=5.0,
-                                    location=pad_center + tangent * 4.2 + pad_up * 2.2)
+bpy.ops.mesh.primitive_cylinder_add(radius=0.25, depth=3.2,
+                                    location=pad_center + tangent * 4.2 + pad_up * 1.5)
 beacon = bpy.context.active_object
 beacon.name = "Beacon"
 beacon.rotation_mode = 'QUATERNION'
 beacon.rotation_quaternion = pad_quat
 beacon.data.materials.append(make_material("BeaconGlow", color_hex=PAL["beacon"],
                                            emission_hex=PAL["beacon"], strength=4.0))
+
+# ----------------------------------------------------------------- CITIES --
+print("raising cities…")
+tower_mats = [
+    make_material("TowerA", color_hex=PAL["towerA"], roughness=0.85),
+    make_material("TowerB", color_hex=PAL["towerB"], roughness=0.85),
+    make_material("TowerC", color_hex=PAL["towerC"], roughness=0.85),
+    # ~30% of buildings are "lit": dark hull, warm emissive windows glow —
+    # this is what makes the city readable on the night side
+    make_material("TowerLit", color_hex=PAL["towerLit"],
+                  emission_hex=PAL["window"], strength=0.7, roughness=0.7),
+]
+
+for city in CITIES:
+    cd = Vector(ll_dir(city["lat"], city["lon"]).tolist())
+    t1 = cd.cross(Vector((0, 0, 1))).normalized()   # street-grid axes
+    t2 = cd.cross(t1)
+    ground = R * city["h"]
+    city_r = city["ang"] * R
+    step = 1.0                           # block spacing (~25u in-game: a
+                                         # street you can actually fly down)
+    rng2 = random.Random(SEED + sum(ord(ch) for ch in city["name"]))
+    blocks = []
+    n = int(math.ceil(city_r / step))
+    for gi in range(-n, n + 1):
+        for gj in range(-n, n + 1):
+            if len(blocks) >= city["towers"]:
+                break
+            u = gi * step + rng2.uniform(-0.25, 0.25)
+            v = gj * step + rng2.uniform(-0.25, 0.25)
+            rr = math.hypot(u, v)
+            if rr > city_r * 0.92:
+                continue
+            d = (cd * R + t1 * u + t2 * v).normalized()
+            if d.dot(pad_up) > math.cos(PAD_ANG * 1.7):
+                continue                 # keep the spaceport clear
+            # downtown rises in the middle, low blocks out at the rim
+            # (max ~3.1u here = a 78u tower in-game — 8 ship lengths)
+            peak = (1.0 - rr / city_r) ** 1.5
+            h = 0.5 + peak * rng2.uniform(1.2, 2.6)
+            bpy.ops.mesh.primitive_cube_add(size=1.0, location=d * (ground + h / 2))
+            b = bpy.context.active_object
+            b.scale = (rng2.uniform(0.5, 0.9), rng2.uniform(0.5, 0.9), h)
+            b.rotation_mode = 'QUATERNION'
+            b.rotation_quaternion = Vector((0, 0, 1)).rotation_difference(d)
+            b.data.materials.append(
+                tower_mats[3] if rng2.random() < 0.22 else tower_mats[rng2.randrange(3)])
+            blocks.append(b)
+    bpy.ops.object.select_all(action='DESELECT')
+    for b in blocks:
+        b.select_set(True)
+    bpy.context.view_layer.objects.active = blocks[0]
+    bpy.ops.object.join()
+    cobj = bpy.context.active_object
+    cobj.name = "City_" + city["name"]
+    # origin to planet center, same reason as the clouds
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    print(f"  {city['name']}: {len(blocks)} buildings")
 
 # ---------------------------------------------------------------- CLOUDS --
 print("puffing clouds…")
@@ -329,8 +421,8 @@ while systems < 14 and attempts < 200:
     theta, phi = 2 * math.pi * u, math.acos(2 * v - 1)
     d = Vector((math.sin(phi) * math.cos(theta),
                 math.sin(phi) * math.sin(theta), math.cos(phi)))
-    if d.dot(pad_up) > math.cos(0.45):
-        continue                       # keep the sky over the pad clear
+    if d.dot(pad_up) > math.cos(0.60):
+        continue                       # keep the sky over the city+pad clear
     systems += 1
     quat = Vector((0, 0, 1)).rotation_difference(d)
     # local tangent axes so blobs can drift sideways within the system
@@ -338,7 +430,7 @@ while systems < 14 and attempts < 200:
     tan2 = d.cross(tan1)
     for _ in range(random.randint(3, 6)):
         off = (tan1 * random.uniform(-7, 7) + tan2 * random.uniform(-4, 4))
-        pos = d * (R * random.uniform(1.06, 1.075)) + off
+        pos = d * (R * random.uniform(1.095, 1.115))   # above the skyline + off
         sx, sy, sz = (random.uniform(3.5, 8.0), random.uniform(2.6, 5.5),
                       random.uniform(1.3, 2.4))
         bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=1.0, location=pos)
@@ -371,7 +463,7 @@ print(f"wrote {glb_path}")
 # Equirectangular grid of the SAME height function, quantized to uint8.
 # The game bilinearly samples this to get ground height under the ship.
 print("baking height grid…")
-GW, GH = 512, 256
+GW, GH = 1024, 512     # ~15u cells at the 2500u in-game radius
 gy, gx = np.mgrid[0:GH, 0:GW]
 lon = (gx + 0.5) / GW * 2 * np.pi - np.pi
 lat = np.pi / 2 - (gy + 0.5) / GH * np.pi
@@ -422,6 +514,9 @@ SHOTS = [
     ("earth_preview_east.png", ll_dir(18, 95) * 330, Vector((0, 0, 0))),    # Asia/Oz
     ("earth_preview_pad.png",  Vector(PAD_DIR.tolist()) * 170,
                                Vector(PAD_DIR.tolist()) * 100),             # pad close-up
+    ("earth_preview_city.png",                                              # skyline, oblique
+     Vector(ll_dir(28.0, -70.0).tolist()) * 135,
+     Vector(ll_dir(CITIES[0]["lat"], CITIES[0]["lon"]).tolist()) * 101),
 ]
 for fname, pos, target in SHOTS:
     cam.location = Vector(pos.tolist()) if not isinstance(pos, Vector) else pos
