@@ -21,7 +21,7 @@ when the page loads.
 | ← / → | Turn left / right |
 | ↑ / ↓ | Nose down / up (flight-stick style) |
 | Shift | Boost |
-| V | Cockpit / chase view |
+| V | Cycle view: cockpit → chase → cinematic |
 
 Touch devices get on-screen thrust/brake/reverse buttons and drag steering.
 
