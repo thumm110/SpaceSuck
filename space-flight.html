@@ -666,7 +666,7 @@ function makeTwinkleStars(count, spread) {
     pos[i*3+2] = r*Math.cos(ph);
     phase[i] = Math.random()*6.2831853;   // random start → no synchrony
     freq[i]  = 0.5 + Math.random()*1.7;   // 0.5–2.2 rad/s spread of rhythms
-    aSz[i]   = 2.4 + Math.random()*2.2;   // a touch bigger than the steady field
+    aSz[i]   = 4.2 + Math.random()*3.6;   // clearly bigger than the 2.2 steady field — these are the standouts
     const t = tints[(Math.random()*tints.length)|0];
     tint[i*3]=t[0]; tint[i*3+1]=t[1]; tint[i*3+2]=t[2];
   }
@@ -715,71 +715,89 @@ function makeTwinkleStars(count, spread) {
 const twinkleStars = makeTwinkleStars(800, 20000);
 skyShell.add(twinkleStars);
 
-/* ---- distant galaxy (v21) ----
-   A procedural spiral painted once onto a canvas — warm core, faint cool disk
-   halo, two fuzzy logarithmic arms scattered as dots (with a few blue clumps and
-   pink HII knots) — pre-squashed so it reads as an INCLINED disk, not a flat
-   pinwheel. Mapped onto a fixed plane parked out at 19,000u in one direction of
-   the sky. It's oriented once toward the shell origin (~the ship, since skyShell
-   recenters on you) so it holds a natural place in the sky as you fly and turn —
-   a real galaxy on the horizon, not a decal that tracks you. Backdrop-safe. */
-function makeGalaxyTexture(){
+/* ---- distant galaxies (v22) ----
+   Each is a procedural spiral painted once onto a canvas — a glowing core, a
+   disk halo, and N fuzzy logarithmic arms scattered as dots (with clumps and
+   HII knots) — pre-squashed so it reads as an INCLINED disk, not a flat
+   pinwheel. Mapped onto a fixed plane parked out in the star shell, oriented
+   once toward the shell origin (~the ship, since skyShell recenters on you) so
+   each holds a natural place in the sky as you fly and turn. Backdrop-safe
+   (depthWrite off, renderOrder -1). makeGalaxyTexture is fully parametric so
+   every galaxy gets its own palette, arm count, tightness, and inclination. */
+function makeGalaxyTexture(cfg){
   const S = 1024;
   const cnv = document.createElement("canvas"); cnv.width = cnv.height = S;
   const ctx = cnv.getContext("2d");
+  const rgba = (c, a) => "rgba(" + (c[0]|0) + "," + (c[1]|0) + "," + (c[2]|0) + "," + a + ")";
   ctx.fillStyle = "black"; ctx.fillRect(0,0,S,S);   // black = nothing under additive
   ctx.translate(S/2, S/2);
-  ctx.scale(1, 0.42);                               // inclination → oblique disk
-  ctx.rotate(-0.5);                                 // slight roll
-  // outer disk halo
+  ctx.scale(1, cfg.squash);                         // inclination → oblique disk
+  ctx.rotate(cfg.roll);
+  // disk halo, tinted to the arms
   let halo = ctx.createRadialGradient(0,0,0, 0,0,S*0.48);
-  halo.addColorStop(0.0,"rgba(150,165,215,0.22)");
-  halo.addColorStop(0.5,"rgba(110,125,180,0.10)");
-  halo.addColorStop(1.0,"rgba(0,0,0,0)");
+  halo.addColorStop(0.0, rgba(cfg.arm, 0.22));
+  halo.addColorStop(0.5, rgba(cfg.arm, 0.10));
+  halo.addColorStop(1.0, "rgba(0,0,0,0)");
   ctx.fillStyle = halo; ctx.fillRect(-S,-S,2*S,2*S);
-  // two fuzzy spiral arms with occasional blue clumps + pink HII knots
-  const arms = 2, turns = 2.3;
-  for (let a=0;a<arms;a++){
-    const base = a*Math.PI;
-    for (let i=0;i<2400;i++){
-      const t = i/2400;
-      const ang = base + t*turns*Math.PI*2;
+  // fuzzy spiral arms with occasional bright clumps + HII knots
+  const fuzz = cfg.fuzz ?? 0.22;
+  for (let a=0; a<cfg.arms; a++){
+    const base = a * Math.PI * 2 / cfg.arms;
+    for (let i=0; i<cfg.dots; i++){
+      const t = i/cfg.dots;
+      const ang = base + t*cfg.turns*Math.PI*2;
       const rad = t*S*0.46;
-      const jr = (Math.random()-0.5)*rad*0.22;      // radial jitter → fuzzy, not a line
+      const jr = (Math.random()-0.5)*rad*fuzz;      // radial jitter → fuzzy, not a line
       const ja = (Math.random()-0.5)*0.20;
       const x = Math.cos(ang+ja)*(rad+jr), y = Math.sin(ang+ja)*(rad+jr);
       const b = (1.0-t)*0.85*Math.random();         // dimmer outward
       const roll = Math.random();
-      ctx.fillStyle = roll > 0.94 ? "rgba(255,120,175,"+(b*1.3).toFixed(3)+")"   // pink HII knot
-                    : roll > 0.72 ? "rgba(150,180,255,"+b.toFixed(3)+")"          // blue clump
-                    :               "rgba(205,208,232,"+b.toFixed(3)+")";         // white dust
+      ctx.fillStyle = roll > 0.94 ? rgba(cfg.hii, +(b*1.3).toFixed(3))     // HII knot
+                    : roll > 0.72 ? rgba(cfg.clump, +b.toFixed(3))          // bright clump
+                    :               rgba(cfg.dust, +b.toFixed(3));          // dust lane
       const sz = 1.0 + Math.random()*1.7; ctx.fillRect(x,y,sz,sz);
     }
   }
-  // warm bright core + glow bulge
-  let core = ctx.createRadialGradient(0,0,0, 0,0,S*0.18);
-  core.addColorStop(0.0,"rgba(255,248,228,1.0)");
-  core.addColorStop(0.30,"rgba(250,230,196,0.70)");
-  core.addColorStop(0.65,"rgba(220,200,180,0.28)");
-  core.addColorStop(1.0,"rgba(0,0,0,0)");
+  // core bulge
+  let core = ctx.createRadialGradient(0,0,0, 0,0,S*(cfg.coreR ?? 0.18));
+  core.addColorStop(0.0, rgba(cfg.core, 1.0));
+  core.addColorStop(0.30, rgba(cfg.core, 0.70));
+  core.addColorStop(0.65, rgba(cfg.core, 0.28));
+  core.addColorStop(1.0, "rgba(0,0,0,0)");
   ctx.fillStyle = core; ctx.fillRect(-S,-S,2*S,2*S);
   return new THREE.CanvasTexture(cnv);
 }
-const galaxy = new THREE.Mesh(
-  new THREE.PlaneGeometry(1,1),
-  new THREE.MeshBasicMaterial({
-    // white tint lets the canvas's own warm-core/cool-arm colors read; opacity
-    // keeps it a distant glow, not a spotlight
-    map: makeGalaxyTexture(), transparent: true, depthWrite: false, depthTest: true,
-    blending: THREE.AdditiveBlending, color: 0xffffff, opacity: 0.9, side: THREE.DoubleSide,
-  })
-);
-galaxy.scale.setScalar(12000);
-galaxy.position.copy(new THREE.Vector3(0.5, 0.34, -0.8).normalize()).multiplyScalar(19000);
-galaxy.lookAt(0,0,0);              // face the shell centre (~the ship); set once
-galaxy.renderOrder = -1;
-galaxy.frustumCulled = false;
-skyShell.add(galaxy);
+function addGalaxy(cfg){
+  const g = new THREE.Mesh(
+    new THREE.PlaneGeometry(1,1),
+    new THREE.MeshBasicMaterial({
+      map: makeGalaxyTexture(cfg), transparent: true, depthWrite: false, depthTest: true,
+      blending: THREE.AdditiveBlending, color: 0xffffff, opacity: cfg.opacity, side: THREE.DoubleSide,
+    })
+  );
+  g.scale.setScalar(cfg.scale);
+  g.position.copy(cfg.dir.clone().normalize()).multiplyScalar(cfg.dist);
+  g.lookAt(0,0,0);                  // face the shell centre (~the ship); set once
+  g.renderOrder = -1; g.frustumCulled = false;
+  skyShell.add(g);
+  return g;
+}
+// three scattered galaxies — different palettes, arm counts, tightness, tilt
+addGalaxy({   // hero: Andromeda-like — warm gold core, cool blue arms, pink HII
+  core:[255,248,228], clump:[150,180,255], dust:[205,208,232], hii:[255,120,175], arm:[150,165,215],
+  arms:2, turns:2.3, squash:0.42, roll:-0.5, dots:2400, coreR:0.18,
+  dir:new THREE.Vector3(0.5, 0.34, -0.8), dist:19000, scale:12000, opacity:0.9,
+});
+addGalaxy({   // rust-red tight 3-arm spiral, steeply inclined, smaller
+  core:[255,224,186], clump:[255,175,120], dust:[230,165,135], hii:[255,95,120], arm:[210,120,95],
+  arms:3, turns:2.9, squash:0.28, roll:1.1, dots:1900, coreR:0.15,
+  dir:new THREE.Vector3(-0.78, 0.12, -0.62), dist:20000, scale:7500, opacity:0.8,
+});
+addGalaxy({   // cool teal near-face-on loose 2-arm, medium, in the far sky
+  core:[224,255,246], clump:[160,240,255], dust:[190,228,235], hii:[120,200,255], arm:[110,205,210],
+  arms:2, turns:1.6, squash:0.74, roll:-2.1, dots:2100, coreR:0.16, fuzz:0.30,
+  dir:new THREE.Vector3(0.18, -0.55, 0.82), dist:18000, scale:9500, opacity:0.72,
+});
 
 function makeLabel(text) {
   const cnv = document.createElement("canvas");
