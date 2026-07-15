@@ -21,6 +21,7 @@ when the page loads.
 | ← / → | Turn left / right |
 | ↑ / ↓ | Nose down / up (flight-stick style) |
 | Shift | Boost |
+| Space | Fire blasters |
 | V | Cycle view: cockpit → chase → cinematic |
 
 Touch devices get on-screen thrust/brake/reverse buttons and drag steering.
@@ -31,7 +32,8 @@ bank and pull to turn, or use LB/RB as the rudder. The right stick is
 head-look: glance around at space and planets while the ship flies on —
 release and your view springs back to forward. **RT/LT are analog
 thrust/reverse** (half a pull is half
-thrust), X full stop, B boost, LB/RB nose left/right, Y cycles the view.
+thrust), X full stop, B boost, LB/RB nose left/right, **A fires the
+blasters** (twin nose cannons, aqua + orange), Y cycles the view.
 Atmospheric entry
 and touchdowns rumble the controller. Button A is reserved for future
 weapons.

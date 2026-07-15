@@ -131,9 +131,9 @@
     RIGHT-DRAG — orbit the ship &nbsp; WHEEL — zoom<br>
     W — thrust &nbsp; S — reverse &nbsp; X — full stop<br>
     A / D — roll &nbsp; ← / → — turn &nbsp; ↑ / ↓ — nose down / up<br>
-    SHIFT — boost &nbsp; V — view (cockpit / chase / cinematic)<br>
+    SHIFT — boost &nbsp; SPACE — fire &nbsp; V — view (cockpit / chase / cinematic)<br>
     PAD — L-stick roll / pitch &nbsp; R-stick look around<br>
-    RT / LT thrust &nbsp; X stop &nbsp; B boost &nbsp; LB / RB nose L / R &nbsp; Y view
+    RT / LT thrust &nbsp; X stop &nbsp; B boost &nbsp; LB / RB nose L / R &nbsp; A fire &nbsp; Y view
   </div>
   <div id="viewtag">VIEW: COCKPIT</div>
   <div id="nearest">
@@ -1139,6 +1139,66 @@ if (THREE.GLTFLoader) {
   }, undefined, err => console.warn("ship.glb didn't load — flying the placeholder", err));
 }
 
+/* ============ 10b. BLASTERS (v20) ============
+   Twin nose cannons — left fires AQUA, right fires ORANGE — from the same
+   prong tips the retro-thrusters glow on. A recycled pool of bolts avoids
+   per-shot allocation: each bolt inherits the ship's velocity plus a fast
+   muzzle kick, so they stay ahead of you even at full burn, lives ~2.5s,
+   then parks until reused. Muzzle flashes and a synth "pew" sell each shot. */
+const AQUA_BOLT = 0x4dffe4, ORANGE_BOLT = 0xff9a3c;
+const BOLT_COUNT = 48, BOLT_SPEED = 1500, BOLT_LIFE = 2.5, FIRE_COOLDOWN = 0.11;
+const BOLT_AXIS = new THREE.Vector3(0, 0, 1);
+const boltGeo = new THREE.CylinderGeometry(0.16, 0.16, 3.6, 6);
+boltGeo.rotateX(Math.PI / 2);   // lay the long axis along Z so we can aim it
+const boltGlowTex = softBlobTexture("rgba(255,255,255,0.95)");
+const bolts = [];
+for (let i = 0; i < BOLT_COUNT; i++) {
+  const mat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const mesh = new THREE.Mesh(boltGeo, mat);
+  const glowMat = new THREE.SpriteMaterial({ map: boltGlowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const glow = new THREE.Sprite(glowMat); glow.scale.setScalar(3.2);
+  mesh.add(glow);
+  mesh.visible = false;
+  scene.add(mesh);
+  bolts.push({ mesh, mat, glowMat, vel: new THREE.Vector3(), life: 0 });
+}
+let boltCursor = 0;
+function spawnBolt(pos, dir, colorHex) {
+  const b = bolts[boltCursor];
+  boltCursor = (boltCursor + 1) % BOLT_COUNT;
+  b.mat.color.set(colorHex);
+  b.glowMat.color.set(colorHex);
+  b.mesh.position.copy(pos);
+  b.mesh.quaternion.setFromUnitVectors(BOLT_AXIS, dir);   // long axis along travel
+  b.vel.copy(ship.velocity).addScaledVector(dir, BOLT_SPEED);
+  b.life = BOLT_LIFE;
+  b.mesh.visible = true;
+}
+// world-space muzzle flashes (scene-parented so the ship's async GLB swap
+// can't strip them like it does stray shipMesh children)
+const muzzleFlashes = [AQUA_BOLT, ORANGE_BOLT].map(c => {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: boltGlowTex, color: c, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  s.scale.setScalar(0.001); scene.add(s); return s;
+});
+let fireCooldown = 0;
+const muzzleL = new THREE.Vector3(), muzzleR = new THREE.Vector3(), boltDir = new THREE.Vector3();
+
+function blasterSound() {
+  if (!audio) return;
+  const { ctx } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = "square";
+  o.frequency.setValueAtTime(920, t);
+  o.frequency.exponentialRampToValueAtTime(170, t + 0.12);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.16, t + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+  o.connect(g); g.connect(ctx.destination);
+  o.start(t); o.stop(t + 0.14);
+}
+
 const VIEW_COCKPIT = 0, VIEW_CHASE = 1, VIEW_CINEMATIC = 2;
 let viewMode = VIEW_COCKPIT;                      // start in the cockpit
 const CHASE_OFFSET = new THREE.Vector3(0, 4.5, 17); // behind & above, in ship-local space
@@ -1233,6 +1293,7 @@ function toggleView() {
 const keys = {};
 addEventListener("keydown", e => {
   if (e.code === "KeyV" && !keys["KeyV"]) toggleView(); // fire once per press
+  if (e.code === "Space") e.preventDefault();           // Space fires; don't scroll
   keys[e.code] = true;
 });
 addEventListener("keyup", e => keys[e.code] = false);
@@ -1326,8 +1387,8 @@ document.getElementById("btnView").addEventListener("touchstart", e => {
    left/right). RIGHT STICK is HEAD-LOOK — glance around at space and planets
    while the ship flies on (±135° sideways, ±75° up/down, springs back
    to forward on release). RT/LT analog thrust/reverse · X full stop ·
-   B boost · LB/RB rudder (nose left/right) · Y cycle view.
-   Button A (buttons[0]) is RESERVED — blasters are coming. */
+   B boost · LB/RB rudder (nose left/right) · Y cycle view ·
+   A FIRE BLASTERS (twin nose cannons, aqua + orange). */
 let padIndex = null;
 let padViewHeld = false;      // edge-detect for the view toggle
 let lastPadRumble = 0;
@@ -1384,7 +1445,7 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
 
   /* ---- gamepad: polled every frame ---- */
-  let padLX = 0, padYaw = 0, padThrust = 0, padReverse = 0, padStop = false, padBoost = false;
+  let padLX = 0, padYaw = 0, padThrust = 0, padReverse = 0, padStop = false, padBoost = false, padFire = false;
   let lookTargetYaw = 0, lookTargetPitch = 0;   // 0 unless the stick says otherwise
   if (padIndex !== null) {
     const gp = navigator.getGamepads()[padIndex];
@@ -1414,7 +1475,7 @@ function animate() {
       if (gp.buttons[4] && gp.buttons[4].pressed) padYaw += 1;   // LB — nose left
       if (gp.buttons[5] && gp.buttons[5].pressed) padYaw -= 1;   // RB — nose right
       shipObj.rotateY(padYaw * ship.turnSpeed * dt);
-      // gp.buttons[0] (A) is RESERVED for blasters — do not bind
+      padFire = !!(gp.buttons[0] && gp.buttons[0].pressed);       // A — FIRE BLASTERS
       const yBtn = !!(gp.buttons[3] && gp.buttons[3].pressed); // Y — view toggle
       if (yBtn && !padViewHeld) toggleView();
       padViewHeld = yBtn;
@@ -1702,6 +1763,29 @@ function animate() {
   for (const belt of belts) belt.rotation.y += 0.02 * dt;
   for (const c of cloudLayers) c.mesh.rotation.y += c.speed * dt;
   if (shipMixer) shipMixer.update(dt);   // the idle float, authored in Blender
+
+  /* ---- blasters: fire from both cannons, advance live bolts ---- */
+  fireCooldown -= dt;
+  if ((keys["Space"] || padFire) && fireCooldown <= 0) {
+    shipObj.getWorldDirection(boltDir).negate();          // nose forward (-Z)
+    retroGlows[0].getWorldPosition(muzzleL);              // left prong tip
+    retroGlows[1].getWorldPosition(muzzleR);              // right prong tip
+    spawnBolt(muzzleL, boltDir, AQUA_BOLT);
+    spawnBolt(muzzleR, boltDir, ORANGE_BOLT);
+    muzzleFlashes[0].position.copy(muzzleL); muzzleFlashes[0].scale.setScalar(2.6);
+    muzzleFlashes[1].position.copy(muzzleR); muzzleFlashes[1].scale.setScalar(2.6);
+    blasterSound();
+    padRumble(0.25, 35);
+    fireCooldown = FIRE_COOLDOWN;
+  }
+  for (const b of bolts) {
+    if (b.life <= 0) continue;
+    b.life -= dt;
+    if (b.life <= 0) { b.mesh.visible = false; continue; }
+    b.mesh.position.addScaledVector(b.vel, dt);
+  }
+  for (const s of muzzleFlashes)     // fast fade after each shot
+    if (s.scale.x > 0.002) s.scale.setScalar(Math.max(0.001, s.scale.x * Math.pow(0.00004, dt)));
 
   /* ---- the sky rides along — you can never leave the starfield ---- */
   skyShell.position.copy(shipObj.position);
