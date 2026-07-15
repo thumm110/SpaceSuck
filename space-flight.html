@@ -1649,16 +1649,30 @@ function updateEmbers(dt) {
 
 /* ---- sound: both scale with distance, or a rock popping 2000 units off
    your wing would be as loud as one on your canopy ---- */
+
+/* One noise buffer for the whole session. Filling a fresh 24k-sample buffer
+   per kill cost ~1.4ms on the main thread — Math.pow(k, 2.2) alone was 1.0ms
+   of it — and every boom is a lowpass sweep over noise anyway, so a shared
+   source is indistinguishable. Built on the first boom rather than in
+   initAudio() to keep the junk's audio in the junk's section; that costs one
+   ~1.4ms hit on your first kill and nothing after. playbackRate re-pitches
+   each shot so no two booms land identically. */
+let boomBuf = null;
+function boomBuffer(ctx) {
+  if (boomBuf) return boomBuf;
+  const len = (ctx.sampleRate * 0.5) | 0;
+  boomBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = boomBuf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.2);
+  return boomBuf;
+}
 function junkBoomSound(dist, radius) {
   if (!audio) return;
   const { ctx } = audio, t = ctx.currentTime;
   const vol = Math.min(0.42, (0.10 + radius / 170) * (1 / (1 + dist / 260)));
-  if (vol < 0.004) return;                       // too far to be worth a buffer
-  const len = (ctx.sampleRate * 0.5) | 0;
-  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.2);
-  const src = ctx.createBufferSource(); src.buffer = buf;
+  const src = ctx.createBufferSource();
+  src.buffer = boomBuffer(ctx);
+  src.playbackRate.value = 0.82 + Math.random() * 0.4;
   const f = ctx.createBiquadFilter(); f.type = "lowpass";
   f.frequency.setValueAtTime(2400, t);
   f.frequency.exponentialRampToValueAtTime(110, t + 0.45);   // sweep down = "whump"
@@ -1670,7 +1684,6 @@ function junkTinkSound(dist) {
   if (!audio) return;
   const { ctx } = audio, t = ctx.currentTime;
   const vol = Math.min(0.13, 0.13 * (1 / (1 + dist / 220)));
-  if (vol < 0.003) return;
   const o = ctx.createOscillator(); o.type = "triangle";
   o.frequency.setValueAtTime(1500 + Math.random() * 700, t);
   o.frequency.exponentialRampToValueAtTime(400, t + 0.07);
