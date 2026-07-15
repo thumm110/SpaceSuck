@@ -42,10 +42,23 @@ Touch devices get on-screen thrust/brake/reverse buttons and drag steering.
 - **Ship + camera rig** — a Blender-designed fighter (`ship.glb`) with an
   authored idle-float animation, cockpit view, and a chase cam with easing
   lag so you see the ship bank through turns
+- **EARTH, a landable Blender-built world** — `build_earth.py` generates
+  `earth.glb` (low-poly continents, polar ice, cloud banks, and a landing
+  pad + beacon at Charleston, SC) plus `earth_height.json`, a baked height
+  grid. Gravity pulls inside three radii and the grid says exactly where
+  the terrain is: touch down slow and you park (**LANDED** tag), throttle
+  up to leave. Open `space-flight.html#earth` to spawn on the doorstep.
+  Edit the script, re-run `blender -b -P build_earth.py`, fresh planet.
 
 ## Run it locally
 
-Clone and open `space-flight.html` in a browser. That's it.
+```
+python3 -m http.server 8123
+```
+
+then open <http://localhost:8123/space-flight.html>. (A bare double-click
+still flies, but browsers block `fetch()` on `file://`, so the Blender
+ship and Earth fall back to their procedural placeholders.)
 
 ## History
 

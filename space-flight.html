@@ -58,6 +58,11 @@
     color: #ffb066; text-shadow: 0 0 10px rgba(255,176,102,.8);
     font-size: 12px; letter-spacing: 4px; visibility: hidden;
   }
+  #landtag {
+    position: absolute; top: 26%; left: 50%; transform: translateX(-50%);
+    color: #7dffa8; text-shadow: 0 0 10px rgba(125,255,168,.8);
+    font-size: 13px; letter-spacing: 4px; visibility: hidden;
+  }
   /* full-screen tint that fades in as you sink into an atmosphere;
      sits above the canvas, below the HUD */
   #atmo {
@@ -136,6 +141,7 @@
   </div>
   <div id="alarm">⚠ PROXIMITY ⚠</div>
   <div id="entrytag">◆ ATMOSPHERIC ENTRY ◆</div>
+  <div id="landtag">◆ LANDED ◆</div>
   <div id="flightdata">
     <span class="dim">VELOCITY</span><br>
     <span class="big" id="speed">0</span> <span class="dim">u/s</span>
@@ -170,21 +176,26 @@
 <script src="GLTFLoader.js"></script>
 <script>
 /* =========================================================================
-   SPACESUCK v12 — the walkaround
+   SPACESUCK v13 — boots on the ground
    -------------------------------------------------------------------------
-   New since v11 (see git log for the full story):
+   New since v12 (see git log for the full story):
 
-     • SHOWCASE ORBIT — hold RIGHT-CLICK and the mouse swings the camera
-       360° around the ship (wheel zooms, 8–40u). The orbit seeds itself
-       from wherever the camera already is, so there's no jump cut, and
-       the hull renders even from cockpit view. Keyboard still flies the
-       ship while you film it. Release to return to your normal view.
+     • EARTH — the first Blender-built world (build_earth.py → earth.glb):
+       flat-shaded low-poly terrain with real continents, polar ice, cloud
+       banks, and a landing pad + beacon at Charleston, SC. The script is
+       the master — edit it, re-run headless, fresh planet.
 
-   v11: the ship is the Blender fighter (ship.glb) — named parts anchor
-   the engine/retro glows, ShipRootAction is the idle float. v10:
-   atmospheric entry effects. Controls (v8): W thrust / S reverse /
-   X full stop, A/D roll, arrows turn & pitch (flight-stick), mouse
-   freelook, SHIFT boost, V view.
+     • LANDING — Earth has gravity and a baked height grid
+       (earth_height.json), so the ground under the ship is the REAL
+       terrain, not a sphere. Touch down slow and you're parked (LANDED
+       tag); throttle up to take off. Open space-flight.html#earth to
+       spawn on Earth's doorstep.
+
+   v12: right-click showcase orbit. v11: the ship is the Blender fighter
+   (ship.glb) — named parts anchor the engine/retro glows, ShipRootAction
+   is the idle float. v10: atmospheric entry effects. Controls (v8):
+   W thrust / S reverse / X full stop, A/D roll, arrows turn & pitch
+   (flight-stick), mouse freelook, SHIFT boost, V view.
    ========================================================================= */
 
 if (typeof THREE === "undefined") {
@@ -194,27 +205,27 @@ if (typeof THREE === "undefined") {
 }
 
 /* ============ 1. CONFIG — YOUR SOLAR SYSTEM ============ */
-/* v9 scale: radii ×3 (planets read as WORLDS up close — the horizon
-   flattens instead of curving away like a beach ball) and distances
-   ×1.5 on top of v7's spread so the sky stays uncrowded. */
+/* Scale story: v9 took radii ×3, v14 takes them ×2.5 AGAIN (distances ×2)
+   — a planet should swallow the view when you're flying around it.
+   Earth is 750u now: a low sightseeing lap is a ~4,700u journey. */
 const BODIES = [
   {
     name: "HELIOS", type: "star",
-    radius: 660, color: 0xffc873, seed: 7,
-    position: [0, 0, -18000],
+    radius: 1650, color: 0xffc873, seed: 7,
+    position: [0, 0, -36000],
   },
   {
     name: "CINDER", type: "planet", style: "rocky", seed: 11,
-    radius: 180,
-    position: [-5400, 480, -13200],
+    radius: 450,
+    position: [-10800, 960, -26400],
     spin: 0.02,
     atmosphere: 0xcc5522, atmoStrength: 0.5,
     palette: { dark: 0x4a2318, mid: 0x9c4a2e, light: 0xd98d5f },
   },
   {
     name: "AZURE", type: "planet", style: "terrestrial", seed: 42,
-    radius: 285,
-    position: [4200, -720, -9000],
+    radius: 712,
+    position: [8400, -1440, -18000],
     spin: 0.015,
     clouds: true,
     atmosphere: 0x5599ff, atmoStrength: 1.0,
@@ -222,22 +233,43 @@ const BODIES = [
       deep: 0x0a2d52, shallow: 0x1a6b8f, sand: 0xc2b280,
       low: 0x3d7a3d, high: 0x6b5d45, snow: 0xf0f5fa,
     },
-    moon: { radius: 54, distance: 660, speed: 0.25, color: 0x9aa3ad, seed: 5 },
+    moon: { radius: 135, distance: 1650, speed: 0.15, color: 0x9aa3ad, seed: 5 },
   },
   {
     name: "KRONOS", type: "planet", style: "gas", seed: 23,
-    radius: 390,
-    position: [-2400, 1800, -3600],
+    radius: 975,
+    position: [-4800, 3600, -7200],
     spin: 0.01,
     atmosphere: 0xddbb77, atmoStrength: 0.7,
     palette: { dark: 0x7a5c38, mid: 0xc9a86b, light: 0xf0dcae },
-    rings: { inner: 510, outer: 840, color: 0x8a7a5c },
-    belt: { inner: 900, outer: 1260, count: 700 },
+    rings: { inner: 1275, outer: 2100, color: 0x8a7a5c },
+    belt: { inner: 2250, outer: 3150, count: 1000 },
+  },
+  {
+    name: "EARTH", type: "planet", style: "gltf", seed: 3,
+    radius: 750,
+    position: [3900, -160, -8800],
+    spin: 0.005,                    // ~2min day; a parked ship RIDES the
+                                    // rotation (see the landed branch)
+    yaw: Math.PI,                   // initial turn so Charleston faces the sun
+    file: "earth.glb",              // built by build_earth.py (Blender)
+    heightFile: "earth_height.json",
+    landable: true,
+    atmosphere: 0x5f9dff, atmoStrength: 1.05,
+    // Luna-true proportions: real Moon = 0.27 Earth radii. Orbits just
+    // outside the 3-radii gravity well so approach stays clean.
+    moon: { radius: 200, distance: 2500, speed: 0.08, seed: 8 },
+    // fallback palette: if earth.glb can't load (file:// with no local
+    // server, say) the planet still exists as a procedural sphere
+    palette: {
+      deep: 0x0b2e55, shallow: 0x2e83a0, sand: 0xc9b77e,
+      low: 0x4d8f3a, high: 0x7a6a52, snow: 0xf2f7fa,
+    },
   },
   {
     name: "VERDANT", type: "planet", style: "terrestrial", seed: 99,
-    radius: 135,
-    position: [8400, 1200, -16800],
+    radius: 337,
+    position: [16800, 2400, -33600],
     spin: 0.03,
     clouds: true,
     atmosphere: 0x77ffaa, atmoStrength: 0.9,
@@ -503,7 +535,7 @@ function makeAtmosphere(radius, colorHex, strength) {
 
 /* ============ 5. SCENE SETUP ============ */
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 50000);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 100000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -674,14 +706,87 @@ function buildShipMesh() {
   return { mesh: ship, engineGlows, retroGlows };
 }
 
+/* ============ 6b. TERRAIN HEIGHT GRID ============
+   Landable planets ship with a height grid baked by build_earth.py: a
+   512×256 lat/lon map of "how far is the surface from the center", uint8,
+   base64. groundRadius() bilinearly samples it — that's the ENTIRE
+   terrain-collision system. No raycasts against 80k triangles. */
+function loadHeightGrid(body, url) {
+  fetch(url).then(r => r.json()).then(j => {
+    const raw = atob(j.b64), d = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) d[i] = raw.charCodeAt(i);
+    body.height = { w: j.w, h: j.h, min: j.min, max: j.max, d };
+  }).catch(() => {});   // no grid → sphere collision, same as any planet
+}
+
+function groundRadius(body, n) {
+  // n: unit vector from planet center toward the ship
+  const g = body.height;
+  if (!g) return body.cfg.radius;
+  // undo the planet's CURRENT rotation (initial yaw + accumulated spin):
+  // rotate the world direction back into the as-baked frame before
+  // looking up lat/lon. body.surface is the spinning holder.
+  let nx = n.x, nz = n.z;
+  const yaw = body.surface ? body.surface.rotation.y : (body.cfg.yaw || 0);
+  if (yaw) {
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    nx = n.x * cy - n.z * sy;
+    nz = n.x * sy + n.z * cy;
+  }
+  // Blender's Z-up became glTF's Y-up: north pole is +y, and Blender
+  // longitude works out to atan2(-z, x) on this side
+  const lon = Math.atan2(-nz, nx);
+  const lat = Math.asin(Math.max(-1, Math.min(1, n.y)));
+  const u = (lon + Math.PI) / (2 * Math.PI) * g.w - 0.5;
+  const v = (Math.PI / 2 - lat) / Math.PI * g.h - 0.5;
+  const x0 = Math.floor(u), y0 = Math.floor(v);
+  const fx = u - x0, fy = v - y0;
+  const X0 = ((x0 % g.w) + g.w) % g.w, X1 = (X0 + 1) % g.w;   // wrap east-west
+  const Y0 = Math.max(0, Math.min(g.h - 1, y0));               // clamp at poles
+  const Y1 = Math.max(0, Math.min(g.h - 1, y0 + 1));
+  const s = (X, Y) => g.d[Y * g.w + X];
+  const top = s(X0, Y0) + (s(X1, Y0) - s(X0, Y0)) * fx;
+  const bot = s(X0, Y1) + (s(X1, Y1) - s(X0, Y1)) * fx;
+  const val = top + (bot - top) * fy;
+  return body.cfg.radius * (g.min + (g.max - g.min) * val / 255);
+}
+
 /* ============ 7. BODY BUILDER ============ */
 const liveBodies = [];
 const belts = [];
 const cloudLayers = [];
 
+function makeProceduralSurface(cfg) {
+  let texs, matOpts = { metalness: 0.0 };
+  if (cfg.style === "terrestrial") {
+    texs = genTerrestrial(cfg);
+    matOpts.roughness = 1.0;
+    matOpts.roughnessMap = texs.roughnessMap;
+    matOpts.bumpMap = texs.bumpMap;
+  } else if (cfg.style === "gas") {
+    texs = genGas(cfg);
+    matOpts.roughness = 0.85;
+  } else {
+    texs = genRocky(cfg);
+    matOpts.roughness = 0.95;
+    matOpts.bumpMap = texs.bumpMap;
+  }
+  matOpts.map = texs.map;
+
+  const mat = new THREE.MeshStandardMaterial(matOpts);
+  if (mat.bumpMap) mat.bumpScale = cfg.radius * 0.02;
+  // more segments than v8 — at 3× radius a coarse sphere shows its
+  // polygon edges on the horizon when you fly low
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(cfg.radius, 96, 64), mat);
+  mesh.name = "surface";
+  return mesh;
+}
+
 function buildBody(cfg) {
   const group = new THREE.Group();
   group.position.set(...cfg.position);
+  const body = { cfg, group };   // pushed to liveBodies below; the height
+                                 // grid attaches here when it arrives
 
   if (cfg.type === "star") {
     const sun = new THREE.Mesh(
@@ -698,29 +803,37 @@ function buildBody(cfg) {
     glow.scale.setScalar(cfg.radius * 7);
     group.add(glow);
   } else {
-    let texs, matOpts = { metalness: 0.0 };
-    if (cfg.style === "terrestrial") {
-      texs = genTerrestrial(cfg);
-      matOpts.roughness = 1.0;
-      matOpts.roughnessMap = texs.roughnessMap;
-      matOpts.bumpMap = texs.bumpMap;
-    } else if (cfg.style === "gas") {
-      texs = genGas(cfg);
-      matOpts.roughness = 0.85;
+    if (cfg.style === "gltf") {
+      /* Blender planet — built by build_earth.py. The GLB *is* the
+         terrain: flat-shaded low-poly land, cloud banks, landing pad.
+         Modeled at radius 100, scaled to cfg.radius here. Loads async
+         like ship.glb; if the file can't load (file:// with no local
+         server, say) the procedural sphere fills in so the game never
+         breaks — you just get the old beach ball instead of terrain. */
+      const holder = new THREE.Group();
+      holder.name = "surface";
+      holder.rotation.y = cfg.yaw || 0;   // groundRadius() un-rotates to match
+      group.add(holder);
+      body.surface = holder;              // groundRadius reads live rotation here
+      const fallback = () =>
+        holder.add(makeProceduralSurface({ ...cfg, style: "terrestrial" }));
+      if (THREE.GLTFLoader) {
+        new THREE.GLTFLoader().load(cfg.file, gltf => {
+          const model = gltf.scene;
+          model.scale.setScalar(cfg.radius / 100);
+          holder.add(model);
+          // the GLB's cloud shell drifts like every other cloud layer
+          const clouds = model.getObjectByName("Clouds");
+          if (clouds) cloudLayers.push({ mesh: clouds, speed: 0.03 });
+        }, undefined, err => {
+          console.warn(cfg.file + " didn't load — procedural stand-in", err);
+          fallback();
+        });
+      } else fallback();
+      if (cfg.heightFile) loadHeightGrid(body, cfg.heightFile);
     } else {
-      texs = genRocky(cfg);
-      matOpts.roughness = 0.95;
-      matOpts.bumpMap = texs.bumpMap;
+      group.add(makeProceduralSurface(cfg));
     }
-    matOpts.map = texs.map;
-
-    const mat = new THREE.MeshStandardMaterial(matOpts);
-    if (mat.bumpMap) mat.bumpScale = cfg.radius * 0.02;
-    // more segments than v8 — at 3× radius a coarse sphere shows its
-    // polygon edges on the horizon when you fly low
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(cfg.radius, 96, 64), mat);
-    mesh.name = "surface";
-    group.add(mesh);
 
     if (cfg.clouds) {
       const cloudMesh = new THREE.Mesh(
@@ -763,9 +876,9 @@ function buildBody(cfg) {
       for (let i = 0; i < cfg.belt.count; i++) {
         const ang = Math.random() * Math.PI * 2;
         const dist = cfg.belt.inner + Math.random() * (cfg.belt.outer - cfg.belt.inner);
-        dummy.position.set(Math.cos(ang) * dist, (Math.random() - 0.5) * 60, Math.sin(ang) * dist);
+        dummy.position.set(Math.cos(ang) * dist, (Math.random() - 0.5) * 150, Math.sin(ang) * dist);
         dummy.rotation.set(Math.random()*6.28, Math.random()*6.28, Math.random()*6.28);
-        dummy.scale.setScalar(4 + Math.random() * 12);
+        dummy.scale.setScalar(8 + Math.random() * 22);
         dummy.updateMatrix();
         rocks.setMatrixAt(i, dummy.matrix);
       }
@@ -797,7 +910,7 @@ function buildBody(cfg) {
   }
 
   scene.add(group);
-  liveBodies.push({ cfg, group });
+  liveBodies.push(body);
 }
 
 /* ============ 8. SPACE DUST ============ */
@@ -883,7 +996,7 @@ shipObj.position.set(0, 0, 600);
 /* Aim the spawn so the first frame is a view, not empty void: HELIOS dead
    ahead with AZURE off to the right. lookAt() points +Z at the target but
    our nose is -Z, so we look at the target's mirror through the ship. */
-const spawnTarget = new THREE.Vector3(1300, -220, -13500);
+const spawnTarget = new THREE.Vector3(1200, -200, -20000);
 shipObj.lookAt(shipObj.position.clone().multiplyScalar(2).sub(spawnTarget));
 scene.add(shipObj);
 
@@ -1070,6 +1183,14 @@ const tmpNormal = new THREE.Vector3();
 let prevNearestDist = Infinity;
 let prevNearestBody = null;
 
+/* landing state (v13) — see the landable branch in the collision loop */
+let landedOn = null;           // the body we're parked on, or null
+const GEAR_HEIGHT = 4;         // the ship rests this far above the terrain
+const SURFACE_G = 26;          // gravity at surface level, u/s²
+const landTagEl = document.getElementById("landtag");
+const SPIN_AXIS = new THREE.Vector3(0, 1, 0);  // planets spin about local +Y
+const spinRideQ = new THREE.Quaternion();      // parked ship rides the spin
+
 /* atmospheric entry state — depth is 0 in space, →1 near the surface */
 let entryDepth = 0;
 const atmoEl = document.getElementById("atmo");
@@ -1147,7 +1268,53 @@ function animate() {
     tmpNormal.subVectors(shipObj.position, b.group.position);
     let dist = tmpNormal.length();
     let minDist = b.cfg.radius + COLLIDE_BUFFER;
-    if (dist < minDist) {
+
+    if (b.cfg.landable) {
+      /* ---- landable world: gravity + real terrain (v13) ----
+         The height grid says exactly where the ground is under the ship.
+         Touch it and you STICK (no bounce): the sink rate dies, ground
+         grip bleeds off the slide, and below walking pace you're parked.
+         Throttle up to take off again. */
+      tmpNormal.multiplyScalar(1 / dist);            // local "up"
+      if (dist < b.cfg.radius * 3 && landedOn !== b) {
+        // inverse-square pull: a shrug at cruise range, a real tug on
+        // final approach — kill the throttle and you'll settle
+        const g = SURFACE_G * (b.cfg.radius / dist) * (b.cfg.radius / dist);
+        ship.velocity.addScaledVector(tmpNormal, -g * dt);
+      }
+      if (landedOn === b) {
+        // parked: pinned to the terrain until the pilot throttles up.
+        // If the planet spins, RIDE it — swing our anchor point and our
+        // nose around the axis at the same rate the surface turns, so
+        // the pad never slides out from under the gear.
+        if (b.cfg.spin) {
+          const dSpin = b.cfg.spin * dt * 10;   // must match the surface animation
+          tmpNormal.applyAxisAngle(SPIN_AXIS, dSpin);
+          spinRideQ.setFromAxisAngle(SPIN_AXIS, dSpin);
+          shipObj.quaternion.premultiply(spinRideQ);
+        }
+        const ground = groundRadius(b, tmpNormal) + GEAR_HEIGHT;
+        shipObj.position.copy(b.group.position).addScaledVector(tmpNormal, ground);
+        ship.velocity.set(0, 0, 0);
+        if (ship.throttle > 0.05) landedOn = null;   // takeoff
+      } else {
+        const ground = groundRadius(b, tmpNormal) + GEAR_HEIGHT;
+        if (dist < ground) {
+          shipObj.position.copy(b.group.position).addScaledVector(tmpNormal, ground);
+          const into = ship.velocity.dot(tmpNormal);
+          if (into < 0) {
+            if (into < -100) thump(-into);             // came in hot
+            ship.velocity.addScaledVector(tmpNormal, -into);
+          }
+          ship.velocity.multiplyScalar(Math.pow(0.9, dt * 60));  // ground grip
+          if (ship.velocity.length() < 2.5) {
+            landedOn = b;
+            ship.velocity.set(0, 0, 0);
+            ship.throttle = 0;
+          }
+        }
+      }
+    } else if (dist < minDist) {
       tmpNormal.normalize();
       shipObj.position.copy(b.group.position).addScaledVector(tmpNormal, minDist);
       const into = ship.velocity.dot(tmpNormal);
@@ -1313,9 +1480,17 @@ function animate() {
   // alarm range scales with the body — a 660u sun deserves more warning
   // room than a 135u planet
   const alarmRange = Math.max(250, nearest.cfg.radius * 0.8);
-  alarmEl.style.visibility = (nearestDist < alarmRange && closingSpeed > 60) ? "visible" : "hidden";
+  // no proximity screaming while safely parked on the thing
+  alarmEl.style.visibility = (!landedOn && nearestDist < alarmRange && closingSpeed > 60) ? "visible" : "hidden";
   prevNearestDist = nearestDist;
   prevNearestBody = nearest;
+
+  if (landedOn) {
+    landTagEl.textContent = "◆ LANDED — " + landedOn.cfg.name + " ◆";
+    landTagEl.style.visibility = "visible";
+  } else {
+    landTagEl.style.visibility = "hidden";
+  }
 
   /* ---- atmospheric entry: the "middle path" — effects, not scenes ----
      Below a quarter-radius of altitude over any body with an atmosphere,
@@ -1357,6 +1532,16 @@ function animate() {
 
 setTimeout(() => {
   BODIES.forEach(buildBody);
+  // dev shortcut: open space-flight.html#earth to spawn on Earth's
+  // doorstep instead of cruising five thousand units to get there
+  if (location.hash === "#earth") {
+    const e = BODIES.find(b => b.name === "EARTH");
+    shipObj.position.set(e.position[0] - e.radius * 0.3,
+                         e.position[1] + e.radius * 0.5,
+                         e.position[2] - e.radius * 2.0);
+    const c = new THREE.Vector3(...e.position);
+    shipObj.lookAt(shipObj.position.clone().multiplyScalar(2).sub(c));
+  }
   document.getElementById("loading").style.display = "none";
   animate();
 }, 60);
