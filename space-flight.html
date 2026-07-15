@@ -1643,10 +1643,14 @@ function animate() {
     // first wisps of tint start hundreds of units before "entry" feels true
     entryTagEl.style.visibility = entryDepth > 0.08 ? "visible" : "hidden";
     if (audio) audio.rumble.gain.value = entryDepth * speedFrac * 0.6;
-    // controller rumble rides the same depth × speed curve; re-armed
-    // every ~90ms so back-to-back effects blend into a continuous roar
-    if (performance.now() - lastPadRumble > 90) {
-      padRumble(entryDepth * speedFrac * 0.9, 120);
+    // controller rumble PULSES instead of running continuously — kinder
+    // to wireless batteries, and buffeting reads more like turbulence
+    // than a constant buzz. Deeper + faster = harder, tighter pulses:
+    // ~600ms apart on a gentle high pass, ~300ms in a screaming reentry.
+    const rumbleStrength = entryDepth * speedFrac * 0.9;
+    const pulseGap = 600 - 300 * Math.min(1, rumbleStrength);
+    if (rumbleStrength > 0.05 && performance.now() - lastPadRumble > pulseGap) {
+      padRumble(rumbleStrength, 140);
       lastPadRumble = performance.now();
     }
   } else {
