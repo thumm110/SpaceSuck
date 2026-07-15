@@ -26,9 +26,8 @@ when the page loads.
 Touch devices get on-screen thrust/brake/reverse buttons and drag steering.
 
 **Gamepad** (Xbox layout, plug in and press any button): the left stick is
-the whole flight control — parked it turns the nose like a turret, at speed
-left/right becomes **roll** and you bank-and-pull to turn like an aircraft
-(it blends smoothly between the two as you accelerate). The right stick is
+a real flight stick — left/right **rolls**, up/down pitches, at any speed;
+bank and pull to turn, or use LB/RB as the rudder. The right stick is
 head-look: glance around at space and planets while the ship flies on —
 release and your view springs back to forward. **RT/LT are analog
 thrust/reverse** (half a pull is half

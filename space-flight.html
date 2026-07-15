@@ -132,7 +132,7 @@
     W — thrust &nbsp; S — reverse &nbsp; X — full stop<br>
     A / D — roll &nbsp; ← / → — turn &nbsp; ↑ / ↓ — nose down / up<br>
     SHIFT — boost &nbsp; V — view (cockpit / chase / cinematic)<br>
-    PAD — L-stick fly (turn parked / roll at speed) &nbsp; R-stick look around<br>
+    PAD — L-stick roll / pitch &nbsp; R-stick look around<br>
     RT / LT thrust &nbsp; X stop &nbsp; B boost &nbsp; LB / RB nose L / R &nbsp; Y view
   </div>
   <div id="viewtag">VIEW: COCKPIT</div>
@@ -1321,10 +1321,9 @@ document.getElementById("btnView").addEventListener("touchstart", e => {
    The Gamepad API has no stick events; state is POLLED every frame in
    the game loop. The browser hides the pad until the first button press
    on a focused page (privacy), so 'gamepadconnected' fires then.
-   Mapping: LEFT STICK is the whole flight control — parked it turns the
-   nose like a turret; at speed X becomes ROLL and you bank-and-pull to
-   turn like an aircraft (blended by speed, no hard switch). Y is always
-   pitch. RIGHT STICK is HEAD-LOOK — glance around at space and planets
+   Mapping: LEFT STICK is a real flight stick at any speed — X rolls,
+   Y pitches; bank and pull to turn. LB/RB are the rudder (nose
+   left/right). RIGHT STICK is HEAD-LOOK — glance around at space and planets
    while the ship flies on (±135° sideways, ±75° up/down, springs back
    to forward on release). RT/LT analog thrust/reverse · X full stop ·
    B boost · LB/RB rudder (nose left/right) · Y cycle view.
@@ -1385,20 +1384,17 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
 
   /* ---- gamepad: polled every frame ---- */
-  let padLX = 0, padYaw = 0, padAirFrac = 0, padThrust = 0, padReverse = 0, padStop = false, padBoost = false;
+  let padLX = 0, padYaw = 0, padThrust = 0, padReverse = 0, padStop = false, padBoost = false;
   let lookTargetYaw = 0, lookTargetPitch = 0;   // 0 unless the stick says otherwise
   if (padIndex !== null) {
     const gp = navigator.getGamepads()[padIndex];
     if (gp) {
       padLX = padAxis(gp.axes[0]);
       const padLY = padAxis(gp.axes[1]);
-      /* left stick = the whole flight control. Parked, X turns the nose
-         (turret). At speed, X rolls and you bank-and-pull like an
-         aircraft. airFrac crossfades 0→1 between 30 and 150 u/s so the
-         handoff is a blend, never a switch. */
-      padAirFrac = Math.min(1, Math.max(0, (ship.velocity.length() - 30) / 120));
-      shipObj.rotateY(-padLX * (1 - padAirFrac) * ship.turnSpeed * dt);  // turret turn
-      shipObj.rotateZ(-padLX * padAirFrac * 1.8 * dt);                   // aircraft roll
+      /* left stick = a real flight stick at ANY speed: X rolls, Y
+         pitches — bank and pull to turn. The bumpers are the rudder
+         (v19), so the old parked-turret yaw blend is gone. */
+      shipObj.rotateZ(-padLX * 1.8 * dt);               // roll
       shipObj.rotateX( padLY * ship.turnSpeed * dt);    // pitch — pull back = climb
 
       /* right stick = HEAD-LOOK: deflection maps straight to a view
@@ -1464,10 +1460,10 @@ function animate() {
      Physics (shipObj) never rolls; only the mesh / camera tilt, so the
      floaty flight model is untouched. yawFrac = how hard we're turning
      as a fraction of full keyboard turn rate, from any input source. */
-  // pad stick only counts as "turning" while it's acting as yaw — at
-  // speed it's a real roll, and the mesh is already physically banked
+  // pad stick rolls for real (mesh physically banks), so only the
+  // bumper rudder feeds the cosmetic lean
   const yawFrac = Math.max(-1, Math.min(1,
-    keyYaw + padYaw - sx - padLX * (1 - padAirFrac) + (dt > 0 ? mouseYaw / (ship.turnSpeed * dt) : 0)));
+    keyYaw + padYaw - sx + (dt > 0 ? mouseYaw / (ship.turnSpeed * dt) : 0)));
   bank += (yawFrac * MAX_BANK - bank) * (1 - Math.exp(-5 * dt));
 
   shipObj.getWorldDirection(tmpDir);
