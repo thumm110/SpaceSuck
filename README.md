@@ -45,6 +45,14 @@ weapons.
   (ocean → beach → plains → mountains → snow, with latitude ice caps)
 - **A solar system** — star, rocky/terrestrial/gas planets, an orbiting moon,
   rings, and a 700-rock asteroid belt in a single draw call
+- **Shootable space junk** — asteroids, dead satellites (solar wings, dish,
+  a beacon still blinking), and loose debris tangled out of pipes, plates,
+  and tanks. The field lives in a bubble that travels with you and respawns
+  ahead of your heading, so junk arrives from every direction and you can
+  neither outrun it nor strip it bare. Big rocks take a few hits and break
+  into chunks; small debris pops on one. Ram it and it shatters on your hull
+  and costs you speed. Hits use a swept test — bolts move ~24 units a frame,
+  so a plain point check would sail straight through the small stuff
 - **Flight model** — throttle with reverse, boost, frame-rate-independent
   drag, collision bounces off every body
 - **Atmospheric entry** — dive below a quarter-radius of any world with an

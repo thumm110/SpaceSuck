@@ -38,6 +38,7 @@
   #flightdata .big { font-size: 26px; letter-spacing: 2px; }
   #flightdata .dim { opacity: .55; font-size: 11px; }
   #revtag { color: #ffb066; text-shadow: 0 0 6px rgba(255,176,102,.6); visibility: hidden; }
+  #kills { color: #ff9a3c; text-shadow: 0 0 6px rgba(255,154,60,.6); letter-spacing: 2px; }
   #viewtag {
     position: absolute; right: 18px; top: 14px;
     font-size: 11px; letter-spacing: 2px; opacity: .7;
@@ -147,7 +148,8 @@
   <div id="flightdata">
     <span class="dim">VELOCITY</span><br>
     <span class="big" id="speed">0</span> <span class="dim">u/s</span>
-    <span id="revtag">◀ REV</span>
+    <span id="revtag">◀ REV</span><br>
+    <span class="dim">JUNK DESTROYED</span> <span id="kills">0</span>
   </div>
   <div id="throttlewrap">
     THR<br>
@@ -1366,6 +1368,428 @@ function blasterSound() {
   o.start(t); o.stop(t + 0.14);
 }
 
+/* ============ 10c. SPACE JUNK (v22) ============
+   Shootable clutter: rocks, dead satellites, and loose debris. None of it
+   is placed in world space — a pool of 44 pieces lives in a bubble that
+   travels WITH you. Drift past the cull radius and a piece respawns on the
+   far side of the bubble, biased into the hemisphere you're flying toward,
+   so junk always arrives from ahead and you can neither outrun the field
+   nor strip it bare. Kill one and its slot comes back a few seconds later.
+
+   Each slot keeps the shape it was born with; only position, scale, spin,
+   and hp re-roll on respawn. That's what lets 44 slots read as endless
+   variety — the rock you just killed returns from a new heading at a new
+   size and you'd never place it. */
+const JUNK_COUNT = 44;
+const JUNK_NEAR = 320;      // closest a piece may spawn — no pop-in on your nose
+const JUNK_FAR = 2400;      // spawn shell, well inside the ~3750u bolt range
+const JUNK_CULL = 3400;     // drifted past this? recycle it to the front
+const SHIP_HIT_R = 12;      // hull radius, for ramming
+const FLASH_WHITE = new THREE.Color(0xffffff);
+const killsEl = document.getElementById("kills");
+let junkKills = 0;
+
+function randUnit(v) {   // evenly distributed point on the unit sphere
+  const z = Math.random() * 2 - 1, a = Math.random() * Math.PI * 2, r = Math.sqrt(1 - z * z);
+  return v.set(r * Math.cos(a), r * Math.sin(a), z);
+}
+
+/* A lumpy potato, not a ball. IcosahedronGeometry is NON-indexed — every
+   triangle owns its own copy of each corner — so displacing by vertex index
+   would pull shared corners apart and blow the rock open. Displacing by a
+   noise function of DIRECTION gives duplicated corners the same answer, and
+   the mesh stays welded. */
+function junkRockGeo(seed) {
+  const geo = new THREE.IcosahedronGeometry(1, 1);
+  const n3 = makeNoise(makePerm(seed));
+  const pos = geo.attributes.position;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i).normalize();
+    const f = 0.72 + 0.42 * n3(v.x * 2.1 + 7, v.y * 2.1 + 7, v.z * 2.1 + 7)
+                   + 0.20 * n3(v.x * 5.3 + 3, v.y * 5.3 + 3, v.z * 5.3 + 3);
+    pos.setXYZ(i, v.x * f, v.y * f, v.z * f);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+const ROCK_COLORS = [0x8a8378, 0x6f6a63, 0x9c8e7a, 0x7d7f86, 0xa39082, 0x5f5850];
+const METAL_COLORS = [0xb9bcc4, 0x8e949c, 0xc7c2b4, 0x99a2ad, 0xa8a093];
+/* The scene's only lamp is the sun, and ambient is near-black — correct for
+   space, but it left every rock a flat silhouette the moment its lit side
+   turned away, and you can't aim at what you can't read. A dim self-lit
+   floor keeps the facets legible from any angle without looking unlit. */
+const ROCK_GLOW = 0x1e2126, METAL_GLOW = 0x212429;
+
+function buildJunkAsteroid(rand, seed) {
+  const mat = new THREE.MeshStandardMaterial({
+    color: ROCK_COLORS[(rand() * ROCK_COLORS.length) | 0],
+    emissive: ROCK_GLOW,
+    roughness: 1, metalness: 0.05, flatShading: true,
+  });
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(junkRockGeo(seed), mat));
+  return { group: g, baseR: 1.15 };
+}
+
+function buildJunkSatellite(rand) {
+  const g = new THREE.Group();
+  const hull = new THREE.MeshStandardMaterial({
+    color: METAL_COLORS[(rand() * METAL_COLORS.length) | 0],
+    emissive: METAL_GLOW,
+    roughness: 0.45, metalness: 0.75, flatShading: true,
+  });
+  const panelMat = new THREE.MeshStandardMaterial({
+    color: 0x16305c, roughness: 0.25, metalness: 0.4,
+    emissive: 0x0b1e3a, side: THREE.DoubleSide, flatShading: true,
+  });
+  const dishMat = new THREE.MeshStandardMaterial({
+    color: 0xd8d4c8, emissive: METAL_GLOW,
+    roughness: 0.5, metalness: 0.5, side: THREE.DoubleSide,
+  });
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 1.5), hull));
+  for (const s of [-1, 1]) {                       // solar wings on stub booms
+    const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.9, 5), hull);
+    boom.rotation.z = Math.PI / 2; boom.position.x = s * 0.85;
+    g.add(boom);
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.05, 1.0), panelMat);
+    panel.position.x = s * 2.3;
+    panel.rotation.x = (rand() - 0.5) * 0.3;       // never perfectly square — it's dead, not parked
+    g.add(panel);
+  }
+  const dish = new THREE.Mesh(
+    new THREE.SphereGeometry(0.5, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2.5), dishMat);
+  dish.position.set(0, 0.5, -0.5); dish.rotation.x = -0.6;
+  g.add(dish);
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.3, 4), hull);
+  mast.position.set(0, 0, 1.0); mast.rotation.x = Math.PI / 2;
+  g.add(mast);
+  // a beacon still blinking on a derelict — reads as "satellite" from any range,
+  // even when the sun is behind you and the hull is a silhouette
+  const beacon = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: boltGlowTex, color: 0xff4438, transparent: true,
+    depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  beacon.scale.setScalar(1.1); beacon.position.set(0, 0.6, 0.7);
+  g.add(beacon);
+  return { group: g, baseR: 2.4, beacon };
+}
+
+function buildJunkDebris(rand) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color: METAL_COLORS[(rand() * METAL_COLORS.length) | 0],
+    emissive: METAL_GLOW,
+    roughness: 0.55, metalness: 0.7, flatShading: true,
+  });
+  const n = 2 + ((rand() * 4) | 0);        // 2-5 bits welded into one tangle
+  for (let i = 0; i < n; i++) {
+    const k = rand();
+    let m;
+    if (k < 0.28)      m = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.9 + rand() * 1.5, 6), mat);         // pipe
+    else if (k < 0.52) m = new THREE.Mesh(new THREE.BoxGeometry(0.8 + rand(), 0.07, 0.5 + rand()), mat);               // hull plate
+    else if (k < 0.70) m = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.09, 5, 9), mat);                             // coupling ring
+    else if (k < 0.88) m = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.8 + rand() * 0.5, 8), mat);           // tank
+    else               m = new THREE.Mesh(new THREE.BoxGeometry(0.35 + rand() * 0.3, 0.35, 0.35), mat);                // block
+    m.position.set((rand() - 0.5) * 1.2, (rand() - 0.5) * 1.2, (rand() - 0.5) * 1.2);
+    m.rotation.set(rand() * 6.28, rand() * 6.28, rand() * 6.28);
+    g.add(m);
+  }
+  return { group: g, baseR: 1.3 };
+}
+
+/* every slot owns its materials — sharing them would flash the whole field
+   white the moment you clipped any one piece */
+function junkCollectMats(group) {
+  const out = [];
+  group.traverse(o => {
+    const m = o.material;
+    if (m && m.emissive && !out.includes(m)) {
+      m.userData.baseEmissive = m.emissive.clone();
+      out.push(m);
+    }
+  });
+  return out;
+}
+
+const junk = [];
+for (let i = 0; i < JUNK_COUNT; i++) {
+  const rand = mulberry32(i * 7919 + 13);
+  const roll = rand();
+  const built = roll < 0.55 ? buildJunkAsteroid(rand, i * 131 + 5)
+              : roll < 0.75 ? buildJunkSatellite(rand)
+              :               buildJunkDebris(rand);
+  built.group.visible = false;
+  scene.add(built.group);
+  junk.push({
+    type: roll < 0.55 ? "asteroid" : roll < 0.75 ? "satellite" : "debris",
+    group: built.group, baseR: built.baseR, beacon: built.beacon || null,
+    mats: junkCollectMats(built.group),
+    vel: new THREE.Vector3(), spin: new THREE.Vector3(),
+    radius: 1, hp: 1, maxHp: 1, flash: 0, alive: false, respawnIn: 0,
+    phase: rand() * 6.28,
+  });
+}
+
+function junkSetScale(j, scale) {
+  j.group.scale.setScalar(scale);
+  j.radius = j.baseR * scale;
+  // hp by bulk: debris pops on one hit, a satellite takes two, a rock scales
+  // with its size so the big ones are a real chew
+  j.hp = j.maxHp = j.type === "debris"    ? 1
+                 : j.type === "satellite" ? 2
+                 : Math.max(1, Math.min(4, Math.round(j.radius / 22)));
+}
+
+// don't hang junk inside a planet or the sun — the bubble follows you, and it
+// follows you down to the deck too
+const junkTmpA = new THREE.Vector3(), junkTmpB = new THREE.Vector3();
+function junkPointBlocked(p) {
+  for (const b of liveBodies) {
+    const clear = b.cfg.radius * 1.25 + 200;
+    if (p.distanceToSquared(b.group.position) < clear * clear) return true;
+  }
+  return false;
+}
+
+function junkRespawn(j, first) {
+  const scale = j.type === "asteroid"  ? 13 + Math.random() * 52
+              : j.type === "satellite" ?  5 + Math.random() * 6
+              :                           4 + Math.random() * 8;
+  junkSetScale(j, scale);
+
+  // somewhere on a shell around the ship, mostly ahead of you — an even
+  // spread would leave a dead tunnel where you're actually looking
+  const spd = ship.velocity.length();
+  let placed = false;
+  for (let tries = 0; tries < 5 && !placed; tries++) {
+    randUnit(junkTmpA);
+    if (!first && spd > 25 && Math.random() < 0.7)
+      junkTmpA.addScaledVector(junkTmpB.copy(ship.velocity).divideScalar(spd), 1.1).normalize();
+    junkTmpB.copy(shipObj.position)
+            .addScaledVector(junkTmpA, JUNK_NEAR + Math.random() * (JUNK_FAR - JUNK_NEAR));
+    if (!junkPointBlocked(junkTmpB)) { j.group.position.copy(junkTmpB); placed = true; }
+  }
+  if (!placed) { j.alive = false; j.group.visible = false; j.respawnIn = 1.5; return; }
+
+  junkActivate(j);
+  randUnit(junkTmpA);
+  j.vel.copy(junkTmpA).multiplyScalar(3 + Math.random() * 26);   // slow drift
+}
+
+// wake a slot up wherever it already sits — respawning into the field and
+// being flung out as a fragment differ only in where they put it
+function junkActivate(j) {
+  j.alive = true;
+  j.group.visible = true;
+  j.flash = 0;
+  for (const m of j.mats) m.emissive.copy(m.userData.baseEmissive);
+  j.group.rotation.set(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28);
+  // big things turn slowly — a 70-unit rock spinning like a tossed coin
+  // reads as a toy, not a mountain
+  j.spin.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5)
+        .multiplyScalar(1.8 * Math.min(1, 26 / j.radius));
+}
+
+/* ---- embers: one pool serves both the muzzle-sized spark of a glancing
+   hit and the full kill blast. A "flash" is just an ember that's huge,
+   short-lived, and set to grow instead of shrink. ---- */
+const EMBER_COUNT = 190;
+const EMBER_HOT = new THREE.Color(0xfff4cc), EMBER_MID = new THREE.Color(0xff8a2b),
+      EMBER_COLD = new THREE.Color(0x8c1c0c);
+const embers = [];
+for (let i = 0; i < EMBER_COUNT; i++) {
+  const mat = new THREE.SpriteMaterial({
+    map: boltGlowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+  const s = new THREE.Sprite(mat); s.visible = false; scene.add(s);
+  embers.push({ s, mat, vel: new THREE.Vector3(), life: 0, maxLife: 1, size: 1, grow: false });
+}
+let emberCursor = 0;
+function emitEmber(pos, vel, size, life, grow) {
+  const e = embers[emberCursor];
+  emberCursor = (emberCursor + 1) % EMBER_COUNT;
+  e.s.position.copy(pos); e.vel.copy(vel);
+  e.size = size; e.life = e.maxLife = life; e.grow = !!grow;
+  e.s.scale.setScalar(size); e.s.visible = true;
+  return e;
+}
+
+function burstKill(pos, radius, baseVel) {
+  emitEmber(pos, baseVel, radius * 2.2, 0.17, true);            // the white pop
+  const n = Math.min(24, 8 + Math.round(radius / 4));
+  for (let i = 0; i < n; i++) {
+    randUnit(junkTmpA);
+    const speed = (20 + Math.random() * 60) * (0.6 + radius / 60);
+    emitEmber(pos, junkTmpB.copy(baseVel).addScaledVector(junkTmpA, speed),
+              radius * (0.16 + Math.random() * 0.32), 0.5 + Math.random() * 1.1, false);
+  }
+}
+function burstSparks(pos, baseVel, radius) {
+  for (let i = 0; i < 5; i++) {
+    randUnit(junkTmpA);
+    emitEmber(pos, junkTmpB.copy(baseVel).addScaledVector(junkTmpA, 30 + Math.random() * 50),
+              Math.max(1.2, radius * 0.12), 0.18 + Math.random() * 0.25, false);
+  }
+}
+function updateEmbers(dt) {
+  for (const e of embers) {
+    if (e.life <= 0) continue;
+    e.life -= dt;
+    if (e.life <= 0) { e.s.visible = false; continue; }
+    e.s.position.addScaledVector(e.vel, dt);
+    const k = 1 - e.life / e.maxLife;                 // 0 fresh → 1 spent
+    e.mat.color.copy(EMBER_HOT).lerp(EMBER_MID, Math.min(1, k * 2));
+    if (k > 0.5) e.mat.color.lerp(EMBER_COLD, (k - 0.5) * 2);
+    e.mat.opacity = 1 - k * k;
+    e.s.scale.setScalar(e.size * (e.grow ? 0.45 + k * 1.1 : 0.45 + (1 - k) * 0.55));
+  }
+}
+
+/* ---- sound: both scale with distance, or a rock popping 2000 units off
+   your wing would be as loud as one on your canopy ---- */
+function junkBoomSound(dist, radius) {
+  if (!audio) return;
+  const { ctx } = audio, t = ctx.currentTime;
+  const vol = Math.min(0.42, (0.10 + radius / 170) * (1 / (1 + dist / 260)));
+  if (vol < 0.004) return;                       // too far to be worth a buffer
+  const len = (ctx.sampleRate * 0.5) | 0;
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.2);
+  const src = ctx.createBufferSource(); src.buffer = buf;
+  const f = ctx.createBiquadFilter(); f.type = "lowpass";
+  f.frequency.setValueAtTime(2400, t);
+  f.frequency.exponentialRampToValueAtTime(110, t + 0.45);   // sweep down = "whump"
+  const g = ctx.createGain(); g.gain.value = vol;
+  src.connect(f); f.connect(g); g.connect(ctx.destination);
+  src.start(t);
+}
+function junkTinkSound(dist) {
+  if (!audio) return;
+  const { ctx } = audio, t = ctx.currentTime;
+  const vol = Math.min(0.13, 0.13 * (1 / (1 + dist / 220)));
+  if (vol < 0.003) return;
+  const o = ctx.createOscillator(); o.type = "triangle";
+  o.frequency.setValueAtTime(1500 + Math.random() * 700, t);
+  o.frequency.exponentialRampToValueAtTime(400, t + 0.07);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+  o.connect(g); g.connect(ctx.destination);
+  o.start(t); o.stop(t + 0.09);
+}
+
+/* Big rocks break up instead of just winking out — the chunks are other
+   asteroid slots, recycled to the kill site and thrown out along their own
+   headings. Dead slots first; if the field is still full (and at spawn it
+   always is, so this is the case that bites) borrow the asteroid furthest
+   from the ship instead. Nobody notices a rock leave 2000 units off their
+   wing; everybody notices a mountain vanish without a trace. */
+const FRAG_BORROW_R = 1200;   // only borrow rocks at least this far out
+function junkSpawnFragments(parent) {
+  const want = 2 + ((Math.random() * 2) | 0);
+  const distSq = f => f.group.position.distanceToSquared(shipObj.position);
+  const pool = junk
+    .filter(f => f !== parent && f.type === "asteroid" &&
+                 (!f.alive || distSq(f) > FRAG_BORROW_R * FRAG_BORROW_R))
+    .sort((a, b) => (a.alive ? 1 : 0) - (b.alive ? 1 : 0) || distSq(b) - distSq(a));
+  let made = 0;
+  for (const f of pool) {
+    if (made >= want) break;
+    junkSetScale(f, parent.radius * (0.2 + Math.random() * 0.18) / f.baseR);
+    junkActivate(f);
+    randUnit(junkTmpA);
+    f.group.position.copy(parent.group.position).addScaledVector(junkTmpA, parent.radius * 0.45);
+    f.vel.copy(parent.vel).addScaledVector(junkTmpA, 30 + Math.random() * 55);
+    made++;
+  }
+}
+
+function junkKill(j, dist) {
+  j.alive = false;
+  j.group.visible = false;
+  j.respawnIn = 2 + Math.random() * 5;
+  burstKill(j.group.position, j.radius, j.vel);
+  junkBoomSound(dist, j.radius);
+  if (dist < 900) padRumble(Math.min(0.6, 0.4 * (300 / Math.max(60, dist))), 90);
+  killsEl.textContent = ++junkKills;
+  if (j.type === "asteroid" && j.radius > 30) junkSpawnFragments(j);
+}
+
+function junkDamage(j, at, boltVel) {
+  const dist = shipObj.position.distanceTo(j.group.position);
+  if (--j.hp > 0) {
+    j.flash = 1;
+    burstSparks(at, j.vel, j.radius);
+    junkTinkSound(dist);
+    // momentum transfer, inverse to size: a bolt shoves a small chunk around
+    // and barely bothers a big rock
+    j.vel.addScaledVector(junkTmpA.copy(boltVel).normalize(), Math.min(40, 400 / j.radius));
+    j.spin.addScaledVector(randUnit(junkTmpB), Math.min(1.2, 12 / j.radius));
+    return;
+  }
+  junkKill(j, dist);
+}
+
+/* Swept segment-vs-sphere. A bolt covers ~24 units per frame and the small
+   debris is ~5 across, so a point-in-sphere test on the new position would
+   punch clean through most of what you aim at, every time. */
+const boltPrev = new THREE.Vector3(), junkSeg = new THREE.Vector3(),
+      junkToC = new THREE.Vector3(), junkNearPt = new THREE.Vector3();
+function junkTestBolt(p0, p1, boltVel) {
+  junkSeg.subVectors(p1, p0);
+  const segLen2 = junkSeg.lengthSq();
+  for (const j of junk) {
+    if (!j.alive) continue;
+    junkToC.subVectors(j.group.position, p0);
+    const t = segLen2 > 0 ? THREE.MathUtils.clamp(junkToC.dot(junkSeg) / segLen2, 0, 1) : 0;
+    junkNearPt.copy(p0).addScaledVector(junkSeg, t);
+    if (junkNearPt.distanceToSquared(j.group.position) <= j.radius * j.radius) {
+      junkDamage(j, junkNearPt, boltVel);
+      return true;
+    }
+  }
+  return false;
+}
+
+function updateJunk(dt) {
+  for (const j of junk) {
+    if (!j.alive) {
+      j.respawnIn -= dt;
+      if (j.respawnIn <= 0) junkRespawn(j, false);
+      continue;
+    }
+    j.group.position.addScaledVector(j.vel, dt);
+    j.group.rotation.x += j.spin.x * dt;
+    j.group.rotation.y += j.spin.y * dt;
+    j.group.rotation.z += j.spin.z * dt;
+
+    if (j.flash > 0) {                       // white-hot pop on a non-fatal hit
+      j.flash = Math.max(0, j.flash - dt * 4);
+      for (const m of j.mats) m.emissive.copy(m.userData.baseEmissive).lerp(FLASH_WHITE, j.flash);
+    }
+    if (j.beacon)
+      j.beacon.material.opacity =
+        Math.sin(clock.elapsedTime * 2.6 + j.phase) > 0.65 ? 1 : 0.04;
+
+    // ram it and it shatters on your hull — you win, it costs you speed
+    const rr = j.radius + SHIP_HIT_R;
+    if (shipObj.position.distanceToSquared(j.group.position) < rr * rr) {
+      ship.velocity.multiplyScalar(0.86);
+      thump(Math.min(320, 120 + j.radius * 3));
+      junkKill(j, 0);
+      continue;
+    }
+    if (j.group.position.distanceToSquared(shipObj.position) > JUNK_CULL * JUNK_CULL)
+      junkRespawn(j, false);
+  }
+  updateEmbers(dt);
+}
+
+for (const j of junk) junkRespawn(j, true);
+
 const VIEW_COCKPIT = 0, VIEW_CHASE = 1, VIEW_CINEMATIC = 2;
 let viewMode = VIEW_COCKPIT;                      // start in the cockpit
 const CHASE_OFFSET = new THREE.Vector3(0, 4.5, 17); // behind & above, in ship-local space
@@ -1931,6 +2355,9 @@ function animate() {
   for (const c of cloudLayers) c.mesh.rotation.y += c.speed * dt;
   if (shipMixer) shipMixer.update(dt);   // the idle float, authored in Blender
 
+  /* ---- junk drifts first, so the bolt tests below hit where it IS ---- */
+  updateJunk(dt);
+
   /* ---- blasters: fire from both cannons, advance live bolts ---- */
   fireCooldown -= dt;
   if ((keys["Space"] || padFire) && fireCooldown <= 0) {
@@ -1950,7 +2377,10 @@ function animate() {
     if (b.life <= 0) continue;
     b.life -= dt;
     if (b.life <= 0) { b.mesh.visible = false; continue; }
+    boltPrev.copy(b.mesh.position);
     b.mesh.position.addScaledVector(b.vel, dt);
+    // test the whole segment it crossed this frame, not just where it landed
+    if (junkTestBolt(boltPrev, b.mesh.position, b.vel)) { b.life = 0; b.mesh.visible = false; }
   }
   for (const s of muzzleFlashes)     // fast fade after each shot
     if (s.scale.x > 0.002) s.scale.setScalar(Math.max(0.001, s.scale.x * Math.pow(0.00004, dt)));
