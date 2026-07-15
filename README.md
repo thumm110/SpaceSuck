@@ -54,7 +54,9 @@ weapons.
   plus a rumble that rises during atmospheric entry; no sound files
 - **Ship + camera rig** — a Blender-designed fighter (`ship.glb`) with an
   authored idle-float animation, cockpit view, and a chase cam with easing
-  lag so you see the ship bank through turns
+  lag so you see the ship bank through turns. `build_icon.py` renders that
+  same model into `icon.png` for the desktop launcher — same deal as the
+  planet: `blender -b -P build_icon.py`, fresh icon.
 - **EARTH, a landable Blender-built world** — `build_earth.py` generates
   `earth.glb` (low-poly continents, polar ice, cloud banks, and a landing
   pad + beacon at Charleston, SC) plus `earth_height.json`, a baked height
@@ -66,14 +68,30 @@ weapons.
 ## Run it locally
 
 ```
+./play.sh
+```
+
+Starts a server on localhost (only if one isn't already up) and opens the game
+in its own window — no address bar, no tabs. `./play.sh earth` spawns you on
+Earth's doorstep instead. On this machine it's wired to a desktop icon
+(`~/Desktop/SpaceSuck.desktop`), so a double-click flies.
+
+By hand, if you'd rather:
+
+```
 python3 -m http.server 8123
 ```
 
-then open <http://localhost:8123/space-flight.html>. (A bare double-click
-still flies, but browsers block `fetch()` on `file://`, so the Blender
-ship and Earth fall back to their procedural placeholders.)
+then open <http://localhost:8123/space-flight.html>.
+
+**Serving it over http isn't optional.** Double-clicking `space-flight.html`
+still flies, but browsers block `fetch()` on `file://` — so `ship.glb` and
+`earth.glb` never load, and the game quietly falls back to the primitive
+placeholder ship and a procedural Earth. If the fighter looks like programmer
+art, that's why: check the URL, not the model.
 
 ## History
 
-Built in six versions, each one a commit — `git log` tells the story from
-"camera with a throttle" to "ship with a flight model".
+Twenty versions across 29 commits, each `vN:` tagged in the log — `git log`
+tells the story from "v1: first flight — mouse steer, throttle physics" to a
+Blender fighter with blasters landing on a hand-built Earth.
