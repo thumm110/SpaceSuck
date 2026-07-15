@@ -960,6 +960,12 @@ for (let i = 0; i < dustPos.length; i++) dustPos[i] = (Math.random() - 0.5) * DU
 dustGeo.setAttribute("position", new THREE.BufferAttribute(dustPos, 3));
 const dustMat = new THREE.PointsMaterial({ color: 0xaad4cc, size: 1.6, transparent: true, opacity: 0, depthWrite: false });
 const dust = new THREE.Points(dustGeo, dustMat);
+// positions are rewritten around the ship every frame, but three.js only
+// computes the bounding sphere ONCE (frozen at spawn). Far from world
+// origin — where sustained max thrust takes you — that stale sphere falls
+// outside the frustum and the whole cloud gets culled (the "dust fades at
+// speed" bug). It's always around the ship, so never cull it.
+dust.frustumCulled = false;
 scene.add(dust);
 
 /* ============ 8b. ATMOSPHERE WISPS ============
@@ -976,6 +982,7 @@ const wispMat = new THREE.PointsMaterial({
   transparent: true, opacity: 0, depthWrite: false,
 });
 const wisps = new THREE.Points(wispGeo, wispMat);
+wisps.frustumCulled = false;   // same frozen-bounds trap as the dust above
 scene.add(wisps);
 
 /* ============ 9. ENGINE AUDIO ============ */
@@ -1059,11 +1066,17 @@ if (THREE.GLTFLoader) {
     const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
     model.scale.setScalar(10 / size.z);
 
-    // thruster nozzles glow with their own material color
+    // thruster nozzles glow bright; the hull gets a faint self-lit floor so
+    // it still reads out past HELIOS, where the sun's inverse-square falloff
+    // would otherwise leave the whole ship near-black
     model.traverse(o => {
-      if (o.isMesh && o.material && o.material.name === "EngineGlow") {
+      if (!o.isMesh || !o.material) return;
+      if (o.material.name === "EngineGlow") {
         o.material.emissive.copy(o.material.color);
         o.material.emissiveIntensity = 1.5;
+      } else {
+        o.material.emissive.copy(o.material.color);
+        o.material.emissiveIntensity = 0.15;
       }
     });
 
