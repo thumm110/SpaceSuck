@@ -234,7 +234,7 @@ const BODIES = [
   {
     name: "CINDER", type: "planet", style: "rocky", seed: 11,
     radius: 900,
-    position: [-27000, 2400, -66000],
+    orbit: { radius: 36000, speed: 0.006, angle: 3.0, y: 2400 },
     spin: 0.02,
     atmosphere: 0xcc5522, atmoStrength: 0.5,
     palette: { dark: 0x4a2318, mid: 0x9c4a2e, light: 0xd98d5f },
@@ -242,7 +242,7 @@ const BODIES = [
   {
     name: "AZURE", type: "planet", style: "terrestrial", seed: 42,
     radius: 1425,
-    position: [21000, -3600, -45000],
+    orbit: { radius: 49500, speed: 0.004, angle: 0.3, y: -3600 },
     spin: 0.015,
     clouds: true,
     atmosphere: 0x5599ff, atmoStrength: 1.0,
@@ -255,7 +255,7 @@ const BODIES = [
   {
     name: "KRONOS", type: "planet", style: "gas", seed: 23,
     radius: 1950,
-    position: [-12000, 9000, -18000],
+    orbit: { radius: 73000, speed: 0.002, angle: 4.2, y: 9000 },
     spin: 0.01,
     atmosphere: 0xddbb77, atmoStrength: 0.7,
     palette: { dark: 0x7a5c38, mid: 0xc9a86b, light: 0xf0dcae },
@@ -265,7 +265,9 @@ const BODIES = [
   {
     name: "EARTH", type: "planet", style: "gltf", seed: 3,
     radius: 2500,                   // the flagship destination
-    position: [9750, -400, -22000],
+    // angle π/2 parks Earth's orbit on the spawn side of the sun — you
+    // still start the game with home in the windshield
+    orbit: { radius: 68500, speed: 0.0025, angle: Math.PI / 2, y: -400 },
     spin: 0.002,                    // ~5min day; a parked ship RIDES the
                                     // rotation (see the landed branch)
     yaw: Math.PI,                   // initial turn so Charleston faces the sun
@@ -286,7 +288,7 @@ const BODIES = [
   {
     name: "VERDANT", type: "planet", style: "terrestrial", seed: 99,
     radius: 675,
-    position: [42000, 6000, -84000],
+    orbit: { radius: 42500, speed: 0.005, angle: 5.4, y: 6000 },
     spin: 0.03,
     clouds: true,
     atmosphere: 0x77ffaa, atmoStrength: 0.9,
@@ -296,6 +298,22 @@ const BODIES = [
     },
   },
 ];
+
+/* Heliocentric layout (v17): planets RING the sun instead of huddling on
+   one side, and they orbit it live — inner planets faster, Kepler-style
+   (CINDER laps in ~17min, KRONOS in ~52). Each planet's `orbit` is
+   {radius, speed rad/s, starting angle, y plane height}; its position is
+   computed here at load and advanced every frame in the game loop. */
+const SUN_POS = new THREE.Vector3(...BODIES.find(b => b.type === "star").position);
+for (const cfg of BODIES) {
+  if (cfg.orbit) {
+    cfg.position = [
+      SUN_POS.x + Math.cos(cfg.orbit.angle) * cfg.orbit.radius,
+      cfg.orbit.y,
+      SUN_POS.z + Math.sin(cfg.orbit.angle) * cfg.orbit.radius,
+    ];
+  }
+}
 
 /* ============ 2. NOISE ENGINE ============ */
 function mulberry32(seed) {
@@ -806,6 +824,8 @@ function buildBody(cfg) {
   group.position.set(...cfg.position);
   const body = { cfg, group };   // pushed to liveBodies below; the height
                                  // grid attaches here when it arrives
+  body.orbitDelta = new THREE.Vector3();  // this frame's orbital travel —
+                                          // a parked ship rides it
 
   if (cfg.type === "star") {
     const sun = new THREE.Mesh(
@@ -1016,7 +1036,7 @@ shipObj.position.set(0, 0, 3000);
 /* Aim the spawn so the first frame is a view, not empty void: HELIOS dead
    ahead with AZURE off to the right. lookAt() points +Z at the target but
    our nose is -Z, so we look at the target's mirror through the ship. */
-const spawnTarget = new THREE.Vector3(6500, -1100, -67500);
+const spawnTarget = new THREE.Vector3(0, -400, -21500);  // Earth, sun behind it
 shipObj.lookAt(shipObj.position.clone().multiplyScalar(2).sub(spawnTarget));
 scene.add(shipObj);
 
@@ -1241,6 +1261,7 @@ const alarmEl = document.getElementById("alarm");
 const revTag = document.getElementById("revtag");
 const tmpDir = new THREE.Vector3();
 const tmpNormal = new THREE.Vector3();
+const tmpOrbit = new THREE.Vector3();   // scratch for heliocentric motion
 let prevNearestDist = Infinity;
 let prevNearestBody = null;
 
@@ -1375,9 +1396,28 @@ function animate() {
   if (entryDepth > 0) ship.velocity.multiplyScalar(Math.pow(1 - 0.028 * entryDepth * entryDepth, dt * 60));
   shipObj.position.addScaledVector(ship.velocity, dt);
 
+  /* ---- heliocentric motion: planets orbit the sun (v17) ----
+     Runs BEFORE collisions so the landed branch can ride this frame's
+     travel — the pad never slides out from under a parked ship. */
+  for (const b of liveBodies) {
+    const o = b.cfg.orbit;
+    if (!o) continue;
+    o.angle += o.speed * dt;
+    tmpOrbit.set(
+      SUN_POS.x + Math.cos(o.angle) * o.radius,
+      o.y,
+      SUN_POS.z + Math.sin(o.angle) * o.radius
+    );
+    b.orbitDelta.subVectors(tmpOrbit, b.group.position);
+    b.group.position.copy(tmpOrbit);
+  }
+
   /* ---- collisions (against the ship's position) ---- */
   const COLLIDE_BUFFER = 12;
   for (const b of liveBodies) {
+    // parked? ride the planet's orbital travel (spin is handled in the
+    // landed branch below)
+    if (landedOn === b) shipObj.position.add(b.orbitDelta);
     tmpNormal.subVectors(shipObj.position, b.group.position);
     let dist = tmpNormal.length();
     let minDist = b.cfg.radius + COLLIDE_BUFFER;
