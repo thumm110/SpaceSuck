@@ -132,7 +132,7 @@
     W — thrust &nbsp; S — reverse &nbsp; X — full stop<br>
     A / D — roll &nbsp; ← / → — turn &nbsp; ↑ / ↓ — nose down / up<br>
     SHIFT — boost &nbsp; V — toggle view<br>
-    PAD — L-stick fly (turn parked / roll at speed) &nbsp; R-stick look<br>
+    PAD — L-stick fly (turn parked / roll at speed) &nbsp; R-stick look around<br>
     RT / LT thrust &nbsp; X stop &nbsp; LB boost &nbsp; Y view
   </div>
   <div id="viewtag">VIEW: COCKPIT</div>
@@ -1096,6 +1096,15 @@ const chaseFwd = new THREE.Vector3();
 const chaseAxis = new THREE.Vector3();
 const chaseFixQ = new THREE.Quaternion();
 
+/* head-look (right stick): a view-angle offset from the nose — look
+   around at space while the ship flies on. Springs back to forward. */
+let lookYaw = 0, lookPitch = 0;
+const MAX_LOOK_YAW = 2.4;       // ~137° — almost over the shoulder
+const MAX_LOOK_PITCH = 1.3;     // ~75° up/down
+const lookEuler = new THREE.Euler(0, 0, 0, "YXZ");  // yaw first, then pitch
+const lookQ = new THREE.Quaternion();
+const chaseQuat = new THREE.Quaternion();   // chase orientation before head-look
+
 function toggleView() {
   firstPerson = !firstPerson;
   viewTag.textContent = firstPerson ? "VIEW: COCKPIT" : "VIEW: CHASE";
@@ -1196,13 +1205,13 @@ document.getElementById("btnView").addEventListener("touchstart", e => {
    Mapping: LEFT STICK is the whole flight control — parked it turns the
    nose like a turret; at speed X becomes ROLL and you bank-and-pull to
    turn like an aircraft (blended by speed, no hard switch). Y is always
-   pitch. RIGHT STICK is the look stick — deflect to swing the camera
-   around the ship, release to fly. RT/LT analog thrust/reverse ·
-   X full stop · LB boost · Y toggle cockpit/chase.
+   pitch. RIGHT STICK is HEAD-LOOK — glance around at space and planets
+   while the ship flies on (±135° sideways, ±75° up/down, springs back
+   to forward on release). RT/LT analog thrust/reverse · X full stop ·
+   LB boost · Y toggle cockpit/chase.
    Button A (buttons[0]) is RESERVED — blasters are coming. */
 let padIndex = null;
 let padViewHeld = false;      // edge-detect for the view toggle
-let padOrbiting = false;      // right stick currently owns the orbit camera
 let lastPadRumble = 0;
 addEventListener("gamepadconnected", e => { padIndex = e.gamepad.index; initAudio(); });
 addEventListener("gamepaddisconnected", e => { if (e.gamepad.index === padIndex) padIndex = null; });
@@ -1257,6 +1266,7 @@ function animate() {
 
   /* ---- gamepad: polled every frame ---- */
   let padLX = 0, padAirFrac = 0, padThrust = 0, padReverse = 0, padStop = false, padBoost = false;
+  let lookTargetYaw = 0, lookTargetPitch = 0;   // 0 unless the stick says otherwise
   if (padIndex !== null) {
     const gp = navigator.getGamepads()[padIndex];
     if (gp) {
@@ -1271,28 +1281,13 @@ function animate() {
       shipObj.rotateZ(-padLX * padAirFrac * 1.8 * dt);                   // aircraft roll
       shipObj.rotateX( padLY * ship.turnSpeed * dt);    // pitch — pull back = climb
 
-      /* right stick = the LOOK stick: swings the camera around the ship
-         (same orbit as right-drag), snaps back to flying on release */
+      /* right stick = HEAD-LOOK: deflection maps straight to a view
+         angle offset from the nose — glance at a planet as you fly by,
+         release and your eyes spring back to forward. The ship never
+         stops flying where it was pointed. */
       const padRX = padAxis(gp.axes[2]), padRY = padAxis(gp.axes[3]);
-      if (padRX || padRY) {
-        if (!padOrbiting && !orbiting) {
-          // engage: seed the orbit from the live camera — no jump cut
-          const rel = camera.position.clone().sub(shipObj.position);
-          const len = Math.max(rel.length(), 0.001);
-          orbitRadius = Math.min(40, Math.max(8, len));
-          orbitYaw = Math.atan2(rel.x, rel.z);
-          orbitPitch = Math.asin(Math.max(-1, Math.min(1, rel.y / len)));
-          padOrbiting = true;
-        }
-        if (padOrbiting) {
-          orbiting = true;
-          orbitYaw   -= padRX * 2.5 * dt;
-          orbitPitch  = Math.max(-1.25, Math.min(1.25, orbitPitch + padRY * 2.0 * dt));
-        }
-      } else if (padOrbiting) {
-        padOrbiting = false;
-        orbiting = false;
-      }
+      lookTargetYaw   = -padRX * MAX_LOOK_YAW;    // stick right = look right
+      lookTargetPitch = -padRY * MAX_LOOK_PITCH;  // stick up = look up
       padThrust  = gp.buttons[7] ? gp.buttons[7].value : 0;    // RT — analog throttle
       padReverse = gp.buttons[6] ? gp.buttons[6].value : 0;    // LT — analog reverse
       padStop    = !!(gp.buttons[2] && gp.buttons[2].pressed); // X — full stop
@@ -1303,6 +1298,14 @@ function animate() {
       padViewHeld = yBtn;
     }
   }
+
+  /* ---- head-look easing: chase the stick target, spring back on release ---- */
+  const lookK = 1 - Math.exp(-10 * dt);
+  lookYaw   += (lookTargetYaw   - lookYaw)   * lookK;
+  lookPitch += (lookTargetPitch - lookPitch) * lookK;
+  lookEuler.set(lookPitch, lookYaw, 0);
+  lookQ.setFromEuler(lookEuler);
+  const lookActive = Math.abs(lookYaw) + Math.abs(lookPitch) > 0.02;
 
   /* ---- steering ---- */
   // pointer-lock freelook: deltas are "pixels of mouse travel", already
@@ -1467,7 +1470,8 @@ function animate() {
     camera.position.copy(shipObj.position);
     // half-strength lean in the cockpit — you tilt your head into the turn
     bankQ.setFromAxisAngle(Z_AXIS, bank * 0.5);
-    camera.quaternion.copy(shipObj.quaternion).multiply(bankQ);
+    // head-look composes in the SHIP's frame: glance around the canopy
+    camera.quaternion.copy(shipObj.quaternion).multiply(lookQ).multiply(bankQ);
   } else {
     shipMesh.visible = true;
     shipMesh.rotation.z = bank;               // the model leans, the physics don't
@@ -1479,7 +1483,9 @@ function animate() {
     // which is what lets you see the ship bank during hard turns.
     const k = 1 - Math.exp(-8 * dt);
     camera.position.lerp(tmpOffset, k);
-    camera.quaternion.slerp(shipObj.quaternion, 1 - Math.exp(-6 * dt));
+    // the pursuit easing lives on chaseQuat; head-look is layered on
+    // top afterward so the two never feed back into each other
+    chaseQuat.slerp(shipObj.quaternion, 1 - Math.exp(-6 * dt));
 
     // leash: at speed the lag grows with velocity — never let the ship
     // recede past MAX_CHASE_DIST no matter how fast we're going
@@ -1491,19 +1497,23 @@ function animate() {
     }
 
     // frame guarantee: if a hard turn swings the ship more than 28° off
-    // camera center, rotate the camera the MINIMUM amount to catch it —
-    // the easing lag still reads, but the ship can't leave the screen
-    chaseDir.copy(shipObj.position).sub(camera.position).normalize();
-    chaseFwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
-    const offAngle = chaseFwd.angleTo(chaseDir);
-    if (offAngle > MAX_OFFSCREEN) {
-      chaseAxis.crossVectors(chaseFwd, chaseDir);
-      if (chaseAxis.lengthSq() > 1e-8) {
-        chaseAxis.normalize();
-        chaseFixQ.setFromAxisAngle(chaseAxis, offAngle - MAX_OFFSCREEN);
-        camera.quaternion.premultiply(chaseFixQ);
+    // camera center, rotate the camera the MINIMUM amount to catch it.
+    // Suspended while head-looking — glancing away from your own ship
+    // is the point of the look stick.
+    if (!lookActive) {
+      chaseDir.copy(shipObj.position).sub(camera.position).normalize();
+      chaseFwd.set(0, 0, -1).applyQuaternion(chaseQuat);
+      const offAngle = chaseFwd.angleTo(chaseDir);
+      if (offAngle > MAX_OFFSCREEN) {
+        chaseAxis.crossVectors(chaseFwd, chaseDir);
+        if (chaseAxis.lengthSq() > 1e-8) {
+          chaseAxis.normalize();
+          chaseFixQ.setFromAxisAngle(chaseAxis, offAngle - MAX_OFFSCREEN);
+          chaseQuat.premultiply(chaseFixQ);
+        }
       }
     }
+    camera.quaternion.copy(chaseQuat).multiply(lookQ);
   }
 
   /* ---- engine glows track the throttle ---- */

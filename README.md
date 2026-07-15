@@ -29,8 +29,9 @@ Touch devices get on-screen thrust/brake/reverse buttons and drag steering.
 the whole flight control — parked it turns the nose like a turret, at speed
 left/right becomes **roll** and you bank-and-pull to turn like an aircraft
 (it blends smoothly between the two as you accelerate). The right stick is
-the look stick: deflect to swing the camera around the ship, release to
-snap back. **RT/LT are analog thrust/reverse** (half a pull is half
+head-look: glance around at space and planets while the ship flies on —
+release and your view springs back to forward. **RT/LT are analog
+thrust/reverse** (half a pull is half
 thrust), X full stop, LB boost, Y toggles cockpit/chase. Atmospheric entry
 and touchdowns rumble the controller. Button A is reserved for future
 weapons.
