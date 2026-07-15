@@ -133,7 +133,7 @@
     A / D — roll &nbsp; ← / → — turn &nbsp; ↑ / ↓ — nose down / up<br>
     SHIFT — boost &nbsp; V — view (cockpit / chase / cinematic)<br>
     PAD — L-stick fly (turn parked / roll at speed) &nbsp; R-stick look around<br>
-    RT / LT thrust &nbsp; X stop &nbsp; LB boost &nbsp; Y view
+    RT / LT thrust &nbsp; X stop &nbsp; B boost &nbsp; LB / RB roll &nbsp; Y view
   </div>
   <div id="viewtag">VIEW: COCKPIT</div>
   <div id="nearest">
@@ -1284,7 +1284,7 @@ document.getElementById("btnView").addEventListener("touchstart", e => {
    pitch. RIGHT STICK is HEAD-LOOK — glance around at space and planets
    while the ship flies on (±135° sideways, ±75° up/down, springs back
    to forward on release). RT/LT analog thrust/reverse · X full stop ·
-   LB boost · Y toggle cockpit/chase.
+   B boost · LB/RB manual roll · Y cycle view.
    Button A (buttons[0]) is RESERVED — blasters are coming. */
 let padIndex = null;
 let padViewHeld = false;      // edge-detect for the view toggle
@@ -1368,7 +1368,10 @@ function animate() {
       padThrust  = gp.buttons[7] ? gp.buttons[7].value : 0;    // RT — analog throttle
       padReverse = gp.buttons[6] ? gp.buttons[6].value : 0;    // LT — analog reverse
       padStop    = !!(gp.buttons[2] && gp.buttons[2].pressed); // X — full stop
-      padBoost   = !!(gp.buttons[4] && gp.buttons[4].pressed); // LB — boost (hold)
+      padBoost   = !!(gp.buttons[1] && gp.buttons[1].pressed); // B — boost (hold)
+      // LB / RB — manual roll, additive to the left-stick aircraft roll
+      if (gp.buttons[4] && gp.buttons[4].pressed) shipObj.rotateZ( 1.8 * dt);  // LB — roll left
+      if (gp.buttons[5] && gp.buttons[5].pressed) shipObj.rotateZ(-1.8 * dt);  // RB — roll right
       // gp.buttons[0] (A) is RESERVED for blasters — do not bind
       const yBtn = !!(gp.buttons[3] && gp.buttons[3].pressed); // Y — view toggle
       if (yBtn && !padViewHeld) toggleView();
