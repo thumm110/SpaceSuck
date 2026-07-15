@@ -1174,16 +1174,19 @@ function spawnBolt(pos, dir, colorHex) {
   b.life = BOLT_LIFE;
   b.mesh.visible = true;
 }
-// world-space muzzle flashes (scene-parented so the ship's async GLB swap
-// can't strip them like it does stray shipMesh children)
+// muzzle flashes ride ON the ship (parented to shipObj, not the scene) so
+// they stay pinned to the cannons while you fly — a scene-parented flash
+// gets left behind at speed and streaks backward off the nose. shipObj
+// (not shipMesh) dodges the async GLB swap that strips stray mesh children.
 const muzzleFlashes = [AQUA_BOLT, ORANGE_BOLT].map(c => {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({
     map: boltGlowTex, color: c, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   }));
-  s.scale.setScalar(0.001); scene.add(s); return s;
+  s.scale.setScalar(0.001); shipObj.add(s); return s;
 });
 let fireCooldown = 0;
-const muzzleL = new THREE.Vector3(), muzzleR = new THREE.Vector3(), boltDir = new THREE.Vector3();
+const muzzleL = new THREE.Vector3(), muzzleR = new THREE.Vector3(),
+      boltDir = new THREE.Vector3(), flashLocal = new THREE.Vector3();
 
 function blasterSound() {
   if (!audio) return;
@@ -1768,12 +1771,13 @@ function animate() {
   fireCooldown -= dt;
   if ((keys["Space"] || padFire) && fireCooldown <= 0) {
     shipObj.getWorldDirection(boltDir).negate();          // nose forward (-Z)
-    retroGlows[0].getWorldPosition(muzzleL);              // left prong tip
+    retroGlows[0].getWorldPosition(muzzleL);              // left prong tip (also refreshes shipObj world matrix)
     retroGlows[1].getWorldPosition(muzzleR);              // right prong tip
     spawnBolt(muzzleL, boltDir, AQUA_BOLT);
     spawnBolt(muzzleR, boltDir, ORANGE_BOLT);
-    muzzleFlashes[0].position.copy(muzzleL); muzzleFlashes[0].scale.setScalar(2.6);
-    muzzleFlashes[1].position.copy(muzzleR); muzzleFlashes[1].scale.setScalar(2.6);
+    // flashes are children of shipObj — position them in ship-local space
+    muzzleFlashes[0].position.copy(shipObj.worldToLocal(flashLocal.copy(muzzleL))); muzzleFlashes[0].scale.setScalar(2.6);
+    muzzleFlashes[1].position.copy(shipObj.worldToLocal(flashLocal.copy(muzzleR))); muzzleFlashes[1].scale.setScalar(2.6);
     blasterSound();
     padRumble(0.25, 35);
     fireCooldown = FIRE_COOLDOWN;
