@@ -32,7 +32,7 @@ left/right becomes **roll** and you bank-and-pull to turn like an aircraft
 head-look: glance around at space and planets while the ship flies on —
 release and your view springs back to forward. **RT/LT are analog
 thrust/reverse** (half a pull is half
-thrust), X full stop, B boost, LB/RB manual roll, Y cycles the view.
+thrust), X full stop, B boost, LB/RB nose left/right, Y cycles the view.
 Atmospheric entry
 and touchdowns rumble the controller. Button A is reserved for future
 weapons.

@@ -133,7 +133,7 @@
     A / D — roll &nbsp; ← / → — turn &nbsp; ↑ / ↓ — nose down / up<br>
     SHIFT — boost &nbsp; V — view (cockpit / chase / cinematic)<br>
     PAD — L-stick fly (turn parked / roll at speed) &nbsp; R-stick look around<br>
-    RT / LT thrust &nbsp; X stop &nbsp; B boost &nbsp; LB / RB roll &nbsp; Y view
+    RT / LT thrust &nbsp; X stop &nbsp; B boost &nbsp; LB / RB nose L / R &nbsp; Y view
   </div>
   <div id="viewtag">VIEW: COCKPIT</div>
   <div id="nearest">
@@ -274,6 +274,12 @@ const BODIES = [
     file: "earth.glb",              // built by build_earth.py (Blender)
     heightFile: "earth_height.json",
     landable: true,
+    gravity: 1.0,                   // colony worlds keep landing-friendly pull
+    // landing pads: lat/lon as baked in build_earth.py, footprint angular
+    // radius, and DECK height as a radius multiplier. The height grid only
+    // knows the ground plateau (1.012) — the pad cylinder's top sits at
+    // 1.0175, so without this you sink ~14u through the deck.
+    pads: [{ lat: 32.9, lon: -80.0, ang: 0.045, top: 1.0175 }],
     atmosphere: 0x5f9dff, atmoStrength: 1.05,
     // Luna-true proportions: real Moon = 0.27 Earth radii. Orbits just
     // outside the 3-radii gravity well so approach stays clean.
@@ -772,6 +778,15 @@ function groundRadius(body, n) {
   }
   // Blender's Z-up became glTF's Y-up: north pole is +y, and Blender
   // longitude works out to atan2(-z, x) on this side
+  // landing pad decks sit ABOVE the baked terrain grid — inside a pad's
+  // footprint the deck IS the ground (rotation already undone above, so
+  // this tracks the pad around the planet's spin)
+  if (body.pads) {
+    for (const pad of body.pads) {
+      if (nx * pad.dx + n.y * pad.dy + nz * pad.dz > pad.cosAng)
+        return body.cfg.radius * pad.top;
+    }
+  }
   const lon = Math.atan2(-nz, nx);
   const lat = Math.asin(Math.max(-1, Math.min(1, n.y)));
   const u = (lon + Math.PI) / (2 * Math.PI) * g.w - 0.5;
@@ -826,6 +841,21 @@ function buildBody(cfg) {
                                  // grid attaches here when it arrives
   body.orbitDelta = new THREE.Vector3();  // this frame's orbital travel —
                                           // a parked ship rides it
+  if (cfg.pads) {
+    // precompute each pad's direction in the as-baked frame. Blender is
+    // Z-up, glTF is Y-up: (cos la cos lo, sin la, -cos la sin lo) — the
+    // exact inverse of groundRadius's lat/lon lookup.
+    body.pads = cfg.pads.map(p => {
+      const la = THREE.MathUtils.degToRad(p.lat), lo = THREE.MathUtils.degToRad(p.lon);
+      return {
+        dx: Math.cos(la) * Math.cos(lo),
+        dy: Math.sin(la),
+        dz: -Math.cos(la) * Math.sin(lo),
+        cosAng: Math.cos(p.ang),   // dot-product test beats acos every frame
+        top: p.top,
+      };
+    });
+  }
 
   if (cfg.type === "star") {
     const sun = new THREE.Mesh(
@@ -1120,11 +1150,11 @@ const MAX_BANK = 0.35;               // ~20° at a full-rate turn
 const bankQ = new THREE.Quaternion();
 const Z_AXIS = new THREE.Vector3(0, 0, 1);
 
-/* chase-cam containment: the easing lag is the feel, but it needs limits —
-   at full throttle the camera used to fall ~120u behind (ship = a speck),
-   and a whip turn could swing the ship clean out of frame. */
-const MAX_CHASE_DIST = 55;                    // leash: max camera-to-ship gap
-const MAX_OFFSCREEN = THREE.MathUtils.degToRad(28); // keep ship within 28° of center
+/* chase-cam containment: a LITTLE easing lag is the feel — but only a
+   little. Tightened hard in v19 (rates 2x, leash 55→34, cone 28°→12°):
+   the ship breathes inside a small window instead of wandering the frame. */
+const MAX_CHASE_DIST = 34;                    // leash: max camera-to-ship gap
+const MAX_OFFSCREEN = THREE.MathUtils.degToRad(12); // keep ship within 12° of center
 const chaseDir = new THREE.Vector3();
 const chaseFwd = new THREE.Vector3();
 const chaseAxis = new THREE.Vector3();
@@ -1297,7 +1327,7 @@ document.getElementById("btnView").addEventListener("touchstart", e => {
    pitch. RIGHT STICK is HEAD-LOOK — glance around at space and planets
    while the ship flies on (±135° sideways, ±75° up/down, springs back
    to forward on release). RT/LT analog thrust/reverse · X full stop ·
-   B boost · LB/RB manual roll · Y cycle view.
+   B boost · LB/RB rudder (nose left/right) · Y cycle view.
    Button A (buttons[0]) is RESERVED — blasters are coming. */
 let padIndex = null;
 let padViewHeld = false;      // edge-detect for the view toggle
@@ -1355,7 +1385,7 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
 
   /* ---- gamepad: polled every frame ---- */
-  let padLX = 0, padAirFrac = 0, padThrust = 0, padReverse = 0, padStop = false, padBoost = false;
+  let padLX = 0, padYaw = 0, padAirFrac = 0, padThrust = 0, padReverse = 0, padStop = false, padBoost = false;
   let lookTargetYaw = 0, lookTargetPitch = 0;   // 0 unless the stick says otherwise
   if (padIndex !== null) {
     const gp = navigator.getGamepads()[padIndex];
@@ -1382,9 +1412,12 @@ function animate() {
       padReverse = gp.buttons[6] ? gp.buttons[6].value : 0;    // LT — analog reverse
       padStop    = !!(gp.buttons[2] && gp.buttons[2].pressed); // X — full stop
       padBoost   = !!(gp.buttons[1] && gp.buttons[1].pressed); // B — boost (hold)
-      // LB / RB — manual roll, additive to the left-stick aircraft roll
-      if (gp.buttons[4] && gp.buttons[4].pressed) shipObj.rotateZ( 1.8 * dt);  // LB — roll left
-      if (gp.buttons[5] && gp.buttons[5].pressed) shipObj.rotateZ(-1.8 * dt);  // RB — roll right
+      // LB / RB — the rudder: nose left / nose right at any speed. Pairs
+      // with the stick's at-speed roll: bank with the stick, tighten the
+      // line with the bumpers.
+      if (gp.buttons[4] && gp.buttons[4].pressed) padYaw += 1;   // LB — nose left
+      if (gp.buttons[5] && gp.buttons[5].pressed) padYaw -= 1;   // RB — nose right
+      shipObj.rotateY(padYaw * ship.turnSpeed * dt);
       // gp.buttons[0] (A) is RESERVED for blasters — do not bind
       const yBtn = !!(gp.buttons[3] && gp.buttons[3].pressed); // Y — view toggle
       if (yBtn && !padViewHeld) toggleView();
@@ -1434,7 +1467,7 @@ function animate() {
   // pad stick only counts as "turning" while it's acting as yaw — at
   // speed it's a real roll, and the mesh is already physically banked
   const yawFrac = Math.max(-1, Math.min(1,
-    keyYaw - sx - padLX * (1 - padAirFrac) + (dt > 0 ? mouseYaw / (ship.turnSpeed * dt) : 0)));
+    keyYaw + padYaw - sx - padLX * (1 - padAirFrac) + (dt > 0 ? mouseYaw / (ship.turnSpeed * dt) : 0)));
   bank += (yawFrac * MAX_BANK - bank) * (1 - Math.exp(-5 * dt));
 
   shipObj.getWorldDirection(tmpDir);
@@ -1502,9 +1535,19 @@ function animate() {
          Throttle up to take off again. */
       tmpNormal.multiplyScalar(1 / dist);            // local "up"
       if (dist < b.cfg.radius * 3 && landedOn !== b) {
+        /* sphere of influence (v19): the planet is orbiting the sun at
+           ~170 u/s — brake to land and it slides out from under you,
+           which reads as gravity PUSHING you away. Inside the well the
+           ship is progressively carried along with the planet's orbital
+           travel (0% at 3 radii → 100% at 1.2), so on approach the world
+           effectively stands still and gravity feels like gravity.
+           (Position nudge is ≤ a few units — tmpNormal stays valid.) */
+        const soi = Math.min(1, Math.max(0, (3 - dist / b.cfg.radius) / 1.8));
+        shipObj.position.addScaledVector(b.orbitDelta, soi);
         // inverse-square pull: a shrug at cruise range, a real tug on
-        // final approach — kill the throttle and you'll settle
-        const g = SURFACE_G * (b.cfg.radius / dist) * (b.cfg.radius / dist);
+        // final approach — kill the throttle and you'll settle.
+        // cfg.gravity scales it per planet: colony worlds stay friendly.
+        const g = SURFACE_G * (b.cfg.gravity ?? 1) * (b.cfg.radius / dist) * (b.cfg.radius / dist);
         ship.velocity.addScaledVector(tmpNormal, -g * dt);
       }
       if (landedOn === b) {
@@ -1590,14 +1633,14 @@ function animate() {
     // desired camera spot: CHASE_OFFSET rotated into the ship's frame
     tmpOffset.copy(CHASE_OFFSET).applyQuaternion(shipObj.quaternion);
     tmpOffset.add(shipObj.position);
-    // exponential easing — framerate-independent smooth pursuit.
-    // The camera closes ~99.97% of the gap per second but never snaps,
-    // which is what lets you see the ship bank during hard turns.
-    const k = 1 - Math.exp(-8 * dt);
+    // exponential easing — framerate-independent smooth pursuit. Rates
+    // doubled in v19: still eases (a hint of life in hard turns), but the
+    // ship stays essentially planted in its spot on screen.
+    const k = 1 - Math.exp(-16 * dt);
     camera.position.lerp(tmpOffset, k);
     // the pursuit easing lives on chaseQuat; head-look is layered on
     // top afterward so the two never feed back into each other
-    chaseQuat.slerp(shipObj.quaternion, 1 - Math.exp(-6 * dt));
+    chaseQuat.slerp(shipObj.quaternion, 1 - Math.exp(-14 * dt));
 
     // leash: at speed the lag grows with velocity — never let the ship
     // recede past MAX_CHASE_DIST no matter how fast we're going
