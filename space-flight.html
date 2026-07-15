@@ -530,7 +530,9 @@ function makeAtmosphere(radius, colorHex, strength) {
     depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
-  return new THREE.Mesh(new THREE.SphereGeometry(radius * 1.14, 64, 48), mat);
+  // 1.3× shell so the glow reads as a VOLUME you fly inside, matching the
+  // full-radius effect band — not a thin skin you pop through
+  return new THREE.Mesh(new THREE.SphereGeometry(radius * 1.3, 64, 48), mat);
 }
 
 /* ============ 5. SCENE SETUP ============ */
@@ -1258,8 +1260,10 @@ function animate() {
   // monitor — plain multiplyScalar(damping) would double the drag at 144Hz
   ship.velocity.multiplyScalar(Math.pow(ship.damping, dt * 60));
   // atmospheric drag — the air grabs you; melts away as you climb out
-  // (entryDepth is last frame's value, which at 60fps is close enough)
-  if (entryDepth > 0) ship.velocity.multiplyScalar(Math.pow(1 - 0.028 * entryDepth, dt * 60));
+  // (entryDepth is last frame's value, which at 60fps is close enough).
+  // depth² so the tall upper atmosphere is scenic cruising, not mud —
+  // the real grip lives in the bottom third
+  if (entryDepth > 0) ship.velocity.multiplyScalar(Math.pow(1 - 0.028 * entryDepth * entryDepth, dt * 60));
   shipObj.position.addScaledVector(ship.velocity, dt);
 
   /* ---- collisions (against the ship's position) ---- */
@@ -1499,9 +1503,10 @@ function animate() {
      Come in fast and the tint shifts toward reentry-ember orange. */
   entryDepth = 0;
   if (nearest && nearest.cfg.atmosphere) {
-    // 0.45 radii of effect band — thick enough that entry is a MOMENT
-    // (a few seconds of building effects), not a single frame
-    const shell = nearest.cfg.radius * 0.45;
+    // a FULL radius of atmosphere (v15) — the layer between surface and
+    // space is real flying room now (750u on Earth), not a threshold you
+    // blink through. Effects are faint at the top, thick at the deck.
+    const shell = nearest.cfg.radius * 1.0;
     entryDepth = Math.max(0, Math.min(1, 1 - nearestDist / shell)) *
                  (nearest.cfg.atmoStrength ?? 0.8);
   }
@@ -1518,7 +1523,9 @@ function animate() {
     camera.position.x += (Math.random() - 0.5) * shake;
     camera.position.y += (Math.random() - 0.5) * shake;
     camera.position.z += (Math.random() - 0.5) * shake;
-    entryTagEl.style.visibility = "visible";
+    // tag waits until you're properly IN it — with a full-radius band the
+    // first wisps of tint start hundreds of units before "entry" feels true
+    entryTagEl.style.visibility = entryDepth > 0.08 ? "visible" : "hidden";
     if (audio) audio.rumble.gain.value = entryDepth * speedFrac * 0.6;
   } else {
     atmoEl.style.opacity = 0;
