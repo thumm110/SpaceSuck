@@ -2249,16 +2249,19 @@ const atmoColor = new THREE.Color();
 const heatColor = new THREE.Color(0xffa050);   // come in hot, sky goes ember
 const wispTint = new THREE.Color();
 
-/* ============ NAV HUD (v28): edge markers + radar ============
-   Its own 2D canvas overlay. Two readouts, both tracking the nearest
-   planets: (A) EDGE MARKERS — a reticle on each planet that's in view, or
-   an arrow clamped to the screen edge pointing the way when it's off-view;
-   (C) RADAR — a corner scope, you at centre, nose up, planets as blips
-   (nearest two highlighted teal/amber, the sun a gold landmark). */
+/* ============ NAV HUD (v29): planet labels + proximity radar ============
+   Its own 2D canvas overlay.
+   (A) PLANET LABELS — an on-screen planet gets its name + distance floating
+       on it (nearest two, teal/amber). Off-screen planets show nothing; the
+       top-centre NEAREST BODY readout already covers the closest one.
+   (C) RADAR — a bottom-centre proximity scope (you at centre, nose up) for
+       LOCAL contacts within RADAR_RANGE: space junk as grey specks, a close
+       planet/sun as a bigger blip, and (later) enemies in red. Anything far
+       out — most planets, most of the time — simply isn't on it. */
 const navCanvas = document.getElementById("navhud");
 const navCtx = navCanvas.getContext("2d");
-const NAV_TEAL = "#6ee7d8", NAV_AMBER = "#ffb066", NAV_DIM = "rgba(110,231,216,.35)", NAV_SUN = "#ffd27a";
-const RADAR_RANGE = 95000;                 // whole system fits inside the ring
+const NAV_TEAL = "#6ee7d8", NAV_AMBER = "#ffb066", NAV_JUNK = "#9fb0b8", NAV_SUN = "#ffd27a";
+const RADAR_RANGE = 8000;                   // a local bubble — junk + close bodies only
 const navFont = "'Lucida Console', Monaco, monospace";
 const _nFwd = new THREE.Vector3(), _nRight = new THREE.Vector3(),
       _nRel = new THREE.Vector3(), _nCam = new THREE.Vector3(), _nProj = new THREE.Vector3();
@@ -2269,40 +2272,25 @@ function sizeNavHud() {
 }
 sizeNavHud();
 
-function navReticle(x, y, name, dist, color) {
-  const c = navCtx, s = 11;
-  c.save(); c.strokeStyle = color; c.fillStyle = color;
-  c.shadowColor = color; c.shadowBlur = 6; c.lineWidth = 1.5;
-  c.beginPath();
-  c.moveTo(x-s, y-s+5); c.lineTo(x-s, y-s); c.lineTo(x-s+5, y-s);
-  c.moveTo(x+s-5, y-s); c.lineTo(x+s, y-s); c.lineTo(x+s, y-s+5);
-  c.moveTo(x-s, y+s-5); c.lineTo(x-s, y+s); c.lineTo(x-s+5, y+s);
-  c.moveTo(x+s-5, y+s); c.lineTo(x+s, y+s); c.lineTo(x+s, y+s-5);
-  c.stroke();
-  c.textAlign = "center";
-  c.font = "12px " + navFont; c.fillText(name, x, y-s-6);
-  c.font = "11px " + navFont; c.globalAlpha = 0.85;
-  c.fillText(dist.toLocaleString() + " u", x, y+s+15);
-  c.restore();
-}
-function navArrow(x, y, ang, name, dist, color) {
+// (A) name + distance floating on an on-screen planet — no box
+function navPlanetLabel(x, y, name, dist, color) {
   const c = navCtx;
   c.save(); c.fillStyle = color; c.shadowColor = color; c.shadowBlur = 6;
-  c.translate(x, y);
-  c.save(); c.rotate(ang);
-  c.beginPath(); c.moveTo(11, 0); c.lineTo(-7, -7); c.lineTo(-7, 7); c.closePath(); c.fill();
-  c.restore();
-  const lx = -Math.cos(ang) * 26, ly = -Math.sin(ang) * 26;   // label inward from the edge
-  c.textAlign = "center"; c.font = "11px " + navFont;
-  c.fillText(name, lx, ly - 3);
-  c.globalAlpha = 0.85; c.fillText(dist.toLocaleString() + " u", lx, ly + 11);
+  c.textAlign = "center";
+  c.beginPath(); c.arc(x, y, 1.6, 0, 6.2832); c.fill();       // tiny anchor tick
+  c.font = "12px " + navFont; c.fillText(name, x, y - 12);
+  c.font = "11px " + navFont; c.globalAlpha = 0.85;
+  c.fillText(dist.toLocaleString() + " u", x, y + 18);
   c.restore();
 }
-function navBlip(b, cx, cy, r, color, size) {
-  _nRel.copy(b.group.position).sub(shipObj.position);
-  const f = _nRel.dot(_nFwd), rt = _nRel.dot(_nRight);   // flatten onto the ship's fwd/right plane
-  const h = Math.hypot(f, rt) || 1, d = _nRel.length();
-  const rr = r * Math.sqrt(Math.min(1, d / RADAR_RANGE)); // sqrt so near bodies aren't all piled at centre
+// (C) one radar blip for a world-space position; auto-hides beyond range
+function navBlipAt(worldPos, cx, cy, r, color, size) {
+  _nRel.copy(worldPos).sub(shipObj.position);
+  const d = _nRel.length();
+  if (d > RADAR_RANGE) return;                             // out of the bubble → not on radar
+  const f = _nRel.dot(_nFwd), rt = _nRel.dot(_nRight);     // flatten onto the ship's fwd/right plane
+  const h = Math.hypot(f, rt) || 1;
+  const rr = r * Math.sqrt(Math.min(1, d / RADAR_RANGE));  // sqrt so near contacts aren't piled at centre
   const bx = cx + (rt / h) * rr, by = cy - (f / h) * rr;
   navCtx.fillStyle = color; navCtx.shadowColor = color; navCtx.shadowBlur = 4;
   navCtx.beginPath(); navCtx.arc(bx, by, size, 0, 6.2832); navCtx.fill();
@@ -2311,7 +2299,6 @@ function navBlip(b, cx, cy, r, color, size) {
 function drawNavHud() {
   const W = innerWidth, H = innerHeight, c = navCtx;
   c.clearRect(0, 0, W, H);
-  // planets, nearest first
   const planets = [];
   for (const b of liveBodies) {
     if (b.cfg.type !== "planet") continue;
@@ -2319,28 +2306,21 @@ function drawNavHud() {
   }
   planets.sort((a, z) => a.d - z.d);
 
-  // --- A: edge markers on the nearest two planets ---
-  for (let i = 0; i < Math.min(2, planets.length); i++) {
-    const p = planets[i], color = i === 0 ? NAV_TEAL : NAV_AMBER;
+  // --- A: label the nearest planets that are ON-SCREEN (no boxes, no arrows) ---
+  let labelled = 0;
+  for (const p of planets) {
+    if (labelled >= 2) break;
     _nCam.copy(p.b.group.position).applyMatrix4(camera.matrixWorldInverse);
+    if (_nCam.z >= 0) continue;                            // behind the camera → skip
     _nProj.copy(p.b.group.position).project(camera);
-    let vx = _nProj.x, vy = _nProj.y;
-    const inFront = _nCam.z < 0;
-    if (!inFront) { vx = -vx; vy = -vy; }        // behind camera: flip so the arrow still points right
-    const sx = (vx * 0.5 + 0.5) * W, sy = (-vy * 0.5 + 0.5) * H;
+    if (Math.abs(_nProj.x) > 1 || Math.abs(_nProj.y) > 1) continue;  // off-screen → show nothing
+    const sx = (_nProj.x * 0.5 + 0.5) * W, sy = (-_nProj.y * 0.5 + 0.5) * H;
     const dist = Math.max(0, Math.round(p.d - p.b.cfg.radius));
-    if (inFront && Math.abs(vx) <= 1 && Math.abs(vy) <= 1) {
-      navReticle(sx, sy, p.b.cfg.name, dist, color);
-    } else {
-      const cx = W / 2, cy = H / 2, m = 48;
-      let dx = sx - cx, dy = sy - cy;
-      if (Math.abs(dx) < 1e-3 && Math.abs(dy) < 1e-3) dy = -1;
-      const s = Math.min((W/2 - m) / Math.max(Math.abs(dx), 1e-3), (H/2 - m) / Math.max(Math.abs(dy), 1e-3));
-      navArrow(cx + dx*s, cy + dy*s, Math.atan2(dy, dx), p.b.cfg.name, dist, color);
-    }
+    navPlanetLabel(sx, sy, p.b.cfg.name, dist, labelled === 0 ? NAV_TEAL : NAV_AMBER);
+    labelled++;
   }
 
-  // --- C: radar, bottom-centre. Nose = up. ---
+  // --- C: proximity radar, bottom-centre. Nose = up. LOCAL contacts only. ---
   const r = 52, cx = W / 2, cy = H - 92;
   _nFwd.set(0, 0, -1).applyQuaternion(shipObj.quaternion);
   _nRight.set(1, 0, 0).applyQuaternion(shipObj.quaternion);
@@ -2354,10 +2334,13 @@ function drawNavHud() {
   c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx - r*0.4, cy - r); c.lineTo(cx + r*0.4, cy - r); c.closePath(); c.fill();
   c.fillStyle = NAV_TEAL; c.shadowColor = NAV_TEAL; c.shadowBlur = 4;  // you
   c.beginPath(); c.arc(cx, cy, 2.5, 0, 6.2832); c.fill(); c.shadowBlur = 0;
+  // space junk — the radar's real job now (grey specks)
+  for (const j of junk) if (j.alive) navBlipAt(j.group.position, cx, cy, r, NAV_JUNK, 2);
+  // a planet or the sun, but only when it's actually close (navBlipAt hides it beyond range)
+  for (const p of planets) navBlipAt(p.b.group.position, cx, cy, r, NAV_TEAL, 4.5);
   const star = liveBodies.find(b => b.cfg.type === "star");
-  if (star) navBlip(star, cx, cy, r, NAV_SUN, 3.5);
-  for (let i = 0; i < planets.length; i++)
-    navBlip(planets[i].b, cx, cy, r, i === 0 ? NAV_TEAL : i === 1 ? NAV_AMBER : NAV_DIM, i < 2 ? 4 : 2.5);
+  if (star) navBlipAt(star.group.position, cx, cy, r, NAV_SUN, 4);
+  // enemies later: for (const e of enemies) navBlipAt(e.position, cx, cy, r, "#ff5544", 3);
   c.fillStyle = "rgba(110,231,216,.6)"; c.font = "10px " + navFont; c.textAlign = "center";
   c.fillText("RADAR", cx, cy + r + 14);
   c.restore();
