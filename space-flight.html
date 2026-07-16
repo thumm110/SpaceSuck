@@ -205,6 +205,8 @@
       <div class="grp">SALVAGE</div>
       Shoot junk for scrap, then fly through the wreck — it reels in on its
       own. Ease off the throttle to collect; a boosting ship outruns the beam.
+      Ram anything and you spill cargo — swing back to scoop it up before it
+      drifts off. Land anywhere to repair the hull.
       <div class="grp">HUD</div>
       <b>H</b> toggle this menu
     </div>
@@ -1819,9 +1821,17 @@ const SCRAP_DROP = {
   debris:    { bits: 4, value: 1 },   //  4
   satellite: { bits: 6, value: 4 },   // 24
 };
-const scrapTmp = new THREE.Vector3();   // dedicated — never share junkTmp* with re-entrant code
+/* Ramming knocks cargo loose (v31). It scatters as live scrap you can chase
+   back down, so we can be dramatic with the amount — the real loss is only
+   what drifts out of reach while you're still moving. Scales with hit severity
+   AND your current haul, so a rich hold is genuinely worth banking. */
+const SPILL_FRACTION = 0.35;   // of your cargo, at a full-severity hit
+const SPILL_DMG_FULL = 30;     // hull damage where severity tops out
+const SPILL_MAX_BITS = 12;     // cap the scatter so a huge hold can't flood the 72-pool
+const scrapTmp = new THREE.Vector3(), scrapTmp2 = new THREE.Vector3();   // dedicated — never share junkTmp* with re-entrant code
 const cargoEl = document.getElementById("cargo");
 let cargo = 0;
+let cargoFlash = 0;            // seconds left flashing the CARGO readout red after a spill
 
 const scrap = [];
 for (let i = 0; i < SCRAP_COUNT; i++) {
@@ -1850,6 +1860,30 @@ function junkDropScrap(j) {
     // hangs where the kill happened instead of racing off out of reach
     scrapTmp.multiplyScalar(8 + Math.random() * 18).add(j.vel);
     emitScrap(j.group.position, scrapTmp, d.value);
+  }
+}
+
+/* A ram knocks cargo out of the hold. It bursts off the hull as live scrap and
+   inherits your momentum, so at speed it sprays out behind you and you have to
+   slow down and swing back for it — ease off and you reclaim most, blast on and
+   it's gone. Spawns a hull-length out (past PICKUP_R) so it doesn't just snap
+   straight back into the intake the next frame. Uses only scrapTmp and
+   randUnit — never junkTmp — so it's safe right before shipDamage()'s breach. */
+function spillCargo(dmg) {
+  if (cargo <= 0) return;
+  const sev = Math.min(1, dmg / SPILL_DMG_FULL);
+  const spill = Math.min(cargo, Math.max(1, Math.round(cargo * SPILL_FRACTION * sev)));
+  cargo -= spill;
+  cargoEl.textContent = cargo;
+  cargoFlash = 0.5;
+  cargoSpillSound();
+  const bits = Math.min(spill, SPILL_MAX_BITS);
+  const base = Math.floor(spill / bits), extra = spill % bits;   // values sum back to spill exactly
+  for (let i = 0; i < bits; i++) {
+    randUnit(scrapTmp);
+    scrapTmp2.copy(shipObj.position).addScaledVector(scrapTmp, 42 + Math.random() * 45);  // start outside the intake
+    scrapTmp.multiplyScalar(35 + Math.random() * 50).add(ship.velocity);                  // scatter + your momentum
+    emitScrap(scrapTmp2, scrapTmp, base + (i < extra ? 1 : 0));
   }
 }
 function updateScrap(dt) {
@@ -1952,6 +1986,19 @@ function scrapPickupSound(count) {
     o.connect(g); g.connect(ctx.destination);
     o.start(t); o.stop(t + 0.14);
   }
+}
+// the pickup chime's evil twin: a downward drop that says "you lost some"
+function cargoSpillSound() {
+  if (!audio) return;
+  const { ctx } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = "triangle";
+  o.frequency.setValueAtTime(520, t);
+  o.frequency.exponentialRampToValueAtTime(140, t + 0.18);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.10, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+  o.connect(g); g.connect(ctx.destination);
+  o.start(t); o.stop(t + 0.21);
 }
 
 /* Big rocks break up instead of just winking out — the chunks are other
@@ -2097,7 +2144,10 @@ function updateJunk(dt) {
          back out of the breach it just triggered. */
       if (hurt) {
         thump(Math.min(360, 90 + relSpd * 0.5 + j.radius * 3));
-        if (dmg > 0) shipDamage(dmg);
+        if (dmg > 0) {
+          spillCargo(dmg);   // knock loose cargo BEFORE shipDamage — a lethal hit
+          shipDamage(dmg);   // tows you to Earth, and the spill should stay at the crash
+        }
       }
       continue;
     }
@@ -2875,6 +2925,10 @@ function animate() {
   if (dmgFlash > 0) {
     dmgFlash = Math.max(0, dmgFlash - dt * 2.2);
     dmgFlashEl.style.opacity = dmgFlash;
+  }
+  if (cargoFlash > 0) {                              // flash CARGO red when a ram knocks some loose
+    cargoFlash = Math.max(0, cargoFlash - dt);
+    cargoEl.style.color = cargoFlash > 0 ? "#ff5544" : "";   // "" → back to the CSS gold
   }
   if (breachUntil && clock.elapsedTime > breachUntil) {
     breachUntil = 0;

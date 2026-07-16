@@ -70,6 +70,12 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   means easing off the throttle. No button: the beam is always on, and the
   radius is what grows with upgrades (parked). The game's called SpaceSuck;
   this is the first thing that sucks
+- **Ramming spills your hold** — clip something and it doesn't just dent the
+  hull, it knocks cargo loose: a chunk of your haul bursts off the ship as
+  live scrap. Ease off and swing back and you reclaim most of it; blast on and
+  it drifts away for good. The richer your hold, the more a hit scatters — so
+  every run is a quiet argument between one more pass and flying home to bank
+  it. A lethal hit tows you to Earth and the spill stays at the wreck
 - **Flight model** — throttle with reverse, boost, frame-rate-independent
   drag, collision bounces off every body
 - **Atmospheric entry** — dive below a quarter-radius of any world with an
@@ -117,6 +123,6 @@ art, that's why: check the URL, not the model.
 
 ## History
 
-Thirty versions across 43 commits, each `vN:` tagged in the log — `git log`
+Thirty-one versions across 45 commits, each `vN:` tagged in the log — `git log`
 tells the story from "v1: first flight — mouse steer, throttle physics" to a
 Blender fighter mining a junk field for scrap over a hand-built Earth.
