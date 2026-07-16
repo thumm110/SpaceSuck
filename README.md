@@ -117,6 +117,6 @@ art, that's why: check the URL, not the model.
 
 ## History
 
-Thirty versions across 41 commits, each `vN:` tagged in the log — `git log`
+Thirty versions across 43 commits, each `vN:` tagged in the log — `git log`
 tells the story from "v1: first flight — mouse steer, throttle physics" to a
 Blender fighter mining a junk field for scrap over a hand-built Earth.
