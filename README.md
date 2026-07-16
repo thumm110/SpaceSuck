@@ -24,7 +24,10 @@ when the page loads.
 | Space | Fire blasters |
 | V | Cycle view: cockpit → chase → cinematic |
 
-Touch devices get on-screen thrust/brake/reverse buttons and drag steering.
+Touch devices get on-screen thrust/brake/reverse buttons, a big red **FIRE**
+button, and drag steering. Hold FIRE with your right thumb while your left
+drags to steer — the throttle is cruise control, not a gas pedal, so the
+right thumb is free once you're up to speed.
 
 **Gamepad** (Xbox layout, plug in and press any button): the left stick is
 a real flight stick — left/right **rolls**, up/down pitches, at any speed;
@@ -35,8 +38,7 @@ thrust/reverse** (half a pull is half
 thrust), X full stop, B boost, LB/RB nose left/right, **A fires the
 blasters** (twin nose cannons, aqua + orange), Y cycles the view.
 Atmospheric entry
-and touchdowns rumble the controller. Button A is reserved for future
-weapons.
+and touchdowns rumble the controller, as do junk kills close aboard.
 
 ## What's inside
 
@@ -100,6 +102,6 @@ art, that's why: check the URL, not the model.
 
 ## History
 
-Twenty versions across 29 commits, each `vN:` tagged in the log — `git log`
+Twenty-six versions across 37 commits, each `vN:` tagged in the log — `git log`
 tells the story from "v1: first flight — mouse steer, throttle physics" to a
-Blender fighter with blasters landing on a hand-built Earth.
+Blender fighter shooting up a junk field over a hand-built Earth.
