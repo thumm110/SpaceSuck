@@ -62,6 +62,14 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   full boost kills you in a few minutes. Nothing one-shots a full hull. Land
   anywhere to patch up. Hull hits zero and you're towed back to Earth — an
   involuntary trip home, not a game-over screen
+- **Scrap + a tractor beam** — shot-down junk drops glowing gold scrap, and
+  a beam reels in anything nearby; the CARGO counter climbs as it hits your
+  intake. Manmade junk is worth more than rock, and rock is worth a little,
+  never nothing. Scrap barely drifts, so you collect by flying through the
+  wreck you just made — and a boosting ship outruns its own beam, so hoovering
+  means easing off the throttle. No button: the beam is always on, and the
+  radius is what grows with upgrades (parked). The game's called SpaceSuck;
+  this is the first thing that sucks
 - **Flight model** — throttle with reverse, boost, frame-rate-independent
   drag, collision bounces off every body
 - **Atmospheric entry** — dive below a quarter-radius of any world with an
@@ -109,6 +117,6 @@ art, that's why: check the URL, not the model.
 
 ## History
 
-Twenty-nine versions across 40 commits, each `vN:` tagged in the log — `git log`
+Thirty versions across 41 commits, each `vN:` tagged in the log — `git log`
 tells the story from "v1: first flight — mouse steer, throttle physics" to a
-Blender fighter shooting up a junk field over a hand-built Earth.
+Blender fighter mining a junk field for scrap over a hand-built Earth.
