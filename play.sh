@@ -14,7 +14,10 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT=8123
 LOG=/tmp/spacesuck-server.log
 
-URL="http://localhost:${PORT}/space-flight.html"
+# ?v=<timestamp> busts Chrome's cache — a unique URL each launch can't be
+# served stale, so you always get the latest build (the game ignores the
+# query; it only reads the #earth hash, which still lands after it)
+URL="http://localhost:${PORT}/space-flight.html?v=$(date +%s)"
 [[ "${1:-}" == "earth" ]] && URL="${URL}#earth"
 
 # "up" means: something is serving OUR game on that port, not just anything
