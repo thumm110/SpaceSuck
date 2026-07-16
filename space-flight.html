@@ -1965,15 +1965,26 @@ addEventListener("touchmove", e => {
     }
   }
 }, { passive: true });
-addEventListener("touchend", e => {
+/* touchcancel matters as much as touchend here. The OS steals touches —
+   notification, incoming call, a palm on the glass — and when it does,
+   touchend NEVER fires. Without this the steering slot stays claimed
+   forever: steer.x/y freeze at whatever they held, the ship turns for
+   eternity, and because the claim only happens when steerTouchId is null,
+   no later touch can ever take the wheel back. A reload was the only cure. */
+const releaseSteerTouch = e => {
   for (const t of e.changedTouches) {
     if (t.identifier === steerTouchId) { steerTouchId = null; steer.x = 0; steer.y = 0; }
   }
-});
+};
+addEventListener("touchend", releaseSteerTouch);
+addEventListener("touchcancel", releaseSteerTouch);
 const bindHold = (id, setter) => {
   const el = document.getElementById(id);
   el.addEventListener("touchstart", e => { e.preventDefault(); initAudio(); setter(true); });
-  el.addEventListener("touchend",   e => { e.preventDefault(); setter(false); });
+  // same reason: a stolen touch left the button latched on — for THRUST that
+  // meant the engine never cut out
+  for (const ev of ["touchend", "touchcancel"])
+    el.addEventListener(ev, e => { e.preventDefault(); setter(false); });
 };
 bindHold("btnThrust", v => touchThrust = v);
 bindHold("btnBrake",  v => touchBrake  = v);
