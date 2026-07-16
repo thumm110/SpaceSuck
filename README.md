@@ -52,9 +52,16 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   and tanks. The field lives in a bubble that travels with you and respawns
   ahead of your heading, so junk arrives from every direction and you can
   neither outrun it nor strip it bare. Big rocks take a few hits and break
-  into chunks; small debris pops on one. Ram it and it shatters on your hull
-  and costs you speed. Hits use a swept test — bolts move ~24 units a frame,
-  so a plain point check would sail straight through the small stuff
+  into chunks; small debris pops on one. Hits use a swept test — bolts move
+  ~24 units a frame, so a plain point check would sail straight through the
+  small stuff
+- **A hull, and a reason to shoot** — ramming costs you and pays nothing.
+  Manmade junk shatters on the hull; an asteroid over 26 units is a wall you
+  bounce off. Damage scales with closing speed × mass, so the throttle is the
+  risk dial: idling through the field is basically free, and a blind run at
+  full boost kills you in a few minutes. Nothing one-shots a full hull. Land
+  anywhere to patch up. Hull hits zero and you're towed back to Earth — an
+  involuntary trip home, not a game-over screen
 - **Flight model** — throttle with reverse, boost, frame-rate-independent
   drag, collision bounces off every body
 - **Atmospheric entry** — dive below a quarter-radius of any world with an
@@ -102,6 +109,6 @@ art, that's why: check the URL, not the model.
 
 ## History
 
-Twenty-six versions across 37 commits, each `vN:` tagged in the log — `git log`
+Twenty-nine versions across 40 commits, each `vN:` tagged in the log — `git log`
 tells the story from "v1: first flight — mouse steer, throttle physics" to a
 Blender fighter shooting up a junk field over a hand-built Earth.

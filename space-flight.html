@@ -37,6 +37,18 @@
   }
   #flightdata .big { font-size: 26px; letter-spacing: 2px; }
   #flightdata .dim { opacity: .55; font-size: 11px; }
+  /* hull bar — horizontal twin of the throttle bar, parked in the bottom-left
+     scan path because it's the number that ends runs. Fill color is set from
+     JS (teal → amber → red) so the state reads without looking at the digits. */
+  #hullbar {
+    width: 132px; height: 7px; margin: 2px 0 6px;
+    border: 1px solid rgba(110,231,216,.45); position: relative;
+  }
+  #hullfill {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 100%;
+    background: #6ee7d8; box-shadow: 0 0 8px rgba(110,231,216,.6);
+  }
+  #hullpct { letter-spacing: 2px; }
   #revtag { color: #ffb066; text-shadow: 0 0 6px rgba(255,176,102,.6); visibility: hidden; }
   #kills { color: #ff9a3c; text-shadow: 0 0 6px rgba(255,154,60,.6); letter-spacing: 2px; }
   #viewtag {
@@ -63,6 +75,19 @@
     position: absolute; top: 26%; left: 50%; transform: translateX(-50%);
     color: #7dffa8; text-shadow: 0 0 10px rgba(125,255,168,.8);
     font-size: 13px; letter-spacing: 4px; visibility: hidden;
+  }
+  #breachtag {
+    position: absolute; top: 34%; left: 50%; transform: translateX(-50%);
+    color: #ff5544; text-shadow: 0 0 10px rgba(255,80,60,.8);
+    font-size: 13px; letter-spacing: 4px; visibility: hidden;
+    text-align: center; white-space: nowrap;
+  }
+  /* red vignette pulse on a hull hit. Edges only — the middle stays clear, so
+     it never hides the thing that just hit you. */
+  #damageflash {
+    position: fixed; inset: 0; pointer-events: none; opacity: 0;
+    background: radial-gradient(ellipse at center,
+                                rgba(255,40,30,0) 35%, rgba(255,40,30,.6) 100%);
   }
   /* full-screen tint that fades in as you sink into an atmosphere;
      sits above the canvas, below the HUD */
@@ -144,12 +169,18 @@
   #btnFire:active { background: rgba(255,90,80,.3); }
   #btnView   { left: 24px; bottom: 60px; width: 60px; height: 60px; font-size: 11px; }
   body.touch .touchbtn { display: flex; }
+  /* VIEW sits at bottom 60-120 on the left, right where the flight readout
+     wants to be — lift the readout clear of it on phones. (#hud is
+     pointer-events:none, so this was only ever cosmetic, but the hull bar
+     makes the block taller and the collision worse.) */
+  body.touch #flightdata { bottom: 130px; }
 </style>
 </head>
 <body>
 <div id="loading">GENERATING WORLDS…</div>
 <div id="atmo"></div>
 <canvas id="navhud"></canvas>
+<div id="damageflash"></div>
 <div id="hud">
   <div class="bracket tl"></div><div class="bracket tr"></div>
   <div class="bracket bl"></div><div class="bracket br"></div>
@@ -183,7 +214,10 @@
   <div id="alarm">⚠ PROXIMITY ⚠</div>
   <div id="entrytag">◆ ATMOSPHERIC ENTRY ◆</div>
   <div id="landtag">◆ LANDED ◆</div>
+  <div id="breachtag">◆ HULL BREACH — TOWED TO EARTH ◆</div>
   <div id="flightdata">
+    <span class="dim">HULL</span> <span id="hullpct">100%</span>
+    <div id="hullbar"><div id="hullfill"></div></div>
     <span class="dim">VELOCITY</span><br>
     <span class="big" id="speed">0</span> <span class="dim">u/s</span>
     <span id="revtag">◀ REV</span><br>
@@ -1291,6 +1325,8 @@ const ship = {
   boostMult: 2.5,
   damping: 0.995,
   turnSpeed: 1.6,
+  hull: 100,
+  hullMax: 100,
 };
 const shipObj = new THREE.Group();
 shipObj.position.set(0, 0, 3000);
@@ -1443,9 +1479,54 @@ const JUNK_NEAR = 320;      // closest a piece may spawn — no pop-in on your n
 const JUNK_FAR = 2400;      // spawn shell, well inside the ~3750u bolt range
 const JUNK_CULL = 3400;     // drifted past this? recycle it to the front
 const SHIP_HIT_R = 12;      // hull radius, for ramming
+/* Ramming is a PUNISHMENT, never a payday. If a hit paid out, the best play
+   would be to hold boost and never touch the trigger — which retires the
+   blasters. So a ram costs hull and credits nothing.
+   Rock is solid and manmade junk is a crumple zone: a big ASTEROID is a wall
+   you bounce off, everything else shatters on the hull and still costs you. */
+const RAM_WALL_R = 26;      // asteroid radius above this and the rock wins
+const RAM_FREE_SPD = 25;    // closing speed under this is a nudge, not a hit
+const RAM_DMG_SIZE = 0.16;  // hull per unit of junk radius, per 100 u/s closing
+const RAM_DMG_CAP = 60;     // nothing one-shots a full hull — a lesson, not a reset
+const HULL_REPAIR = 12.5;   // hull/sec while parked — a landing is a pit stop
 const FLASH_WHITE = new THREE.Color(0xffffff);
 const killsEl = document.getElementById("kills");
+const hullFillEl = document.getElementById("hullfill");
+const hullPctEl = document.getElementById("hullpct");
+const breachEl = document.getElementById("breachtag");
+const dmgFlashEl = document.getElementById("damageflash");
 let junkKills = 0;
+let dmgFlash = 0;       // red vignette strength, decays each frame
+let breachUntil = 0;    // clock time the HULL BREACH tag hides (0 = hidden)
+
+function shipDamage(amount) {
+  ship.hull = Math.max(0, ship.hull - amount);
+  dmgFlash = Math.min(1, dmgFlash + amount / 45);
+  if (ship.hull <= 0) shipBreach();
+}
+
+/* Hull gone: you wake up on Earth's doorstep. Not a game-over screen — an
+   involuntary trip home, which is exactly what a bad run should cost, and it
+   sets up Charleston as the place you come back to. */
+function shipBreach() {
+  thump(400);
+  ship.hull = ship.hullMax;
+  ship.velocity.set(0, 0, 0);
+  ship.throttle = 0;
+  landedOn = null;
+  const e = liveBodies.find(b => b.cfg.name === "EARTH");
+  if (e) {
+    const r = e.cfg.radius;
+    shipObj.position.copy(e.group.position)
+           .add(new THREE.Vector3(-r * 0.3, r * 0.5, -r * 2.0));
+    // lookAt aims +Z but our nose is -Z, so point at Earth's mirror image
+    shipObj.lookAt(shipObj.position.clone().multiplyScalar(2)
+                   .sub(e.group.position));
+  }
+  for (const j of junk) junkRespawn(j, false);   // don't wake up inside a rock
+  breachUntil = clock.elapsedTime + 4;
+  breachEl.style.visibility = "visible";
+}
 
 function randUnit(v) {   // evenly distributed point on the unit sphere
   const z = Math.random() * 2 - 1, a = Math.random() * Math.PI * 2, r = Math.sqrt(1 - z * z);
@@ -1586,6 +1667,7 @@ for (let i = 0; i < JUNK_COUNT; i++) {
     mats: junkCollectMats(built.group),
     vel: new THREE.Vector3(), spin: new THREE.Vector3(),
     radius: 1, hp: 1, maxHp: 1, flash: 0, alive: false, respawnIn: 0,
+    ramCool: 0,   // seconds until this piece can hurt us again — see updateJunk
     phase: rand() * 6.28,
   });
 }
@@ -1642,6 +1724,7 @@ function junkActivate(j) {
   j.alive = true;
   j.group.visible = true;
   j.flash = 0;
+  j.ramCool = 0;
   for (const m of j.mats) m.emissive.copy(m.userData.baseEmissive);
   j.group.rotation.set(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28);
   // big things turn slowly — a 70-unit rock spinning like a tossed coin
@@ -1778,13 +1861,19 @@ function junkSpawnFragments(parent) {
   }
 }
 
-function junkKill(j, dist) {
+// take it out of play with the usual bang — no scoring. Ramming ends here.
+function junkDestroy(j, dist) {
   j.alive = false;
   j.group.visible = false;
   j.respawnIn = 2 + Math.random() * 5;
   burstKill(j.group.position, j.radius, j.vel);
   junkBoomSound(dist, j.radius);
   if (dist < 900) padRumble(Math.min(0.6, 0.4 * (300 / Math.max(60, dist))), 90);
+}
+
+// shot down — the only path that pays, in kills now and in salvage later
+function junkKill(j, dist) {
+  junkDestroy(j, dist);
   killsEl.textContent = ++junkKills;
   if (j.type === "asteroid" && j.radius > 30) junkSpawnFragments(j);
 }
@@ -1832,6 +1921,7 @@ function updateJunk(dt) {
       if (j.respawnIn <= 0) junkRespawn(j, false);
       continue;
     }
+    if (j.ramCool > 0) j.ramCool -= dt;
     j.group.position.addScaledVector(j.vel, dt);
     j.group.rotation.x += j.spin.x * dt;
     j.group.rotation.y += j.spin.y * dt;
@@ -1845,12 +1935,50 @@ function updateJunk(dt) {
       j.beacon.material.opacity =
         Math.sin(clock.elapsedTime * 2.6 + j.phase) > 0.65 ? 1 : 0.04;
 
-    // ram it and it shatters on your hull — you win, it costs you speed
+    /* Ram it and it costs you hull, never credit. Parked ships are exempt:
+       the junk bubble follows you down onto the pad, and getting shelled
+       while you're sitting still isn't a game. */
     const rr = j.radius + SHIP_HIT_R;
-    if (shipObj.position.distanceToSquared(j.group.position) < rr * rr) {
-      ship.velocity.multiplyScalar(0.86);
-      thump(Math.min(320, 120 + j.radius * 3));
-      junkKill(j, 0);
+    if (!landedOn && shipObj.position.distanceToSquared(j.group.position) < rr * rr) {
+      junkTmpA.subVectors(shipObj.position, j.group.position);
+      // dead center leaves normalize() a zero vector (three.js guards the
+      // divide, so it's (0,0,0), not NaN) — and a zero normal means the shove
+      // below moves us nowhere, pinning us inside the rock. Needs exact float
+      // equality on all three axes, so it shouldn't happen; one line to be sure.
+      if (junkTmpA.lengthSq() < 1e-6) junkTmpA.set(0, 0, 1);
+      junkTmpA.normalize();
+      const relSpd = junkTmpB.subVectors(ship.velocity, j.vel).length();
+      /* The bounce parks us at rr+1, close enough that a drifting rock can
+         touch us again next frame. The physics below must still run every
+         frame or we'd sink into it — but the HURT is on a cooldown, so
+         scraping along a boulder can't grind you down at 60Hz. */
+      const hurt = j.ramCool <= 0;
+      const dmg = hurt ? Math.min(RAM_DMG_CAP,
+        (Math.max(0, relSpd - RAM_FREE_SPD) / 100) * (2 + j.radius * RAM_DMG_SIZE)) : 0;
+      if (hurt) j.ramCool = 0.4;
+
+      if (j.type === "asteroid" && j.radius > RAM_WALL_R) {
+        // too much rock to break on the hull: shove clear, then bounce off it
+        shipObj.position.copy(j.group.position).addScaledVector(junkTmpA, rr + 1);
+        const into = ship.velocity.dot(junkTmpA);
+        if (into < 0) ship.velocity.addScaledVector(junkTmpA, -into * 1.6);
+        j.vel.addScaledVector(junkTmpA, -Math.min(30, 600 / j.radius));
+        j.spin.addScaledVector(randUnit(junkTmpB), 0.8);
+      } else {
+        ship.velocity.multiplyScalar(0.9);   // shatters, but it still bleeds speed
+        junkDestroy(j, 0);
+      }
+
+      /* Damage goes LAST, and the order is load-bearing. A lethal hit calls
+         shipBreach(), which teleports the ship to Earth and respawns every
+         junk slot — that rewrites junkTmpA/junkTmpB and re-rolls j.radius.
+         Anything above needing the collision normal or rr has to have already
+         run, or it bounces off a random leftover vector and drags the ship
+         back out of the breach it just triggered. */
+      if (hurt) {
+        thump(Math.min(360, 90 + relSpd * 0.5 + j.radius * 3));
+        if (dmg > 0) shipDamage(dmg);
+      }
       continue;
     }
     if (j.group.position.distanceToSquared(shipObj.position) > JUNK_CULL * JUNK_CULL)
@@ -2628,6 +2756,25 @@ function animate() {
     const f = 44 + t * 38 + (boosting ? 14 : 0);
     audio.osc1.frequency.value = f;
     audio.osc2.frequency.value = f * 1.014;
+  }
+
+  // parked = pit stop. Any pad for now; Charleston earns the monopoly when
+  // there's a reason to fly home (Stage 4).
+  if (landedOn && ship.hull < ship.hullMax)
+    ship.hull = Math.min(ship.hullMax, ship.hull + HULL_REPAIR * dt);
+  const hullPct = ship.hull / ship.hullMax;
+  const hullCol = hullPct > 0.5 ? "#6ee7d8" : hullPct > 0.25 ? "#ffb066" : "#ff5544";
+  hullFillEl.style.width = (hullPct * 100) + "%";
+  hullFillEl.style.background = hullCol;
+  hullPctEl.style.color = hullCol;
+  hullPctEl.textContent = Math.round(hullPct * 100) + "%";
+  if (dmgFlash > 0) {
+    dmgFlash = Math.max(0, dmgFlash - dt * 2.2);
+    dmgFlashEl.style.opacity = dmgFlash;
+  }
+  if (breachUntil && clock.elapsedTime > breachUntil) {
+    breachUntil = 0;
+    breachEl.style.visibility = "hidden";
   }
 
   speedEl.textContent = Math.round(spd);
