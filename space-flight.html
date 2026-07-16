@@ -115,6 +115,15 @@
   #btnThrust { right: 24px; bottom: 240px; }
   #btnBrake  { right: 24px; bottom: 150px; }
   #btnRev    { right: 24px; bottom: 60px; border-color: rgba(255,176,102,.6); color: #ffb066; }
+  /* FIRE is the biggest target on the glass because it's the one control a
+     shooting game presses constantly. Inboard of REVERSE and sharing its row
+     (both centers land 97px up), with a 26px gap — close enough to reach,
+     far enough that a mis-tap doesn't throw you into reverse mid-fight. Red,
+     to keep it clearly apart from REVERSE's orange. */
+  #btnFire   { right: 124px; bottom: 54px; width: 86px; height: 86px;
+               border-color: rgba(255,90,80,.75); color: #ff6a5c;
+               background: rgba(35,10,10,.5); }
+  #btnFire:active { background: rgba(255,90,80,.3); }
   #btnView   { left: 24px; bottom: 60px; width: 60px; height: 60px; font-size: 11px; }
   body.touch .touchbtn { display: flex; }
   body.touch #hint { display: none; }
@@ -164,6 +173,7 @@
 <button class="touchbtn" id="btnThrust">THRUST</button>
 <button class="touchbtn" id="btnBrake">STOP</button>
 <button class="touchbtn" id="btnRev">REVERSE</button>
+<button class="touchbtn" id="btnFire">FIRE</button>
 <button class="touchbtn" id="btnView">VIEW</button>
 
 <!-- three.js lives NEXT TO this file now (no internet needed). If it's
@@ -1947,7 +1957,7 @@ addEventListener("mousemove", e => {
 
 const steer = { x: 0, y: 0 };   // rate-based steering — still used by touch drag
 
-let touchThrust = false, touchBrake = false, touchRev = false;
+let touchThrust = false, touchBrake = false, touchRev = false, touchFire = false;
 if (matchMedia("(pointer: coarse)").matches) document.body.classList.add("touch");
 
 let steerTouchId = null, steerStart = null;
@@ -1989,6 +1999,13 @@ const bindHold = (id, setter) => {
 bindHold("btnThrust", v => touchThrust = v);
 bindHold("btnBrake",  v => touchBrake  = v);
 bindHold("btnRev",    v => touchRev    = v);
+/* Hold to fire. FIRE_COOLDOWN already paces the gate at ~9 shots/sec, so a
+   held button machine-guns and a quick tap fires exactly one bolt — both fall
+   out with no new state, on the same code path as SPACE and the pad's A.
+   Holding it costs you nothing: THRUST is a throttle ramp, not a gas pedal
+   (ship.throttle persists after you let go), so the right thumb is idle in
+   flight and free to live here while the left thumb steers. */
+bindHold("btnFire",   v => touchFire   = v);
 document.getElementById("btnView").addEventListener("touchstart", e => {
   e.preventDefault(); initAudio(); toggleView();
 });
@@ -2384,7 +2401,7 @@ function animate() {
 
   /* ---- blasters: fire from both cannons, advance live bolts ---- */
   fireCooldown -= dt;
-  if ((keys["Space"] || padFire) && fireCooldown <= 0) {
+  if ((keys["Space"] || padFire || touchFire) && fireCooldown <= 0) {
     shipObj.getWorldDirection(boltDir).negate();          // nose forward (-Z)
     retroGlows[0].getWorldPosition(muzzleL);              // left prong tip (also refreshes shipObj world matrix)
     retroGlows[1].getWorldPosition(muzzleR);              // right prong tip
