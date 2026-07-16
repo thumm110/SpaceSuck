@@ -93,10 +93,28 @@
     background: linear-gradient(to bottom, #d98d3a, #ffb066);
     box-shadow: 0 0 8px rgba(255,176,102,.7);
   }
-  #hint {
-    position: absolute; top: 14px; left: 18px; font-size: 11px;
-    line-height: 1.8; letter-spacing: 1px; opacity: .55;
+  /* nav HUD overlay (edge markers + radar) — its own 2D canvas below the
+     text HUD, above the 3D scene. Pointer-events off so it never eats clicks. */
+  #navhud { position: fixed; inset: 0; pointer-events: none; }
+
+  /* controls: a tuck-away menu instead of a wall of text in the corner */
+  #ctrlmenu { position: absolute; top: 12px; left: 14px; pointer-events: auto; }
+  #ctrlToggle {
+    cursor: pointer; font-family: inherit; font-size: 11px; letter-spacing: 2px;
+    color: #6ee7d8; background: rgba(10,25,25,.5);
+    border: 1px solid rgba(110,231,216,.4); border-radius: 4px; padding: 4px 11px;
+    text-shadow: 0 0 6px rgba(110,231,216,.6);
   }
+  #ctrlToggle:hover { background: rgba(20,45,45,.75); }
+  #ctrlList {
+    display: none; margin-top: 8px; padding: 10px 14px; max-width: 340px;
+    font-size: 11px; line-height: 1.7; letter-spacing: .5px; opacity: .92;
+    background: rgba(6,14,16,.82); border: 1px solid rgba(110,231,216,.3); border-radius: 6px;
+  }
+  #ctrlmenu.open #ctrlList { display: block; }
+  #ctrlList .grp { color: #6ee7d8; opacity: .55; letter-spacing: 2px; font-size: 10px; margin: 9px 0 3px; }
+  #ctrlList .grp:first-child { margin-top: 0; }
+  #ctrlList b { color: #bffef4; font-weight: normal; }
   .bracket { position:absolute; width: 40px; height: 40px; opacity:.4; }
   .bracket.tl { top:8px; left:8px; border-top:1px solid #6ee7d8; border-left:1px solid #6ee7d8; }
   .bracket.tr { top:8px; right:8px; border-top:1px solid #6ee7d8; border-right:1px solid #6ee7d8; }
@@ -126,24 +144,35 @@
   #btnFire:active { background: rgba(255,90,80,.3); }
   #btnView   { left: 24px; bottom: 60px; width: 60px; height: 60px; font-size: 11px; }
   body.touch .touchbtn { display: flex; }
-  body.touch #hint { display: none; }
 </style>
 </head>
 <body>
 <div id="loading">GENERATING WORLDS…</div>
 <div id="atmo"></div>
+<canvas id="navhud"></canvas>
 <div id="hud">
   <div class="bracket tl"></div><div class="bracket tr"></div>
   <div class="bracket bl"></div><div class="bracket br"></div>
   <div id="crosshair"></div>
-  <div id="hint">
-    CLICK — capture mouse (steer) &nbsp; ESC — release<br>
-    RIGHT-DRAG — orbit the ship &nbsp; WHEEL — zoom<br>
-    W — thrust &nbsp; S — reverse &nbsp; X — full stop<br>
-    A / D — roll &nbsp; ← / → — turn &nbsp; ↑ / ↓ — nose down / up<br>
-    SHIFT — boost &nbsp; SPACE — fire &nbsp; V — view (cockpit / chase / cinematic)<br>
-    PAD — L-stick roll / pitch &nbsp; R-stick look around<br>
-    RT / LT thrust &nbsp; X stop &nbsp; B boost &nbsp; LB / RB nose L / R &nbsp; A fire &nbsp; Y view
+  <div id="ctrlmenu">
+    <button id="ctrlToggle" type="button">CONTROLS ▾</button>
+    <div id="ctrlList">
+      <div class="grp">FLIGHT</div>
+      <b>W</b> thrust · <b>S</b> reverse · <b>X</b> full stop<br>
+      <b>A / D</b> roll · <b>← / →</b> turn · <b>↑ / ↓</b> nose down / up<br>
+      <b>SHIFT</b> boost · <b>SPACE</b> fire · <b>V</b> view (cockpit / chase / cinematic)
+      <div class="grp">MOUSE</div>
+      <b>Click</b> capture — steer · <b>ESC</b> release<br>
+      <b>Right-drag</b> orbit camera · <b>Wheel</b> zoom
+      <div class="grp">GAMEPAD</div>
+      <b>L-stick</b> roll / pitch · <b>R-stick</b> look around<br>
+      <b>RT / LT</b> thrust / reverse · <b>LB / RB</b> nose left / right<br>
+      <b>A</b> fire · <b>B</b> boost · <b>X</b> stop · <b>Y</b> view
+      <div class="grp">TOUCH</div>
+      <b>Drag</b> to steer · on-screen THRUST / REVERSE / STOP / FIRE / VIEW
+      <div class="grp">HUD</div>
+      <b>H</b> toggle this menu
+    </div>
   </div>
   <div id="viewtag">VIEW: COCKPIT</div>
   <div id="nearest">
@@ -1926,6 +1955,7 @@ function toggleView() {
 const keys = {};
 addEventListener("keydown", e => {
   if (e.code === "KeyV" && !keys["KeyV"]) toggleView(); // fire once per press
+  if (e.code === "KeyH" && !keys["KeyH"]) ctrlMenu.classList.toggle("open"); // controls menu
   if (e.code === "Space") e.preventDefault();           // Space fires; don't scroll
   keys[e.code] = true;
 });
@@ -2090,6 +2120,126 @@ const entryTagEl = document.getElementById("entrytag");
 const atmoColor = new THREE.Color();
 const heatColor = new THREE.Color(0xffa050);   // come in hot, sky goes ember
 const wispTint = new THREE.Color();
+
+/* ============ NAV HUD (v28): edge markers + radar ============
+   Its own 2D canvas overlay. Two readouts, both tracking the nearest
+   planets: (A) EDGE MARKERS — a reticle on each planet that's in view, or
+   an arrow clamped to the screen edge pointing the way when it's off-view;
+   (C) RADAR — a corner scope, you at centre, nose up, planets as blips
+   (nearest two highlighted teal/amber, the sun a gold landmark). */
+const navCanvas = document.getElementById("navhud");
+const navCtx = navCanvas.getContext("2d");
+const NAV_TEAL = "#6ee7d8", NAV_AMBER = "#ffb066", NAV_DIM = "rgba(110,231,216,.35)", NAV_SUN = "#ffd27a";
+const RADAR_RANGE = 95000;                 // whole system fits inside the ring
+const navFont = "'Lucida Console', Monaco, monospace";
+const _nFwd = new THREE.Vector3(), _nRight = new THREE.Vector3(),
+      _nRel = new THREE.Vector3(), _nCam = new THREE.Vector3(), _nProj = new THREE.Vector3();
+function sizeNavHud() {
+  const dpr = Math.min(devicePixelRatio, 2);
+  navCanvas.width = innerWidth * dpr; navCanvas.height = innerHeight * dpr;
+  navCtx.setTransform(dpr, 0, 0, dpr, 0, 0);   // draw in CSS pixels
+}
+sizeNavHud();
+
+function navReticle(x, y, name, dist, color) {
+  const c = navCtx, s = 11;
+  c.save(); c.strokeStyle = color; c.fillStyle = color;
+  c.shadowColor = color; c.shadowBlur = 6; c.lineWidth = 1.5;
+  c.beginPath();
+  c.moveTo(x-s, y-s+5); c.lineTo(x-s, y-s); c.lineTo(x-s+5, y-s);
+  c.moveTo(x+s-5, y-s); c.lineTo(x+s, y-s); c.lineTo(x+s, y-s+5);
+  c.moveTo(x-s, y+s-5); c.lineTo(x-s, y+s); c.lineTo(x-s+5, y+s);
+  c.moveTo(x+s-5, y+s); c.lineTo(x+s, y+s); c.lineTo(x+s, y+s-5);
+  c.stroke();
+  c.textAlign = "center";
+  c.font = "12px " + navFont; c.fillText(name, x, y-s-6);
+  c.font = "11px " + navFont; c.globalAlpha = 0.85;
+  c.fillText(dist.toLocaleString() + " u", x, y+s+15);
+  c.restore();
+}
+function navArrow(x, y, ang, name, dist, color) {
+  const c = navCtx;
+  c.save(); c.fillStyle = color; c.shadowColor = color; c.shadowBlur = 6;
+  c.translate(x, y);
+  c.save(); c.rotate(ang);
+  c.beginPath(); c.moveTo(11, 0); c.lineTo(-7, -7); c.lineTo(-7, 7); c.closePath(); c.fill();
+  c.restore();
+  const lx = -Math.cos(ang) * 26, ly = -Math.sin(ang) * 26;   // label inward from the edge
+  c.textAlign = "center"; c.font = "11px " + navFont;
+  c.fillText(name, lx, ly - 3);
+  c.globalAlpha = 0.85; c.fillText(dist.toLocaleString() + " u", lx, ly + 11);
+  c.restore();
+}
+function navBlip(b, cx, cy, r, color, size) {
+  _nRel.copy(b.group.position).sub(shipObj.position);
+  const f = _nRel.dot(_nFwd), rt = _nRel.dot(_nRight);   // flatten onto the ship's fwd/right plane
+  const h = Math.hypot(f, rt) || 1, d = _nRel.length();
+  const rr = r * Math.sqrt(Math.min(1, d / RADAR_RANGE)); // sqrt so near bodies aren't all piled at centre
+  const bx = cx + (rt / h) * rr, by = cy - (f / h) * rr;
+  navCtx.fillStyle = color; navCtx.shadowColor = color; navCtx.shadowBlur = 4;
+  navCtx.beginPath(); navCtx.arc(bx, by, size, 0, 6.2832); navCtx.fill();
+  navCtx.shadowBlur = 0;
+}
+function drawNavHud() {
+  const W = innerWidth, H = innerHeight, c = navCtx;
+  c.clearRect(0, 0, W, H);
+  // planets, nearest first
+  const planets = [];
+  for (const b of liveBodies) {
+    if (b.cfg.type !== "planet") continue;
+    planets.push({ b, d: shipObj.position.distanceTo(b.group.position) });
+  }
+  planets.sort((a, z) => a.d - z.d);
+
+  // --- A: edge markers on the nearest two planets ---
+  for (let i = 0; i < Math.min(2, planets.length); i++) {
+    const p = planets[i], color = i === 0 ? NAV_TEAL : NAV_AMBER;
+    _nCam.copy(p.b.group.position).applyMatrix4(camera.matrixWorldInverse);
+    _nProj.copy(p.b.group.position).project(camera);
+    let vx = _nProj.x, vy = _nProj.y;
+    const inFront = _nCam.z < 0;
+    if (!inFront) { vx = -vx; vy = -vy; }        // behind camera: flip so the arrow still points right
+    const sx = (vx * 0.5 + 0.5) * W, sy = (-vy * 0.5 + 0.5) * H;
+    const dist = Math.max(0, Math.round(p.d - p.b.cfg.radius));
+    if (inFront && Math.abs(vx) <= 1 && Math.abs(vy) <= 1) {
+      navReticle(sx, sy, p.b.cfg.name, dist, color);
+    } else {
+      const cx = W / 2, cy = H / 2, m = 48;
+      let dx = sx - cx, dy = sy - cy;
+      if (Math.abs(dx) < 1e-3 && Math.abs(dy) < 1e-3) dy = -1;
+      const s = Math.min((W/2 - m) / Math.max(Math.abs(dx), 1e-3), (H/2 - m) / Math.max(Math.abs(dy), 1e-3));
+      navArrow(cx + dx*s, cy + dy*s, Math.atan2(dy, dx), p.b.cfg.name, dist, color);
+    }
+  }
+
+  // --- C: radar, bottom-centre. Nose = up. ---
+  const r = 52, cx = W / 2, cy = H - 92;
+  _nFwd.set(0, 0, -1).applyQuaternion(shipObj.quaternion);
+  _nRight.set(1, 0, 0).applyQuaternion(shipObj.quaternion);
+  c.save();
+  c.strokeStyle = "rgba(110,231,216,.5)"; c.lineWidth = 1;
+  c.beginPath(); c.arc(cx, cy, r, 0, 6.2832); c.stroke();
+  c.strokeStyle = "rgba(110,231,216,.18)";
+  c.beginPath(); c.arc(cx, cy, r * 0.5, 0, 6.2832); c.stroke();
+  c.beginPath(); c.moveTo(cx, cy-r); c.lineTo(cx, cy+r); c.moveTo(cx-r, cy); c.lineTo(cx+r, cy); c.stroke();
+  c.fillStyle = "rgba(110,231,216,.08)";               // forward cone
+  c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx - r*0.4, cy - r); c.lineTo(cx + r*0.4, cy - r); c.closePath(); c.fill();
+  c.fillStyle = NAV_TEAL; c.shadowColor = NAV_TEAL; c.shadowBlur = 4;  // you
+  c.beginPath(); c.arc(cx, cy, 2.5, 0, 6.2832); c.fill(); c.shadowBlur = 0;
+  const star = liveBodies.find(b => b.cfg.type === "star");
+  if (star) navBlip(star, cx, cy, r, NAV_SUN, 3.5);
+  for (let i = 0; i < planets.length; i++)
+    navBlip(planets[i].b, cx, cy, r, i === 0 ? NAV_TEAL : i === 1 ? NAV_AMBER : NAV_DIM, i < 2 ? 4 : 2.5);
+  c.fillStyle = "rgba(110,231,216,.6)"; c.font = "10px " + navFont; c.textAlign = "center";
+  c.fillText("RADAR", cx, cy + r + 14);
+  c.restore();
+}
+
+/* controls menu — a click (or H) tucks the mapping open/closed */
+const ctrlMenu = document.getElementById("ctrlmenu");
+document.getElementById("ctrlToggle").addEventListener("click", e => {
+  e.stopPropagation(); ctrlMenu.classList.toggle("open");
+});
 
 function animate() {
   requestAnimationFrame(animate);
@@ -2567,6 +2717,7 @@ function animate() {
   }
 
   renderer.render(scene, camera);
+  drawNavHud();   // edge markers + radar, on the 2D overlay
 }
 
 setTimeout(() => {
@@ -2590,6 +2741,7 @@ addEventListener("resize", () => {
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
   twinkleStars.material.uniforms.uScale.value = 0.5 * renderer.domElement.height;  // keep point sizes right
+  sizeNavHud();
 });
 </script>
 </body>
