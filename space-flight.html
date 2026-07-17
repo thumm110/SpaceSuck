@@ -725,9 +725,9 @@ function makeAtmosphere(radius, colorHex, strength) {
     depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
-  // 1.3× shell so the glow reads as a VOLUME you fly inside, matching the
-  // full-radius effect band — not a thin skin you pop through
-  return new THREE.Mesh(new THREE.SphereGeometry(radius * 1.3, 64, 48), mat);
+  // 1.4× shell so the glow reads as a VOLUME you fly inside (a touch bigger
+  // as of v37), matching the ~1.2-radius effect band — not a thin skin
+  return new THREE.Mesh(new THREE.SphereGeometry(radius * 1.4, 64, 48), mat);
 }
 
 /* ============ 5. SCENE SETUP ============ */
@@ -2685,8 +2685,13 @@ const landTagEl = document.getElementById("landtag");
 const SPIN_AXIS = new THREE.Vector3(0, 1, 0);  // planets spin about local +Y
 const spinRideQ = new THREE.Quaternion();      // parked ship rides the spin
 
-/* atmospheric entry state — depth is 0 in space, →1 near the surface */
+/* atmospheric entry state (v37 splits it in two). entryDepth: 0 in space → 1
+   at the deck — drives the air DRAG, so thick air still slows you all the way
+   down. hazeDepth: a mid-atmosphere cloud-deck BAND — faint up top, thick
+   through the middle, then CLEARS toward the ground — drives the visible
+   tint/wisps/shake, so you break through into clear air on final approach. */
 let entryDepth = 0;
+let hazeDepth = 0;
 const atmoEl = document.getElementById("atmo");
 const entryTagEl = document.getElementById("entrytag");
 const atmoColor = new THREE.Color();
@@ -3480,36 +3485,51 @@ function animate() {
      drags (up in the throttle section), and a rumble rises in the mix.
      Come in fast and the tint shifts toward reentry-ember orange. */
   entryDepth = 0;
+  hazeDepth = 0;
   if (nearest && nearest.cfg.atmosphere) {
-    // a FULL radius of atmosphere (v15) — the layer between surface and
-    // space is real flying room now (750u on Earth), not a threshold you
-    // blink through. Effects are faint at the top, thick at the deck.
-    const shell = nearest.cfg.radius * 1.0;
-    entryDepth = Math.max(0, Math.min(1, 1 - nearestDist / shell)) *
-                 (nearest.cfg.atmoStrength ?? 0.8);
+    // ~1.2 radii of atmosphere (v37 gives it a bit more flying room). alt is
+    // altitude above the surface; a is that as a fraction of the shell —
+    // a = 1 at the top of the atmosphere, a = 0 at the deck.
+    const shell = nearest.cfg.radius * 1.2;
+    const strength = nearest.cfg.atmoStrength ?? 0.8;
+    const alt = Math.max(0, Math.min(shell, nearestDist));
+    const a = alt / shell;
+    // DRAG builds all the way to the deck — thick air still brakes you on the
+    // way in and holds you on the ground.
+    entryDepth = (1 - a) * strength;
+    // the VISIBLE haze is a cloud deck: it fades in from the top of the
+    // atmosphere, thickens through a mid band, then CLEARS as you drop below
+    // ~half altitude into clear air near the ground — so the red/blue hue
+    // stops blinding you on final approach (and while parked on the surface).
+    const fadeIn  = Math.min(1, (1 - a) / 0.25);   // faint above ~75% altitude
+    const fadeOut = Math.min(1, a / 0.50);         // clears below ~50% altitude
+    hazeDepth = fadeIn * fadeOut * strength;
   }
   if (entryDepth > 0.01) {
     const speedFrac = Math.min(1, spd / 300);
-    const heat = Math.max(0, Math.min(1, (spd - 250) / 450)) * entryDepth;
+    // every SENSORY effect rides hazeDepth, so they swell in the cloud deck
+    // and fade out as you punch through into clear air near the ground.
+    // (entryDepth still drives the air drag, up in the physics step.)
+    const heat = Math.max(0, Math.min(1, (spd - 250) / 450)) * hazeDepth;
     atmoColor.set(nearest.cfg.atmosphere).lerp(heatColor, heat);
     atmoEl.style.backgroundColor = "#" + atmoColor.getHexString();
-    atmoEl.style.opacity = (entryDepth * (0.22 + 0.3 * speedFrac)).toFixed(3);
+    atmoEl.style.opacity = (hazeDepth * (0.18 + 0.28 * speedFrac)).toFixed(3);
     wispTint.set(0xffffff).lerp(atmoColor, 0.4);
     wispMat.color.copy(wispTint);
-    wispMat.opacity = entryDepth * Math.min(1, spd / 120) * 0.8;
-    const shake = entryDepth * speedFrac * 0.4;
+    wispMat.opacity = hazeDepth * Math.min(1, spd / 120) * 0.8;
+    const shake = hazeDepth * speedFrac * 0.4;
     camera.position.x += (Math.random() - 0.5) * shake;
     camera.position.y += (Math.random() - 0.5) * shake;
     camera.position.z += (Math.random() - 0.5) * shake;
-    // tag waits until you're properly IN it — with a full-radius band the
-    // first wisps of tint start hundreds of units before "entry" feels true
-    entryTagEl.style.visibility = entryDepth > 0.08 ? "visible" : "hidden";
-    if (audio) audio.rumble.gain.value = entryDepth * speedFrac * 0.6;
+    // tag shows while you're IN the haze and hides once you break through the
+    // deck into clear air — entry's over, the ground is yours to see
+    entryTagEl.style.visibility = hazeDepth > 0.08 ? "visible" : "hidden";
+    if (audio) audio.rumble.gain.value = hazeDepth * speedFrac * 0.6;
     // controller rumble PULSES instead of running continuously — kinder
     // to wireless batteries, and buffeting reads more like turbulence
     // than a constant buzz. Deeper + faster = harder, tighter pulses:
     // ~600ms apart on a gentle high pass, ~300ms in a screaming reentry.
-    const rumbleStrength = entryDepth * speedFrac * 0.9;
+    const rumbleStrength = hazeDepth * speedFrac * 0.9;
     const pulseGap = 600 - 300 * Math.min(1, rumbleStrength);
     if (rumbleStrength > 0.05 && performance.now() - lastPadRumble > pulseGap) {
       padRumble(rumbleStrength, 140);

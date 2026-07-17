@@ -96,9 +96,12 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   the bank — `#reset` wipes it all back to a stock ship
 - **Flight model** — throttle with reverse, boost, frame-rate-independent
   drag, collision bounces off every body
-- **Atmospheric entry** — dive below a quarter-radius of any world with an
-  atmosphere: the sky bleeds in (ember-orange if you come in hot), cloud
-  wisps streak past, the camera rumbles, and the air drags you
+- **Atmospheric entry** — drop into any world with an atmosphere and the sky
+  bleeds in through a mid-altitude **cloud deck** (ember-orange if you come in
+  hot), cloud wisps streak past, the camera rumbles — then you punch through
+  into clear air near the ground, where the coloured haze thins out so you can
+  actually see to land, while the thick air still drags you down. The
+  atmosphere reads as a slightly bigger bubble now, too
 - **Synthesized audio** — Web Audio engine hum that follows the throttle,
   plus a rumble that rises during atmospheric entry; no sound files
 - **Ship + camera rig** — a Blender-designed fighter (`ship.glb`) with an
@@ -162,7 +165,7 @@ art, that's why: check the URL, not the model.
 
 ## History
 
-Thirty-six versions across 50 commits, each `vN:` tagged in the log — `git log`
+Thirty-seven versions across 51 commits, each `vN:` tagged in the log — `git log`
 tells the story from "v1: first flight — mouse steer, throttle physics" to a
 Blender fighter mining a junk field for scrap, banking it at Charleston, and
 spending it on upgrades — across two hand-built worlds you can land on: Earth,
