@@ -1489,9 +1489,14 @@ function blasterSound() {
    variety — the rock you just killed returns from a new heading at a new
    size and you'd never place it. */
 const JUNK_COUNT = 44;
-const JUNK_NEAR = 320;      // closest a piece may spawn — no pop-in on your nose
-const JUNK_FAR = 2400;      // spawn shell, well inside the ~3750u bolt range
-const JUNK_CULL = 3400;     // drifted past this? recycle it to the front
+/* v33: the bubble stretched ~2x by volume (FAR 2400→3000, CULL 3400→4200)
+   — same 44 slots, roomier field, less windshield crowding. FAR stays
+   inside the ~3750u bolt range so a fresh spawn is already a target, and
+   the count stays 44 so the scrap economy doesn't starve. If the field
+   still feels busy, trim JUNK_COUNT before touching the shell again. */
+const JUNK_NEAR = 450;      // closest a piece may spawn — no pop-in on your nose
+const JUNK_FAR = 3000;      // spawn shell, still inside the ~3750u bolt range
+const JUNK_CULL = 4200;     // drifted past this? recycle it to the front
 const SHIP_HIT_R = 12;      // hull radius, for ramming
 /* Ramming is a PUNISHMENT, never a payday. If a hit paid out, the best play
    would be to hold boost and never touch the trigger — which retires the
@@ -2519,7 +2524,12 @@ const navCanvas = document.getElementById("navhud");
 const navCtx = navCanvas.getContext("2d");
 const NAV_TEAL = "#6ee7d8", NAV_AMBER = "#ffb066", NAV_JUNK = "#9fb0b8", NAV_SUN = "#ffd27a";
 const NAV_GOLD = "#ffd34d";                 // HOME marker — same gold as scrap/CARGO: it points at where loot becomes money
-const RADAR_RANGE = 8000;                   // a local bubble — junk + close bodies only
+/* v33: the scope maps 1:1 onto the junk bubble (cull 4200). At the old 8000
+   the entire field was ALWAYS in range, and the sqrt curve piled all 44
+   blips into the middle band of the disc — wallpaper, not a radar. Now the
+   full disc is the space you're actually flying through. */
+const RADAR_RANGE = 3500;                   // ≈ the junk bubble — the radar IS the local field
+const RADAR_HOT = 1200;                     // inside this, a blip is a threat: full strength
 const navFont = "'Lucida Console', Monaco, monospace";
 const _nFwd = new THREE.Vector3(), _nRight = new THREE.Vector3(),
       _nRel = new THREE.Vector3(), _nCam = new THREE.Vector3(), _nProj = new THREE.Vector3();
@@ -2541,8 +2551,10 @@ function navPlanetLabel(x, y, name, dist, color) {
   c.fillText(dist.toLocaleString() + " u", x, y + 18);
   c.restore();
 }
-// (C) one radar blip for a world-space position; auto-hides beyond range
-function navBlipAt(worldPos, cx, cy, r, color, size) {
+// (C) one radar blip for a world-space position; auto-hides beyond range.
+// fade = junk mode: no glow, and alpha thins with distance — full strength
+// inside RADAR_HOT, ~25% at the rim — so threats pop and the field whispers
+function navBlipAt(worldPos, cx, cy, r, color, size, fade) {
   _nRel.copy(worldPos).sub(shipObj.position);
   const d = _nRel.length();
   if (d > RADAR_RANGE) return;                             // out of the bubble → not on radar
@@ -2550,9 +2562,15 @@ function navBlipAt(worldPos, cx, cy, r, color, size) {
   const h = Math.hypot(f, rt) || 1;
   const rr = r * Math.sqrt(Math.min(1, d / RADAR_RANGE));  // sqrt so near contacts aren't piled at centre
   const bx = cx + (rt / h) * rr, by = cy - (f / h) * rr;
-  navCtx.fillStyle = color; navCtx.shadowColor = color; navCtx.shadowBlur = 4;
+  navCtx.fillStyle = color;
+  if (fade) {
+    navCtx.globalAlpha = d < RADAR_HOT
+      ? 1 : 1 - 0.75 * (d - RADAR_HOT) / (RADAR_RANGE - RADAR_HOT);
+  } else {
+    navCtx.shadowColor = color; navCtx.shadowBlur = 4;
+  }
   navCtx.beginPath(); navCtx.arc(bx, by, size, 0, 6.2832); navCtx.fill();
-  navCtx.shadowBlur = 0;
+  navCtx.shadowBlur = 0; navCtx.globalAlpha = 1;
 }
 /* (D) HOME marker (v32) — only while there's loot aboard. The v29 rule was
    "off-screen shows nothing", and it holds for sightseeing; but the moment
@@ -2631,8 +2649,8 @@ function drawNavHud() {
   c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx - r*0.4, cy - r); c.lineTo(cx + r*0.4, cy - r); c.closePath(); c.fill();
   c.fillStyle = NAV_TEAL; c.shadowColor = NAV_TEAL; c.shadowBlur = 4;  // you
   c.beginPath(); c.arc(cx, cy, 2.5, 0, 6.2832); c.fill(); c.shadowBlur = 0;
-  // space junk — the radar's real job now (grey specks)
-  for (const j of junk) if (j.alive) navBlipAt(j.group.position, cx, cy, r, NAV_JUNK, 2);
+  // space junk — the radar's real job now (grey specks, fading with range)
+  for (const j of junk) if (j.alive) navBlipAt(j.group.position, cx, cy, r, NAV_JUNK, 1.7, true);
   // a planet or the sun, but only when it's actually close (navBlipAt hides it beyond range)
   for (const p of planets) navBlipAt(p.b.group.position, cx, cy, r, NAV_TEAL, 4.5);
   const star = liveBodies.find(b => b.cfg.type === "star");
