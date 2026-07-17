@@ -68,8 +68,8 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   never nothing. Scrap barely drifts, so you collect by flying through the
   wreck you just made — and a boosting ship outruns its own beam, so hoovering
   means easing off the throttle. No button: the beam is always on, and the
-  radius is what grows with upgrades (parked). The game's called SpaceSuck;
-  this is the first thing that sucks
+  radius is what grows with upgrades at the outfitter. The game's called
+  SpaceSuck; this is the first thing that sucks
 - **Ramming spills your hold** — clip something and it doesn't just dent the
   hull, it knocks cargo loose: a chunk of your haul bursts off the ship as
   live scrap. Ease off and swing back and you reclaim most of it; blast on and
@@ -85,6 +85,13 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   marker on the HUD edge points back to the bank — and if you set down on
   the wrong continent, the landing tag tells you where the money lives.
   Take off mid-payout and the remainder simply stays in the hold
+- **An outfitter — the bank buys something** — dock at Charleston and a
+  small shop opens under the teller: **tractor beam** range (reach loot
+  without easing off), **hull plating** (more margin before a tow), and
+  **cargo clamps** (a ram knocks less of the haul loose). Click a row or
+  press **1 / 2 / 3**; prices roughly double per tier, so the first taste
+  is one good run and the last tier is a career. Upgrades persist alongside
+  the bank — `#reset` wipes it all back to a stock ship
 - **Flight model** — throttle with reverse, boost, frame-rate-independent
   drag, collision bounces off every body
 - **Atmospheric entry** — dive below a quarter-radius of any world with an
@@ -132,7 +139,7 @@ art, that's why: check the URL, not the model.
 
 ## History
 
-Thirty-three versions across 47 commits, each `vN:` tagged in the log — `git log`
+Thirty-four versions across 48 commits, each `vN:` tagged in the log — `git log`
 tells the story from "v1: first flight — mouse steer, throttle physics" to a
 Blender fighter mining a junk field for scrap and flying it home to bank at
 Charleston, on a hand-built Earth.

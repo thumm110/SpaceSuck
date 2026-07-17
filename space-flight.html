@@ -86,6 +86,27 @@
     font-size: 13px; letter-spacing: 4px; visibility: hidden;
     text-align: center; white-space: nowrap;
   }
+  /* the outfitter — Charleston's upgrade shop (v34). Only exists while
+     parked on the pad, so it borrows the centreline under the landing tag.
+     The HUD ignores the pointer; this panel is the one part that doesn't. */
+  #shop {
+    position: absolute; top: 31%; left: 50%; transform: translateX(-50%);
+    display: none; pointer-events: auto;
+    background: rgba(4, 18, 16, .8);
+    border: 1px solid rgba(110,231,216,.45);
+    padding: 8px 14px 10px; font-size: 12px; letter-spacing: 1px;
+    color: #bfe8e2; text-align: left; white-space: nowrap;
+  }
+  #shop .title { color: #6ee7d8; letter-spacing: 3px; font-size: 11px;
+                 text-align: center; margin-bottom: 7px; }
+  #shop .title b { color: #ffd34d; font-weight: normal; }
+  .shopRow { padding: 3px 4px; cursor: pointer; }
+  .shopRow:hover { background: rgba(110,231,216,.12); }
+  .shopRow .pips { color: #6ee7d8; letter-spacing: 2px; }
+  .shopRow .price { color: #ffd34d; float: right; margin-left: 22px; }
+  .shopRow .key { color: #6ee7d8; opacity: .65; }
+  .shopRow.broke, .shopRow.maxed { opacity: .45; cursor: default; }
+  .shopRow.broke:hover, .shopRow.maxed:hover { background: none; }
   /* red vignette pulse on a hull hit. Edges only — the middle stays clear, so
      it never hides the thing that just hit you. */
   #damageflash {
@@ -212,7 +233,9 @@
       drifts off. Land anywhere to repair the hull.<br>
       Cargo in the hold can spill; the BANK can't. Park on the Charleston
       pad — the gold HOME marker points the way — and your hold pays out.
-      Banked scrap survives a wreck, and a reload.
+      Banked scrap survives a wreck, and a reload.<br>
+      While docked, the OUTFITTER sells upgrades — beam range, hull
+      plating, cargo clamps. Click a row or press <b>1 / 2 / 3</b>.
       <div class="grp">HUD</div>
       <b>H</b> toggle this menu
     </div>
@@ -227,6 +250,12 @@
   <div id="entrytag">◆ ATMOSPHERIC ENTRY ◆</div>
   <div id="landtag">◆ LANDED ◆</div>
   <div id="breachtag">◆ HULL BREACH — TOWED TO EARTH ◆</div>
+  <div id="shop">
+    <div class="title">◆ OUTFITTER ◆ pay from the <b>BANK</b></div>
+    <div class="shopRow"></div>
+    <div class="shopRow"></div>
+    <div class="shopRow"></div>
+  </div>
   <div id="flightdata">
     <span class="dim">HULL</span> <span id="hullpct">100%</span>
     <div id="hullbar"><div id="hullfill"></div></div>
@@ -1821,7 +1850,8 @@ function updateEmbers(dt) {
 const SCRAP_COUNT = 72;
 const SCRAP_LIFE = 18;         // seconds before uncollected scrap fades out
 const SCRAP_SIZE = 7;
-const VACUUM_R = 260;          // reel-in range (the upgradeable knob)
+let vacuumR = 260;             // reel-in range — THE upgradeable knob, and in
+                               // v34 it finally upgrades (see 10f, the outfitter)
 const VACUUM_ACCEL = 900;      // pull strength at point-blank, easing to 0 at the rim
 const PICKUP_R = 22;           // into the intake — a hair past the 12u hull
 const SCRAP_COLOR = new THREE.Color(0xffd34d);   // gold, to read as loot — clear of the orange embers and aqua bolts
@@ -1837,7 +1867,8 @@ const SCRAP_DROP = {
    back down, so we can be dramatic with the amount — the real loss is only
    what drifts out of reach while you're still moving. Scales with hit severity
    AND your current haul, so a rich hold is genuinely worth banking. */
-const SPILL_FRACTION = 0.35;   // of your cargo, at a full-severity hit
+let spillFraction = 0.35;      // of your cargo, at a full-severity hit —
+                               // shrunk by the CARGO CLAMPS upgrade (10f)
 const SPILL_DMG_FULL = 30;     // hull damage where severity tops out
 const SPILL_MAX_BITS = 12;     // cap the scatter so a huge hold can't flood the 72-pool
 const scrapTmp = new THREE.Vector3(), scrapTmp2 = new THREE.Vector3();   // dedicated — never share junkTmp* with re-entrant code
@@ -1884,7 +1915,7 @@ function junkDropScrap(j) {
 function spillCargo(dmg) {
   if (cargo <= 0) return;
   const sev = Math.min(1, dmg / SPILL_DMG_FULL);
-  const spill = Math.min(cargo, Math.max(1, Math.round(cargo * SPILL_FRACTION * sev)));
+  const spill = Math.min(cargo, Math.max(1, Math.round(cargo * spillFraction * sev)));
   cargo -= spill;
   cargoEl.textContent = cargo;
   cargoFlash = 0.5;
@@ -1899,7 +1930,7 @@ function spillCargo(dmg) {
   }
 }
 function updateScrap(dt) {
-  const R2 = VACUUM_R * VACUUM_R, P2 = PICKUP_R * PICKUP_R;
+  const R2 = vacuumR * vacuumR, P2 = PICKUP_R * PICKUP_R;
   let collected = 0;
   for (const p of scrap) {
     if (!p.alive) continue;
@@ -1915,7 +1946,7 @@ function updateScrap(dt) {
     if (d2 < R2) {                              // in the beam — accelerate inward, harder up close
       const d = Math.sqrt(d2) || 1;
       scrapTmp.multiplyScalar(1 / d);           // now a unit vector toward the ship
-      p.vel.addScaledVector(scrapTmp, VACUUM_ACCEL * (1 - d / VACUUM_R) * dt);
+      p.vel.addScaledVector(scrapTmp, VACUUM_ACCEL * (1 - d / vacuumR) * dt);
       p.vel.multiplyScalar(0.94);               // damp so it eases in instead of slingshotting past
     } else {
       p.vel.multiplyScalar(0.985);              // slow ambient drift
@@ -2091,6 +2122,104 @@ function bankDoneSound() {
     o.connect(g); g.connect(ctx.destination);
     o.start(at); o.stop(at + 0.32);
   });
+}
+
+/* ---- 10f. THE OUTFITTER (v34) -------------------------------------------
+   Stage 5 of the junk economy: the bank buys something. A small shop that
+   only exists while you're parked on the Charleston pad — the same place
+   the money lives, so the whole loop closes in one landing: touch down,
+   the hold pays out, the bank buys the ship that farms the next haul.
+   Three upgrades, all knobs the earlier stages already promised:
+     TRACTOR BEAM — vacuumR, "the upgradeable knob" since v30
+     HULL PLATING — hullMax; more margin before a tow
+     CARGO CLAMPS — spillFraction; a ram knocks less loose
+   Buy by clicking/tapping a row, or keys 1/2/3 while docked. Levels
+   persist next to the bank in localStorage; #reset wipes both. Prices
+   roughly double per tier — the first taste is one good run, the last
+   tier is a career. */
+const SHOP = [
+  { name: "TRACTOR BEAM", vals: [260, 340, 430, 540, 660], costs: [60, 140, 320, 700],
+    next: l => "+" + (SHOP[0].vals[l + 1] - SHOP[0].vals[l]) + "u RANGE" },
+  { name: "HULL PLATING", vals: [100, 130, 165, 205, 250], costs: [80, 180, 400, 850],
+    next: l => "+" + (SHOP[1].vals[l + 1] - SHOP[1].vals[l]) + " MAX HULL" },
+  { name: "CARGO CLAMPS", vals: [0.35, 0.28, 0.21, 0.14], costs: [100, 240, 550],
+    next: l => "-" + Math.round((SHOP[2].vals[l] - SHOP[2].vals[l + 1]) * 100) + "% SPILL" },
+];
+let upLvl = [0, 0, 0];
+try {
+  const u = JSON.parse(localStorage.getItem("spacesuck.up") || "[]");
+  for (let i = 0; i < SHOP.length; i++)
+    upLvl[i] = Math.min(SHOP[i].costs.length, Math.max(0, Math.floor(+u[i]) || 0));
+} catch (e) {}
+if (location.hash === "#reset") { upLvl = [0, 0, 0]; try { localStorage.removeItem("spacesuck.up"); } catch (e) {} }
+function saveUpgrades() { try { localStorage.setItem("spacesuck.up", JSON.stringify(upLvl)); } catch (e) {} }
+// load-time apply: a fresh session starts with everything you paid for,
+// hull charged to its (possibly plated) max
+vacuumR = SHOP[0].vals[upLvl[0]];
+ship.hullMax = SHOP[1].vals[upLvl[1]];
+ship.hull = ship.hullMax;
+spillFraction = SHOP[2].vals[upLvl[2]];
+
+const shopEl = document.getElementById("shop");
+const shopRows = Array.from(shopEl.querySelectorAll(".shopRow"));
+let shopDirty = true;          // rebuild rows on next visible frame
+let shopBankShown = -1;        // last banked value the rows were drawn against
+function refreshShop() {
+  for (let i = 0; i < SHOP.length; i++) {
+    const u = SHOP[i], l = upLvl[i], maxed = l >= u.costs.length;
+    shopRows[i].innerHTML =
+      '<span class="key">[' + (i + 1) + ']</span> ' + u.name +
+      ' <span class="pips">' + "●".repeat(l) + "○".repeat(u.costs.length - l) + '</span> ' +
+      (maxed ? '<span class="price">MAX</span>'
+             : u.next(l) + ' <span class="price">' + u.costs[l] + '</span>');
+    shopRows[i].className =
+      "shopRow" + (maxed ? " maxed" : banked < u.costs[l] ? " broke" : "");
+  }
+}
+function buyUpgrade(i) {
+  const u = SHOP[i], l = upLvl[i];
+  if (l >= u.costs.length) return;                       // maxed — silent
+  if (banked < u.costs[l]) { shopDenySound(); return; }  // can't afford
+  banked -= u.costs[l];
+  upLvl[i] = l + 1;
+  if (i === 0) vacuumR = u.vals[l + 1];
+  else if (i === 1) {
+    ship.hull += u.vals[l + 1] - ship.hullMax;           // the plating arrives charged
+    ship.hullMax = u.vals[l + 1];
+  } else spillFraction = u.vals[l + 1];
+  bankEl.textContent = banked;
+  saveBank(); saveUpgrades();
+  shopBuySound();
+  shopDirty = true;
+}
+shopRows.forEach((r, i) => r.addEventListener("click", () => buyUpgrade(i)));
+
+/* purchase = two quick notes up (distinct from the bank's three); denied =
+   a flat low buzz. Both quiet — you're parked, the engine's silent. */
+function shopBuySound() {
+  if (!audio) return;
+  const { ctx } = audio, t = ctx.currentTime;
+  [523, 784].forEach((f, i) => {
+    const o = ctx.createOscillator(); o.type = "triangle";
+    o.frequency.value = f;
+    const g = ctx.createGain(), at = t + i * 0.07;
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(0.08, at + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.22);
+    o.connect(g); g.connect(ctx.destination);
+    o.start(at); o.stop(at + 0.24);
+  });
+}
+function shopDenySound() {
+  if (!audio) return;
+  const { ctx } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = "square";
+  o.frequency.value = 110;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.05, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+  o.connect(g); g.connect(ctx.destination);
+  o.start(t); o.stop(t + 0.16);
 }
 
 /* Big rocks break up instead of just winking out — the chunks are other
@@ -2347,6 +2476,12 @@ addEventListener("keydown", e => {
   if (e.code === "KeyV" && !keys["KeyV"]) toggleView(); // fire once per press
   if (e.code === "KeyH" && !keys["KeyH"]) ctrlMenu.classList.toggle("open"); // controls menu
   if (e.code === "Space") e.preventDefault();           // Space fires; don't scroll
+  // docked at the outfitter, 1/2/3 buy the rows (fire once per press)
+  if (shopEl.style.display === "block" && !keys[e.code]) {
+    if (e.code === "Digit1") buyUpgrade(0);
+    else if (e.code === "Digit2") buyUpgrade(1);
+    else if (e.code === "Digit3") buyUpgrade(2);
+  }
   keys[e.code] = true;
 });
 addEventListener("keyup", e => keys[e.code] = false);
@@ -3089,6 +3224,15 @@ function animate() {
   if (!banking) bankFlow = 0;
   if (wasBanking && !banking) saveBank();   // drain finished — or takeoff cut it short
   wasBanking = banking;
+
+  // the outfitter rides the same dock state: shop's open exactly while
+  // you're parked at the spaceport, and its rows redraw only when the
+  // money moved (a 60Hz innerHTML rewrite would be pure waste)
+  shopEl.style.display = onPort ? "block" : "none";
+  if (onPort && (shopDirty || banked !== shopBankShown)) {
+    refreshShop();
+    shopBankShown = banked; shopDirty = false;
+  }
   const hullPct = ship.hull / ship.hullMax;
   const hullCol = hullPct > 0.5 ? "#6ee7d8" : hullPct > 0.25 ? "#ffb066" : "#ff5544";
   hullFillEl.style.width = (hullPct * 100) + "%";
