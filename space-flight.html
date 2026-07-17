@@ -107,6 +107,8 @@
   .shopRow .key { color: #6ee7d8; opacity: .65; }
   .shopRow.broke, .shopRow.maxed { opacity: .45; cursor: default; }
   .shopRow.broke:hover, .shopRow.maxed:hover { background: none; }
+  /* gamepad cursor: the highlighted row the D-pad is sitting on */
+  .shopRow.cursor { background: rgba(110,231,216,.18); outline: 1px solid rgba(110,231,216,.55); }
   /* red vignette pulse on a hull hit. Edges only — the middle stays clear, so
      it never hides the thing that just hit you. */
   #damageflash {
@@ -223,7 +225,8 @@
       <div class="grp">GAMEPAD</div>
       <b>L-stick</b> roll / pitch · <b>R-stick</b> look around<br>
       <b>RT / LT</b> thrust / reverse · <b>LB / RB</b> nose left / right<br>
-      <b>A</b> fire · <b>B</b> boost · <b>X</b> stop · <b>Y</b> view
+      <b>A</b> fire · <b>B</b> boost · <b>X</b> stop · <b>Y</b> view<br>
+      <b>D-pad</b> ↑/↓ pick upgrade · <b>A</b> buy (docked at the outfitter)
       <div class="grp">TOUCH</div>
       <b>Drag</b> to steer · on-screen THRUST / REVERSE / STOP / FIRE / VIEW
       <div class="grp">SALVAGE</div>
@@ -235,7 +238,8 @@
       pad — the gold HOME marker points the way — and your hold pays out.
       Banked scrap survives a wreck, and a reload.<br>
       While docked, the OUTFITTER sells upgrades — beam range, hull
-      plating, cargo clamps. Click a row or press <b>1 / 2 / 3</b>.
+      plating, cargo clamps. Click a row, press <b>1 / 2 / 3</b>, or
+      D-pad + A on a gamepad.
       <div class="grp">HUD</div>
       <b>H</b> toggle this menu
     </div>
@@ -2164,6 +2168,7 @@ const shopEl = document.getElementById("shop");
 const shopRows = Array.from(shopEl.querySelectorAll(".shopRow"));
 let shopDirty = true;          // rebuild rows on next visible frame
 let shopBankShown = -1;        // last banked value the rows were drawn against
+let shopCursor = 0;            // gamepad: which row the D-pad is highlighting
 function refreshShop() {
   for (let i = 0; i < SHOP.length; i++) {
     const u = SHOP[i], l = upLvl[i], maxed = l >= u.costs.length;
@@ -2172,8 +2177,11 @@ function refreshShop() {
       ' <span class="pips">' + "●".repeat(l) + "○".repeat(u.costs.length - l) + '</span> ' +
       (maxed ? '<span class="price">MAX</span>'
              : u.next(l) + ' <span class="price">' + u.costs[l] + '</span>');
+    // the cursor highlight only shows with a pad connected — mouse/keyboard
+    // players never see a stray selection
     shopRows[i].className =
-      "shopRow" + (maxed ? " maxed" : banked < u.costs[l] ? " broke" : "");
+      "shopRow" + (maxed ? " maxed" : banked < u.costs[l] ? " broke" : "") +
+      (padIndex !== null && i === shopCursor ? " cursor" : "");
   }
 }
 function buyUpgrade(i) {
@@ -2597,6 +2605,7 @@ document.getElementById("btnView").addEventListener("touchstart", e => {
    A FIRE BLASTERS (twin nose cannons, aqua + orange). */
 let padIndex = null;
 let padViewHeld = false;      // edge-detect for the view toggle
+let padUpHeld = false, padDownHeld = false, padBuyHeld = false;   // shop D-pad edge-detect (v35)
 let lastPadRumble = 0;
 addEventListener("gamepadconnected", e => { padIndex = e.gamepad.index; initAudio(); });
 addEventListener("gamepaddisconnected", e => { if (e.gamepad.index === padIndex) padIndex = null; });
@@ -2627,6 +2636,7 @@ const revTag = document.getElementById("revtag");
 const tmpDir = new THREE.Vector3();
 const tmpNormal = new THREE.Vector3();
 const tmpOrbit = new THREE.Vector3();   // scratch for heliocentric motion
+const tmpSpin = new THREE.Vector3();    // scratch for the approach spin-carry (v35) — never shared
 let prevNearestDist = Infinity;
 let prevNearestBody = null;
 
@@ -2667,7 +2677,8 @@ const RADAR_RANGE = 3500;                   // ≈ the junk bubble — the radar
 const RADAR_HOT = 1200;                     // inside this, a blip is a threat: full strength
 const navFont = "'Lucida Console', Monaco, monospace";
 const _nFwd = new THREE.Vector3(), _nRight = new THREE.Vector3(),
-      _nRel = new THREE.Vector3(), _nCam = new THREE.Vector3(), _nProj = new THREE.Vector3();
+      _nRel = new THREE.Vector3(), _nCam = new THREE.Vector3(), _nProj = new THREE.Vector3(),
+      _padW = new THREE.Vector3();   // live world position of the landing pad (v35)
 function sizeNavHud() {
   const dpr = Math.min(devicePixelRatio, 2);
   navCanvas.width = innerWidth * dpr; navCanvas.height = innerHeight * dpr;
@@ -2714,9 +2725,12 @@ function navBlipAt(worldPos, cx, cy, r, color, size, fade) {
    bank; on-screen, just a small HOME over the planet. Vanishes when the
    hold is empty or you're parked. */
 let homeBody = null;   // the world with a spaceport — found on first draw (bodies build async)
+const PAD_MARKER_RANGE_R = 4;   // within this many radii of home, the pad reticle takes over from the chevron
 function drawHomeChevron(c, W, H) {
   if (cargo <= 0 || landedOn) return;
   if (!homeBody) { homeBody = liveBodies.find(b => b.pads); if (!homeBody) return; }
+  // close in, the pad reticle (drawPadMarker) is the guide — don't double up
+  if (shipObj.position.distanceTo(homeBody.group.position) <= homeBody.cfg.radius * PAD_MARKER_RANGE_R) return;
   _nCam.copy(homeBody.group.position).applyMatrix4(camera.matrixWorldInverse);
   _nProj.copy(homeBody.group.position).project(camera);
   let x = _nProj.x, y = _nProj.y;
@@ -2746,7 +2760,80 @@ function drawHomeChevron(c, W, H) {
   }
   c.restore();
 }
-function drawNavHud() {
+
+/* (E) LANDING MARKER (v35) — on close approach, a reticle on the ACTUAL
+   Charleston deck. The deck moves (the planet spins and orbits), so this is
+   computed live every frame. Shows range, a closing-rate arrow, and turns
+   green + reads ALIGNED once you're over the spaceport district. The HOME
+   chevron hands off to this inside PAD_MARKER_RANGE_R radii. */
+let prevPadDist = -1;   // for the closing-rate readout; -1 = needs reseeding
+function drawPadMarker(c, W, H, dt) {
+  if (landedOn) { prevPadDist = -1; return; }
+  if (!homeBody) { homeBody = liveBodies.find(b => b.pads); if (!homeBody) return; }
+  const b = homeBody, pad = b.pads && b.pads[0];
+  if (!pad) return;
+  if (shipObj.position.distanceTo(b.group.position) > b.cfg.radius * PAD_MARKER_RANGE_R) {
+    prevPadDist = -1; return;                              // not close — chevron has it
+  }
+  // live world position of the deck: un-freeze the baked pad direction by
+  // the planet's current spin (+Y yaw, the inverse of groundRadius's
+  // un-rotate), scale to the deck top, translate to the planet's position
+  const yaw = b.surface ? b.surface.rotation.y : (b.cfg.yaw || 0);
+  _padW.set(pad.dx, pad.dy, pad.dz)
+       .applyAxisAngle(SPIN_AXIS, yaw)
+       .multiplyScalar(b.cfg.radius * pad.top)
+       .add(b.group.position);
+
+  const dist = shipObj.position.distanceTo(_padW);
+  if (prevPadDist < 0) prevPadDist = dist;                 // seed so the first rate isn't garbage
+  const closeRate = (prevPadDist - dist) / (dt || 1 / 60); // + = closing on the pad
+  prevPadDist = dist;
+
+  // aligned = the ship's up-vector sits inside the spaceport district (the
+  // same cone the bank uses) — i.e. you're over the place you can set down
+  _nRel.copy(shipObj.position).sub(b.group.position).normalize();
+  const aligned = onSpaceport(b, _nRel);
+  const col = aligned ? "#7dffa8" : NAV_TEAL;
+
+  _nCam.copy(_padW).applyMatrix4(camera.matrixWorldInverse);
+  _nProj.copy(_padW).project(camera);
+  let x = _nProj.x, y = _nProj.y;
+  const behind = _nCam.z >= 0;
+  if (behind) { x = -x; y = -y; }
+  c.save();
+  c.strokeStyle = col; c.fillStyle = col; c.shadowColor = col; c.shadowBlur = 6;
+  c.font = "11px " + navFont; c.textAlign = "center"; c.lineWidth = 1.5;
+  const distTxt = Math.max(0, Math.round(dist)).toLocaleString() + " u";
+  if (!behind && Math.abs(x) < 1 && Math.abs(y) < 1) {
+    // on-screen: a reticle right on the deck
+    const sx = (x * 0.5 + 0.5) * W, sy = (-y * 0.5 + 0.5) * H;
+    c.beginPath(); c.arc(sx, sy, 13, 0, 6.2832); c.stroke();
+    c.beginPath();                                          // crosshair ticks
+    c.moveTo(sx - 19, sy); c.lineTo(sx - 6, sy);
+    c.moveTo(sx + 6, sy); c.lineTo(sx + 19, sy);
+    c.moveTo(sx, sy - 19); c.lineTo(sx, sy - 6);
+    c.moveTo(sx, sy + 6); c.lineTo(sx, sy + 19); c.stroke();
+    c.fillText(aligned ? "PAD · ALIGNED" : "PAD", sx, sy - 22);
+    c.font = "10px " + navFont;
+    c.fillText(distTxt + (closeRate > 3 ? "  ▼" + Math.round(closeRate)
+                        : closeRate < -3 ? "  ▲" + Math.round(-closeRate) : ""),
+               sx, sy + 32);
+  } else {
+    // off-screen (pad on the far side of the planet, or behind you): edge chevron
+    const m = Math.max(Math.abs(x), Math.abs(y)) || 1e-6;
+    x /= m; y /= m;
+    const M = 52;
+    const sx = M + (x * 0.5 + 0.5) * (W - 2 * M);
+    const sy = M + (-y * 0.5 + 0.5) * (H - 2 * M);
+    const ang = Math.atan2(sy - H / 2, sx - W / 2);
+    c.translate(sx, sy); c.rotate(ang);
+    c.beginPath(); c.moveTo(11, 0); c.lineTo(-2, -6); c.lineTo(-2, 6); c.closePath(); c.fill();
+    c.rotate(-ang);
+    c.fillText("PAD " + distTxt, -Math.cos(ang) * 46, -Math.sin(ang) * 46 + 4);
+  }
+  c.restore();
+}
+function drawNavHud(dt) {
   const W = innerWidth, H = innerHeight, c = navCtx;
   c.clearRect(0, 0, W, H);
   const planets = [];
@@ -2760,6 +2847,9 @@ function drawNavHud() {
   let labelled = 0;
   for (const p of planets) {
     if (labelled >= 2) break;
+    // on close approach the pad reticle owns the home world's centre — don't
+    // stack a planet label on top of it
+    if (p.b.pads && !landedOn && p.d <= p.b.cfg.radius * PAD_MARKER_RANGE_R) continue;
     _nCam.copy(p.b.group.position).applyMatrix4(camera.matrixWorldInverse);
     if (_nCam.z >= 0) continue;                            // behind the camera → skip
     _nProj.copy(p.b.group.position).project(camera);
@@ -2797,6 +2887,8 @@ function drawNavHud() {
 
   // --- D: the way home, whenever the hold is worth banking ---
   drawHomeChevron(c, W, H);
+  // --- E: the landing reticle, on close approach to the pad ---
+  drawPadMarker(c, W, H, dt);
 }
 
 /* controls menu — a click (or H) tucks the mapping open/closed */
@@ -2844,6 +2936,27 @@ function animate() {
       const yBtn = !!(gp.buttons[3] && gp.buttons[3].pressed); // Y — view toggle
       if (yBtn && !padViewHeld) toggleView();
       padViewHeld = yBtn;
+
+      /* ---- docked at the outfitter: the D-pad shops (v35) ----
+         D-pad Up/Down move a cursor over the 3 rows; A or D-pad Right buys
+         the highlighted one. Only live while the shop is open (parked on the
+         pad), where A=fire is harmless anyway — so we also swallow the fire
+         so a "buy" press doesn't spit a bolt. Edge-detected: one act per
+         press, same trick as the view toggle above. */
+      const shopOpen = shopEl.style.display === "block";
+      if (shopOpen) {
+        const up   = !!(gp.buttons[12] && gp.buttons[12].pressed);   // D-pad Up
+        const down = !!(gp.buttons[13] && gp.buttons[13].pressed);   // D-pad Down
+        const buy  = padFire || !!(gp.buttons[15] && gp.buttons[15].pressed);  // A or D-pad Right
+        if (up   && !padUpHeld)   { shopCursor = (shopCursor + SHOP.length - 1) % SHOP.length; shopDirty = true; }
+        if (down && !padDownHeld) { shopCursor = (shopCursor + 1) % SHOP.length; shopDirty = true; }
+        if (buy  && !padBuyHeld)  buyUpgrade(shopCursor);
+        padUpHeld = up; padDownHeld = down; padBuyHeld = buy;
+        padFire = false;                                   // parked: don't fire while shopping
+      } else {
+        padUpHeld = padDownHeld = padBuyHeld = false;
+        shopCursor = 0;
+      }
     }
   }
 
@@ -2957,14 +3070,30 @@ function animate() {
          Throttle up to take off again. */
       tmpNormal.multiplyScalar(1 / dist);            // local "up"
       if (dist < b.cfg.radius * 3 && landedOn !== b) {
-        /* sphere of influence (v19): the planet is orbiting the sun at
-           ~170 u/s — brake to land and it slides out from under you,
-           which reads as gravity PUSHING you away. Inside the well the
-           ship is progressively carried along with the planet's orbital
-           travel (0% at 3 radii → 100% at 1.2), so on approach the world
-           effectively stands still and gravity feels like gravity.
-           (Position nudge is ≤ a few units — tmpNormal stays valid.) */
-        const soi = Math.min(1, Math.max(0, (3 - dist / b.cfg.radius) / 1.8));
+        /* sphere of influence (v19, widened + spin-carry v35): the planet
+           orbits the sun at ~170 u/s AND spins, so braking near it lets the
+           pad slide out from under you — which reads as gravity shoving you
+           off. Inside the well the ship is progressively carried with the
+           planet's FULL rigid motion (orbit + spin), scaled by soi:
+             0% at 3 radii → 100% at 2 radii.
+           v35 pulled full carry in to 2 radii (was 1.2) and added the spin
+           term, so the ENTIRE final-approach corridor — anything under
+           ~2500u of altitude — has the world standing still, not just a thin
+           500u shell. Before, the pad kept moving right where you tried to
+           set down. This patches POSITION only, so world-frame velocity (and
+           the < 2.5 u/s landing latch below) still means what it always did.
+           (Nudge is ≤ a few units per frame — tmpNormal stays valid.) */
+        const soi = Math.min(1, Math.max(0, 3 - dist / b.cfg.radius));
+        // spin: swing the ship around the planet's axis with the surface so
+        // the pad's longitude stays under you. Same rate/axis as the surface
+        // animation and the parked ride. POSITION only — the nose is left
+        // alone so this never fights your steering on the way in.
+        if (b.cfg.spin) {
+          tmpSpin.subVectors(shipObj.position, b.group.position)
+                 .applyAxisAngle(SPIN_AXIS, b.cfg.spin * dt * 10 * soi);
+          shipObj.position.copy(b.group.position).add(tmpSpin);
+        }
+        // orbit: carry with the planet's centre
         shipObj.position.addScaledVector(b.orbitDelta, soi);
         // inverse-square pull: a shrug at cruise range, a real tug on
         // final approach — kill the throttle and you'll settle.
@@ -3346,7 +3475,7 @@ function animate() {
   }
 
   renderer.render(scene, camera);
-  drawNavHud();   // edge markers + radar, on the 2D overlay
+  drawNavHud(dt);   // edge markers + radar + landing reticle, on the 2D overlay
 }
 
 setTimeout(() => {

@@ -37,6 +37,7 @@ release and your view springs back to forward. **RT/LT are analog
 thrust/reverse** (half a pull is half
 thrust), X full stop, B boost, LB/RB nose left/right, **A fires the
 blasters** (twin nose cannons, aqua + orange), Y cycles the view.
+Docked at the outfitter, the **D-pad** picks an upgrade and **A** buys it.
 Atmospheric entry
 and touchdowns rumble the controller, as do junk kills close aboard.
 
@@ -111,6 +112,15 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   the terrain is: touch down slow and you park (**LANDED** tag), throttle
   up to leave. Open `space-flight.html#earth` to spawn on the doorstep.
   Edit the script, re-run `blender -b -P build_earth.py`, fresh planet.
+- **A landing helper that respects the physics** — Earth orbits the sun at
+  ~170 u/s and spins, so "stop" in world coordinates used to let the pad
+  slide out from under you. Close in, the ship is now carried with the
+  planet's full motion (orbit *and* spin) out to two radii, so the whole
+  final-approach corridor stands still and a full-stop actually parks you.
+  On approach a gold-teal **PAD** reticle marks the live Charleston deck
+  with range and a closing-rate arrow, turning green and reading **ALIGNED**
+  once you're over the spaceport — the HOME chevron hands off to it as you
+  get close
 
 ## Run it locally
 
@@ -139,7 +149,7 @@ art, that's why: check the URL, not the model.
 
 ## History
 
-Thirty-four versions across 48 commits, each `vN:` tagged in the log — `git log`
+Thirty-five versions across 49 commits, each `vN:` tagged in the log — `git log`
 tells the story from "v1: first flight — mouse steer, throttle physics" to a
-Blender fighter mining a junk field for scrap and flying it home to bank at
-Charleston, on a hand-built Earth.
+Blender fighter mining a junk field for scrap, banking it at Charleston, and
+spending it on upgrades — on a hand-built Earth you can actually land on.
