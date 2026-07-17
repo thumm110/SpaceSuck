@@ -6,7 +6,8 @@
 # back to the placeholder ship and a procedural Earth. This starts a tiny
 # local server (only if one isn't already up) and opens the game on it.
 #
-# Optional arg: "earth" spawns you on Earth's doorstep (space-flight.html#earth).
+# Optional arg: a world name spawns you on its doorstep, e.g. "earth" or
+# "rubicon" (→ space-flight.html#earth / #rubicon).
 
 set -euo pipefail
 
@@ -18,7 +19,8 @@ LOG=/tmp/spacesuck-server.log
 # served stale, so you always get the latest build (the game ignores the
 # query; it only reads the #earth hash, which still lands after it)
 URL="http://localhost:${PORT}/space-flight.html?v=$(date +%s)"
-[[ "${1:-}" == "earth" ]] && URL="${URL}#earth"
+# any body name spawns you on its doorstep (the game lowercases the hash match)
+[[ -n "${1:-}" ]] && URL="${URL}#${1}"
 
 # "up" means: something is serving OUR game on that port, not just anything
 up() { curl -fs -o /dev/null --max-time 1 "http://localhost:${PORT}/space-flight.html"; }

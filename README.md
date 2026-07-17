@@ -46,8 +46,9 @@ and touchdowns rumble the controller, as do junk kills close aboard.
 - **Procedural planets** — seeded value noise + fractal Brownian motion
   sampled on the sphere, driving color, bump, and roughness maps
   (ocean → beach → plains → mountains → snow, with latitude ice caps)
-- **A solar system** — star, rocky/terrestrial/gas planets, an orbiting moon,
-  rings, and a 700-rock asteroid belt in a single draw call
+- **A solar system** — star, rocky/terrestrial/gas planets, two hand-built
+  landable worlds, orbiting moons (Earth's one, RUBICON's three), rings, and a
+  700-rock asteroid belt in a single draw call
 - **Shootable space junk** — asteroids, dead satellites (solar wings, dish,
   a beacon still blinking), and loose debris tangled out of pipes, plates,
   and tanks. The field lives in a bubble that travels with you and respawns
@@ -121,6 +122,18 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   with range and a closing-rate arrow, turning green and reading **ALIGNED**
   once you're over the spaceport — the HOME chevron hands off to it as you
   get close
+- **RUBICON, a second world on the far rim** — `build_rubicon.py` bakes a
+  bigger, redder cousin of Earth (`rubicon.glb` + `rubicon_height.json`): a
+  rust-desert super-Earth (3200u to Earth's 2500) of canyons, dune plateaus,
+  and dry basins under a thin polar dust cap, wrapped in an orange dust haze
+  and trailing **three moons of three sizes** on tilted orbits. It rides the
+  orbit diametrically opposite Earth — straight across the sun, at Earth's
+  exact orbital speed so the two stay forever opposed — the longest haul in
+  the system. Land anywhere on open desert to patch the hull, but there's no
+  bank and no city out here: Charleston keeps its monopoly. Open
+  `space-flight.html#rubicon` (or `./play.sh rubicon`) to spawn on its
+  doorstep. Same deal as Earth — edit the script, re-run
+  `blender -b -P build_rubicon.py`, fresh planet.
 
 ## Run it locally
 
@@ -149,7 +162,8 @@ art, that's why: check the URL, not the model.
 
 ## History
 
-Thirty-five versions across 49 commits, each `vN:` tagged in the log — `git log`
+Thirty-six versions across 50 commits, each `vN:` tagged in the log — `git log`
 tells the story from "v1: first flight — mouse steer, throttle physics" to a
 Blender fighter mining a junk field for scrap, banking it at Charleston, and
-spending it on upgrades — on a hand-built Earth you can actually land on.
+spending it on upgrades — across two hand-built worlds you can land on: Earth,
+and the red desert of RUBICON on the far rim.

@@ -425,6 +425,38 @@ const BODIES = [
       low: 0x3f8f2e, high: 0x5c7a3d, snow: 0xeafaef,
     },
   },
+  {
+    name: "RUBICON", type: "planet", style: "gltf", seed: 137,
+    radius: 3200,                   // the big red frontier — larger than Earth, rivals the sun
+    // angle 3π/2 parks RUBICON dead opposite EARTH, straight across the sun;
+    // matching Earth's 0.0025 orbit speed keeps them diametrically opposite
+    // FOREVER (any other speed and the two would slowly drift together).
+    // orbit radius 62000 (vs Earth's 68500) opens an 11,000u gap to KRONOS.
+    orbit: { radius: 62000, speed: 0.0025, angle: 3 * Math.PI / 2, y: -400 },
+    spin: 0.0016,                   // a slightly longer day than Earth for a bigger world
+    yaw: Math.PI,
+    file: "rubicon.glb",            // built by build_rubicon.py (Blender)
+    heightFile: "rubicon_height.json",
+    landable: true,
+    gravity: 1.25,                  // beefier pull than Earth; still lands clean (keep ≤1.5)
+    // NO pads on purpose: no bank/outfitter here, so Charleston keeps its
+    // monopoly. RUBICON is wild — set down on open desert anywhere to repair.
+    atmosphere: 0xd98a4f, atmoStrength: 1.0,   // thin orange dust haze
+    // three moons, three sizes, each on a plane tilted by `incl` so they
+    // don't stack. Moons are procedural (genRocky) and non-collidable — built
+    // in JS, not Blender — so they're pure decoration and can't wreck anything.
+    moons: [
+      { radius: 900, distance: 10500, speed: 0.045, seed: 21, incl: 0.15 },
+      { radius: 600, distance: 13500, speed: 0.030, seed: 34, incl: -0.28 },
+      { radius: 360, distance: 16500, speed: 0.021, seed: 47, incl: 0.42 },
+    ],
+    // fallback palette: if rubicon.glb can't load (file:// with no server) the
+    // planet still exists as a procedural red-desert sphere
+    palette: {
+      deep: 0x3a1508, shallow: 0x6e2b12, sand: 0xc86b34,
+      low: 0x9c5a2a, high: 0x8a4b2f, snow: 0xd8b48a,
+    },
+  },
 ];
 
 /* Heliocentric layout (v17): planets RING the sun instead of huddling on
@@ -1263,16 +1295,21 @@ function buildBody(cfg) {
       belts.push(beltGroup);
     }
 
-    if (cfg.moon) {
-      const moonTexs = genRocky({ seed: cfg.moon.seed ?? 3, palette: {
+    // one moon or many: cfg.moon (singular, legacy — Earth) or cfg.moons
+    // (array — RUBICON's three). Each gets its own rocky texture, orbit
+    // distance/speed/seed, and an inclination so multiple moons don't stack
+    // into one flat plane. Legacy singular moons get incl 0 (the old behaviour).
+    const moonList = cfg.moons || (cfg.moon ? [cfg.moon] : []);
+    for (const mc of moonList) {
+      const moonTexs = genRocky({ seed: mc.seed ?? 3, palette: {
         dark: 0x555a60, mid: 0x8d939b, light: 0xc4c9cf,
       }});
       const moonMat = new THREE.MeshStandardMaterial({
         map: moonTexs.map, bumpMap: moonTexs.bumpMap, roughness: 1,
       });
-      moonMat.bumpScale = cfg.moon.radius * 0.03;
-      const moon = new THREE.Mesh(new THREE.SphereGeometry(cfg.moon.radius, 32, 24), moonMat);
-      moon.userData.orbit = { distance: cfg.moon.distance, speed: cfg.moon.speed, angle: Math.random() * 6.28 };
+      moonMat.bumpScale = mc.radius * 0.03;
+      const moon = new THREE.Mesh(new THREE.SphereGeometry(mc.radius, 32, 24), moonMat);
+      moon.userData.orbit = { distance: mc.distance, speed: mc.speed, angle: Math.random() * 6.28, incl: mc.incl || 0, radius: mc.radius };
       moon.name = "moon";
       group.add(moon);
     }
@@ -3142,14 +3179,18 @@ function animate() {
         ship.velocity.addScaledVector(tmpNormal, -into * 1.3);
       }
     }
-    const moon = b.group.getObjectByName("moon");
-    if (moon) {
-      tmpNormal.copy(moon.position).add(b.group.position).sub(shipObj.position).negate();
+    // ship vs moons: each moon is a solid body you bounce off (Earth has one,
+    // RUBICON three). getObjectByName would only find the first, so iterate
+    // the group's moon children and test each — the radius rides on the orbit.
+    for (const mo of b.group.children) {
+      const orb = mo.userData.orbit;
+      if (!orb) continue;
+      tmpNormal.copy(mo.position).add(b.group.position).sub(shipObj.position).negate();
       dist = tmpNormal.length();
-      minDist = b.cfg.moon.radius + COLLIDE_BUFFER;
+      minDist = orb.radius + COLLIDE_BUFFER;
       if (dist < minDist) {
         tmpNormal.normalize();
-        shipObj.position.copy(b.group.position).add(moon.position).addScaledVector(tmpNormal, minDist);
+        shipObj.position.copy(b.group.position).add(mo.position).addScaledVector(tmpNormal, minDist);
         const into = ship.velocity.dot(tmpNormal);
         if (into < 0) {
           thump(-into);
@@ -3247,11 +3288,18 @@ function animate() {
       const surf = b.group.getObjectByName("surface");
       if (surf) surf.rotation.y += (b.cfg.spin || 0.004) * dt * 10;
     }
-    const moon = b.group.getObjectByName("moon");
-    if (moon) {
-      const o = moon.userData.orbit;
+    // advance every moon (Earth has one, RUBICON has three). getObjectByName
+    // would only find the first, so walk the group's children and move each
+    // moon along its own orbit — tilted by incl about the X axis so the moons
+    // ride separate planes (incl 0 = the old flat XZ orbit).
+    for (const child of b.group.children) {
+      const o = child.userData.orbit;
+      if (!o) continue;
       o.angle += o.speed * dt;
-      moon.position.set(Math.cos(o.angle) * o.distance, 0, Math.sin(o.angle) * o.distance);
+      const ci = Math.cos(o.incl || 0), si = Math.sin(o.incl || 0);
+      child.position.set(Math.cos(o.angle) * o.distance,
+                         Math.sin(o.angle) * o.distance * si,
+                         Math.sin(o.angle) * o.distance * ci);
     }
   }
   for (const belt of belts) belt.rotation.y += 0.02 * dt;
@@ -3480,14 +3528,15 @@ function animate() {
 
 setTimeout(() => {
   BODIES.forEach(buildBody);
-  // dev shortcut: open space-flight.html#earth to spawn on Earth's
-  // doorstep instead of cruising five thousand units to get there
-  if (location.hash === "#earth") {
-    const e = BODIES.find(b => b.name === "EARTH");
-    shipObj.position.set(e.position[0] - e.radius * 0.3,
-                         e.position[1] + e.radius * 0.5,
-                         e.position[2] - e.radius * 2.0);
-    const c = new THREE.Vector3(...e.position);
+  // dev shortcut: open space-flight.html#earth (or #rubicon, or any body's
+  // name) to spawn on that world's doorstep instead of cruising there. The
+  // #reset hash names no body, so it falls through harmlessly.
+  const doorstep = BODIES.find(b => b.position && b.name.toLowerCase() === location.hash.slice(1));
+  if (doorstep) {
+    shipObj.position.set(doorstep.position[0] - doorstep.radius * 0.3,
+                         doorstep.position[1] + doorstep.radius * 0.5,
+                         doorstep.position[2] - doorstep.radius * 2.0);
+    const c = new THREE.Vector3(...doorstep.position);
     shipObj.lookAt(shipObj.position.clone().multiplyScalar(2).sub(c));
   }
   document.getElementById("loading").style.display = "none";
