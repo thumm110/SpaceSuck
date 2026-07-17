@@ -52,6 +52,9 @@
   #revtag { color: #ffb066; text-shadow: 0 0 6px rgba(255,176,102,.6); visibility: hidden; }
   #kills { color: #ff9a3c; text-shadow: 0 0 6px rgba(255,154,60,.6); letter-spacing: 2px; }
   #cargo { color: #ffd34d; text-shadow: 0 0 7px rgba(255,211,77,.7); letter-spacing: 2px; font-size: 15px; }
+  /* the bank is teal — safe money, same color as the hull. Cargo stays gold
+     (at risk) so the two numbers read as different kinds of wealth. */
+  #bank { color: #6ee7d8; text-shadow: 0 0 7px rgba(110,231,216,.7); letter-spacing: 2px; font-size: 15px; }
   #viewtag {
     position: absolute; right: 18px; top: 14px;
     font-size: 11px; letter-spacing: 2px; opacity: .7;
@@ -206,7 +209,10 @@
       Shoot junk for scrap, then fly through the wreck — it reels in on its
       own. Ease off the throttle to collect; a boosting ship outruns the beam.
       Ram anything and you spill cargo — swing back to scoop it up before it
-      drifts off. Land anywhere to repair the hull.
+      drifts off. Land anywhere to repair the hull.<br>
+      Cargo in the hold can spill; the BANK can't. Park on the Charleston
+      pad — the gold HOME marker points the way — and your hold pays out.
+      Banked scrap survives a wreck, and a reload.
       <div class="grp">HUD</div>
       <b>H</b> toggle this menu
     </div>
@@ -228,6 +234,7 @@
     <span class="big" id="speed">0</span> <span class="dim">u/s</span>
     <span id="revtag">◀ REV</span><br>
     <span class="dim">CARGO</span> <span id="cargo">0</span><br>
+    <span class="dim">BANK</span> <span id="bank">0</span><br>
     <span class="dim">JUNK DESTROYED</span> <span id="kills">0</span>
   </div>
   <div id="throttlewrap">
@@ -2001,6 +2008,86 @@ function cargoSpillSound() {
   o.start(t); o.stop(t + 0.21);
 }
 
+/* ---- 10e. THE BANK (v32) ------------------------------------------------
+   Stage 4 of the junk economy: home gets a bank. Cargo in the hold spills
+   when you ram and vanishes on a reload — scrap only becomes WEALTH when you
+   fly it back to the Charleston pad and park. While you sit on the pad the
+   hold drains into the BANK a few units a tick, so banking a big haul takes
+   a moment (long enough to feel like a payoff, short enough to never queue).
+   The bank persists in localStorage: it survives a breach, a tow, and the
+   browser closing. That's the whole point — it's the number that only goes
+   up, and the reason to ease off after a rich run instead of one more pass.
+   Only the spaceport banks. Anywhere else on Earth still repairs (a pit
+   stop), but the pad district is where the money is — Charleston's monopoly,
+   promised back in v29. */
+const BANK_RATE = 26;          // cargo/sec while parked on the pad — a 100 haul takes ~4s
+const BANK_ANG_COS = Math.cos(0.10);   // the "spaceport district": ~2.2x the pad deck
+                                       // (ang 0.045), so the apron next to the pad
+                                       // still counts and a miss by a ship-length
+                                       // doesn't read as a broken bank
+const bankEl = document.getElementById("bank");
+const bankTmp = new THREE.Vector3();   // dedicated scratch — never shares junkTmp*/scrapTmp*
+let banked = 0;   // ("bank" is taken — the camera's cosmetic lean, section 11)
+try { banked = Math.floor(+localStorage.getItem("spacesuck.bank")) || 0; } catch (e) {}
+if (banked < 0) banked = 0;
+// dev/test escape hatch, same spirit as #earth: open #reset to zero the bank
+if (location.hash === "#reset") { banked = 0; try { localStorage.removeItem("spacesuck.bank"); } catch (e) {} }
+bankEl.textContent = banked;
+let bankFlow = 0;              // fractional cargo accumulated toward the next whole unit
+let wasBanking = false;        // edge-detect: save when a drain finishes or is interrupted
+function saveBank() { try { localStorage.setItem("spacesuck.bank", banked); } catch (e) {} }
+addEventListener("pagehide", saveBank);   // quit mid-drain: what moved is kept
+
+/* Is the parked ship inside the spaceport district? Same frame math as
+   groundRadius(): undo the planet's live rotation (initial yaw + spin),
+   then dot the up-vector against the pad's baked direction. Wider cone
+   than the deck test on purpose — see BANK_ANG_COS. */
+function onSpaceport(body, n) {
+  if (!body.pads) return false;
+  let nx = n.x, nz = n.z;
+  const yaw = body.surface ? body.surface.rotation.y : (body.cfg.yaw || 0);
+  if (yaw) {
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    nx = n.x * cy - n.z * sy;
+    nz = n.x * sy + n.z * cy;
+  }
+  for (const pad of body.pads)
+    if (nx * pad.dx + n.y * pad.dy + nz * pad.dz > BANK_ANG_COS) return true;
+  return false;
+}
+
+/* ---- bank sounds: quiet ticks while the hold drains, a little
+   paid-in-full arpeggio when it runs dry ---- */
+let bankTickAt = 0;
+function bankTickSound() {
+  if (!audio) return;
+  const { ctx } = audio, t = ctx.currentTime;
+  if (t - bankTickAt < 0.11) return;   // rate-limit: the drain moves ~26/s
+  bankTickAt = t;
+  const o = ctx.createOscillator(); o.type = "sine";
+  o.frequency.value = 990;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.028, t + 0.006);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+  o.connect(g); g.connect(ctx.destination);
+  o.start(t); o.stop(t + 0.08);
+}
+function bankDoneSound() {
+  if (!audio) return;
+  const { ctx } = audio, t = ctx.currentTime;
+  [660, 831, 990].forEach((f, i) => {          // rising major-ish arpeggio
+    const o = ctx.createOscillator(); o.type = "triangle";
+    o.frequency.value = f;
+    const g = ctx.createGain(), at = t + i * 0.09;
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(0.07, at + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.3);
+    o.connect(g); g.connect(ctx.destination);
+    o.start(at); o.stop(at + 0.32);
+  });
+}
+
 /* Big rocks break up instead of just winking out — the chunks are other
    asteroid slots, recycled to the kill site and thrown out along their own
    headings. Dead slots first; if the field is still full (and at spawn it
@@ -2431,6 +2518,7 @@ const wispTint = new THREE.Color();
 const navCanvas = document.getElementById("navhud");
 const navCtx = navCanvas.getContext("2d");
 const NAV_TEAL = "#6ee7d8", NAV_AMBER = "#ffb066", NAV_JUNK = "#9fb0b8", NAV_SUN = "#ffd27a";
+const NAV_GOLD = "#ffd34d";                 // HOME marker — same gold as scrap/CARGO: it points at where loot becomes money
 const RADAR_RANGE = 8000;                   // a local bubble — junk + close bodies only
 const navFont = "'Lucida Console', Monaco, monospace";
 const _nFwd = new THREE.Vector3(), _nRight = new THREE.Vector3(),
@@ -2465,6 +2553,45 @@ function navBlipAt(worldPos, cx, cy, r, color, size) {
   navCtx.fillStyle = color; navCtx.shadowColor = color; navCtx.shadowBlur = 4;
   navCtx.beginPath(); navCtx.arc(bx, by, size, 0, 6.2832); navCtx.fill();
   navCtx.shadowBlur = 0;
+}
+/* (D) HOME marker (v32) — only while there's loot aboard. The v29 rule was
+   "off-screen shows nothing", and it holds for sightseeing; but the moment
+   the hold is worth something, home is a destination, and a destination you
+   can't find is a chore. Gold chevron on the screen edge pointing at the
+   bank; on-screen, just a small HOME over the planet. Vanishes when the
+   hold is empty or you're parked. */
+let homeBody = null;   // the world with a spaceport — found on first draw (bodies build async)
+function drawHomeChevron(c, W, H) {
+  if (cargo <= 0 || landedOn) return;
+  if (!homeBody) { homeBody = liveBodies.find(b => b.pads); if (!homeBody) return; }
+  _nCam.copy(homeBody.group.position).applyMatrix4(camera.matrixWorldInverse);
+  _nProj.copy(homeBody.group.position).project(camera);
+  let x = _nProj.x, y = _nProj.y;
+  const behind = _nCam.z >= 0;
+  if (behind) { x = -x; y = -y; }             // projection mirrors behind the camera
+  c.save();
+  c.fillStyle = NAV_GOLD; c.shadowColor = NAV_GOLD; c.shadowBlur = 6;
+  c.font = "11px " + navFont; c.textAlign = "center";
+  if (!behind && Math.abs(x) < 1 && Math.abs(y) < 1) {
+    // on-screen: tag the planet; its nav label / NEAREST BODY covers distance
+    c.fillText("HOME", (x * 0.5 + 0.5) * W, (-y * 0.5 + 0.5) * H - 30);
+  } else {
+    // off-screen: pin to the screen edge, chevron pointing out, readout inside
+    const m = Math.max(Math.abs(x), Math.abs(y)) || 1e-6;   // dead-center-behind: don't divide by 0
+    x /= m; y /= m;                                          // now on the unit square's edge
+    const M = 52;                                            // margin keeps it clear of HUD corners
+    const sx = M + (x * 0.5 + 0.5) * (W - 2 * M);
+    const sy = M + (-y * 0.5 + 0.5) * (H - 2 * M);
+    const ang = Math.atan2(sy - H / 2, sx - W / 2);
+    c.translate(sx, sy); c.rotate(ang);
+    c.beginPath(); c.moveTo(11, 0); c.lineTo(-2, -6); c.lineTo(-2, 6); c.closePath(); c.fill();
+    c.rotate(-ang);
+    const dist = Math.max(0, Math.round(
+      shipObj.position.distanceTo(homeBody.group.position) - homeBody.cfg.radius));
+    c.fillText("HOME " + dist.toLocaleString() + " u",
+               -Math.cos(ang) * 46, -Math.sin(ang) * 46 + 4);
+  }
+  c.restore();
 }
 function drawNavHud() {
   const W = innerWidth, H = innerHeight, c = navCtx;
@@ -2514,6 +2641,9 @@ function drawNavHud() {
   c.fillStyle = "rgba(110,231,216,.6)"; c.font = "10px " + navFont; c.textAlign = "center";
   c.fillText("RADAR", cx, cy + r + 14);
   c.restore();
+
+  // --- D: the way home, whenever the hold is worth banking ---
+  drawHomeChevron(c, W, H);
 }
 
 /* controls menu — a click (or H) tucks the mapping open/closed */
@@ -2912,10 +3042,35 @@ function animate() {
     audio.osc2.frequency.value = f * 1.014;
   }
 
-  // parked = pit stop. Any pad for now; Charleston earns the monopoly when
-  // there's a reason to fly home (Stage 4).
+  // parked = pit stop: any landing repairs. Charleston's monopoly (v32) is
+  // the BANK below — only the spaceport district pays out the hold.
   if (landedOn && ship.hull < ship.hullMax)
     ship.hull = Math.min(ship.hullMax, ship.hull + HULL_REPAIR * dt);
+
+  /* ---- the bank (Stage 4): parked on the Charleston pad, the hold drains
+     into the BANK. Integer cargo moves whole units through a fractional
+     accumulator; take off mid-drain and the remainder simply stays aboard. */
+  let banking = false, onPort = false;
+  if (landedOn && landedOn.pads) {
+    bankTmp.subVectors(shipObj.position, landedOn.group.position).normalize();
+    onPort = onSpaceport(landedOn, bankTmp);
+    if (onPort && cargo > 0) {
+      banking = true;
+      bankFlow += BANK_RATE * dt;
+      const move = Math.min(cargo, Math.floor(bankFlow));
+      if (move > 0) {
+        bankFlow -= move;
+        cargo -= move; banked += move;
+        cargoEl.textContent = cargo;
+        bankEl.textContent = banked;
+        bankTickSound();
+        if (cargo === 0) bankDoneSound();
+      }
+    }
+  }
+  if (!banking) bankFlow = 0;
+  if (wasBanking && !banking) saveBank();   // drain finished — or takeoff cut it short
+  wasBanking = banking;
   const hullPct = ship.hull / ship.hullMax;
   const hullCol = hullPct > 0.5 ? "#6ee7d8" : hullPct > 0.25 ? "#ffb066" : "#ff5544";
   hullFillEl.style.width = (hullPct * 100) + "%";
@@ -2967,7 +3122,14 @@ function animate() {
   prevNearestBody = nearest;
 
   if (landedOn) {
-    landTagEl.textContent = "◆ LANDED — " + landedOn.cfg.name + " ◆";
+    // the tag doubles as the bank teller: a live countdown while the hold
+    // drains, and a nudge toward Charleston if you parked in the wrong field
+    landTagEl.textContent =
+      banking ? "◆ CHARLESTON — BANKING " + cargo + " ◆" :
+      onPort  ? "◆ CHARLESTON SPACEPORT ◆" :
+      (landedOn.pads && cargo > 0)
+              ? "◆ LANDED — " + landedOn.cfg.name + " · BANK AT CHARLESTON ◆"
+              : "◆ LANDED — " + landedOn.cfg.name + " ◆";
     landTagEl.style.visibility = "visible";
   } else {
     landTagEl.style.visibility = "hidden";

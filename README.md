@@ -76,6 +76,15 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   it drifts away for good. The richer your hold, the more a hit scatters — so
   every run is a quiet argument between one more pass and flying home to bank
   it. A lethal hit tows you to Earth and the spill stays at the wreck
+- **A bank — and Charleston holds the monopoly** — cargo in the hold is at
+  risk: rams spill it, a closed tab loses it. Park on the Charleston pad and
+  the hold pays out into the **BANK**, a few units a tick — banked scrap is
+  the number that only goes up, and it's kept in the browser across sessions
+  (open `space-flight.html#reset` to zero it). Any landing still repairs;
+  only the spaceport pays. The moment there's loot aboard, a gold **HOME**
+  marker on the HUD edge points back to the bank — and if you set down on
+  the wrong continent, the landing tag tells you where the money lives.
+  Take off mid-payout and the remainder simply stays in the hold
 - **Flight model** — throttle with reverse, boost, frame-rate-independent
   drag, collision bounces off every body
 - **Atmospheric entry** — dive below a quarter-radius of any world with an
@@ -123,6 +132,7 @@ art, that's why: check the URL, not the model.
 
 ## History
 
-Thirty-one versions across 45 commits, each `vN:` tagged in the log — `git log`
+Thirty-two versions across 46 commits, each `vN:` tagged in the log — `git log`
 tells the story from "v1: first flight — mouse steer, throttle physics" to a
-Blender fighter mining a junk field for scrap over a hand-built Earth.
+Blender fighter mining a junk field for scrap and flying it home to bank at
+Charleston, on a hand-built Earth.
