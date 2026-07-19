@@ -1634,6 +1634,7 @@ function shipBreach() {
                    .sub(e.group.position));
   }
   for (const j of junk) junkRespawn(j, false);   // don't wake up inside a rock
+  for (const p of pirates) if (p.alive) pirateDespawn(p);   // you don't respawn under fire
   breachUntil = clock.elapsedTime + 4;
   breachEl.style.visibility = "visible";
 }
@@ -2446,6 +2447,425 @@ function updateJunk(dt) {
 
 for (const j of junk) junkRespawn(j, true);
 
+/* ============ 10g. PIRATES (v40) ============
+   The junk field gets competition. A scavenger pirate spawns on a far shell
+   (inside radar range — you get a red blip and a warning ping before contact),
+   hunts you down, and makes strafing attack passes with slow red bolts you
+   can actually dodge. Three hits kill it, and it pays the richest scrap in
+   the game — the first target that can shoot back is also the first one
+   really worth shooting.
+   Future-proofing: each slot carries `faction` and a junker name. "hostile"
+   is all that exists today; "neutral" (holds fire till provoked) and "ally"
+   (a hired escort, 2-wingman cap) are planned as a faction swap on this
+   same struct — no rewrite. */
+const PIRATE_COUNT = 2;           // max alive at once — a duel, not a swarm
+const RED_BOLT = 0xff4444;        // aqua and orange both mean "yours" (10b) — red means duck
+const PIRATE_BOLT_COUNT = 16;
+const PIRATE_BOLT_SPEED = 850;    // ~57% of BOLT_SPEED: dodgeable on purpose
+const PIRATE_BOLT_LIFE = 2.2;
+const PIRATE_BOLT_DMG = 7;
+const PIRATE_HIT_R = 7;           // body sphere, for your bolts and for rams
+const PIRATE_MAX_SPD = 280;      // under your boosted top end — you can ALWAYS run
+const PIRATE_ACCEL = 300;
+const PIRATE_ATTACK_R = 600;     // HUNT closes to this, then the knife fight starts
+const PIRATE_REENGAGE_R = 900;   // fell this far behind mid-attack → back to HUNT
+const PIRATE_BREAK_R = 140;      // point-blank → break off (attack passes, not orbiting death)
+const PIRATE_ATTACK_T = 6;       // max seconds per pass before a mandatory breather
+const PIRATE_BREAK_T = 2.2;
+const PIRATE_STANDOFF = 350;     // the arc it strafes on around you
+const PIRATE_FIRE_CONE = 0.96;   // dot(nose, aim) needed to shoot — ~16 degrees
+const PIRATE_BURST = 4, PIRATE_BURST_GAP = 0.16, PIRATE_BURST_COOL = 2.6;
+const PIRATE_AIM_ERR = 0.055;    // aim slop per unit of range — misses are real, not cosmetic
+const PIRATE_LEAD = 0.85;        // leads your velocity, imperfectly
+const PIRATE_SPAWN_NEAR = 2600, PIRATE_SPAWN_FAR = 3400;  // inside RADAR_RANGE (3500): blip before contact
+const PIRATE_CULL = 5000;        // outrun it and it slinks off — no bang, no pay
+const PIRATE_RESPAWN_MIN = 60, PIRATE_RESPAWN_MAX = 120;
+const PIRATE_RAM_HURT = 6;       // hull per 100 u/s closing — a fighter, not a boulder
+const PIRATE_SCRAP_BITS = 8, PIRATE_SCRAP_VAL = 5;   // 40 — richest kill in the game (satellite = 24)
+const PIRATE_NAMES = ["RUST VULTURE", "SCRAPJACK", "THE MAGPIE", "KESSLER'S GHOST"];
+// pirate-owned scratch — NEVER junkTmp*/scrapTmp*: a lethal ram below runs
+// shipBreach → junkRespawn × 44, which rewrites the junk scratch mid-call
+// (the same trap documented at the junk ram)
+const pirTmpA = new THREE.Vector3(), pirTmpB = new THREE.Vector3(), pirTmpC = new THREE.Vector3();
+const pirSeg = new THREE.Vector3(), pirToC = new THREE.Vector3(), pirNearPt = new THREE.Vector3();
+const pirAimObj = new THREE.Object3D();   // scratch for the mirror-lookAt trick (nose is -Z)
+
+/* A scavenger's fighter: welded slab-and-scrap, nose -Z like everything else.
+   Materials are FRESH PER CALL — two pirates sharing mats would both flash
+   white when you clipped either one (same rule as the junk slots). */
+function buildPirateMesh() {
+  const g = new THREE.Group();
+  const rustMat = new THREE.MeshStandardMaterial({ color: 0x5a4a3a, metalness: 0.75, roughness: 0.45 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x2c2622, metalness: 0.6, roughness: 0.6 });
+  const redMat  = new THREE.MeshStandardMaterial({ color: 0x8a2015, metalness: 0.4, roughness: 0.4, emissive: 0xff2a12, emissiveIntensity: 0.7 });
+
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.8, 5), rustMat);
+  g.add(hull);
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.8, 2, 5), rustMat);
+  nose.rotation.x = -Math.PI / 2;
+  nose.position.set(0, 0, -3.4);
+  g.add(nose);
+  // scavenged wings — deliberately mismatched; nothing on this thing came stock
+  const wingL = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.1, 1.6), darkMat);
+  wingL.position.set(-2.1, 0.1, 0.8); wingL.rotation.z = 0.22;
+  g.add(wingL);
+  const wingR = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.1, 1.3), darkMat);
+  wingR.position.set(1.8, -0.15, 1.0); wingR.rotation.z = -0.1;
+  g.add(wingR);
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.1, 1.3), darkMat);
+  fin.position.set(0, 0.7, 2.0);
+  g.add(fin);
+  // red accents: what junkCollectMats latches onto for the hit-flash, and what
+  // reads HOSTILE against the grey junk at a glance
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.06, 4.4), redMat);
+  stripe.position.set(0, 0.44, -0.2);
+  g.add(stripe);
+  const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.6), redMat);
+  eyeL.position.set(-0.7, 0, -2.6);
+  g.add(eyeL);
+  const eyeR = eyeL.clone(); eyeR.position.x = 0.7;
+  g.add(eyeR);
+  // single engine, mounted off-center of course — plus the red tail glow
+  const eng = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 1.4, 8), darkMat);
+  eng.rotation.x = Math.PI / 2;
+  eng.position.set(0.3, -0.05, 2.6);
+  g.add(eng);
+  const engineGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: softBlobTexture("rgba(255,90,60,0.95)"),
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  engineGlow.position.set(0.3, -0.05, 3.4);
+  engineGlow.scale.setScalar(0.001);
+  g.add(engineGlow);
+  return { group: g, engineGlow };
+}
+
+const pirates = [];
+for (let i = 0; i < PIRATE_COUNT; i++) {
+  const built = buildPirateMesh();
+  built.group.visible = false;
+  scene.add(built.group);
+  pirates.push({
+    faction: "hostile",       // future: "neutral" / "ally" — AI keys off this, nothing else rewrites
+    name: PIRATE_NAMES[i % PIRATE_NAMES.length],   // for the hails, later
+    group: built.group,
+    engineGlow: built.engineGlow,
+    mats: junkCollectMats(built.group),            // per-slot emissives for the white hit-flash
+    vel: new THREE.Vector3(),
+    hp: 3, maxHp: 3, flash: 0,
+    alive: false,
+    respawnIn: (i === 0 ? 45 : 140) + Math.random() * 40,  // staggered: first contact is a lone fighter
+    state: "HUNT", stateT: 0,      // "HUNT" | "ATTACK" | "BREAK"
+    jinkDir: new THREE.Vector3(),  // current strafe/escape direction
+    jinkT: 0,                      // seconds until the strafe re-rolls
+    aimErr: new THREE.Vector3(),   // per-burst aim slop — what makes the bolts dodgeable
+    burstLeft: 0, fireT: 1.5,
+  });
+}
+
+function pirateSpawn(p) {
+  // nobody jumps a parked ship (junk-ram parity) — try again shortly after liftoff
+  if (landedOn) { p.respawnIn = 6; return; }
+  let placed = false;
+  for (let tries = 0; tries < 5 && !placed; tries++) {
+    randUnit(pirTmpA);
+    pirTmpB.copy(shipObj.position)
+           .addScaledVector(pirTmpA, PIRATE_SPAWN_NEAR + Math.random() * (PIRATE_SPAWN_FAR - PIRATE_SPAWN_NEAR));
+    if (!junkPointBlocked(pirTmpB)) { p.group.position.copy(pirTmpB); placed = true; }
+  }
+  if (!placed) { p.respawnIn = 6; return; }
+  p.alive = true;
+  p.group.visible = true;
+  p.hp = p.maxHp;
+  p.flash = 0;
+  for (const m of p.mats) m.emissive.copy(m.userData.baseEmissive);
+  p.state = "HUNT"; p.stateT = 0;
+  p.burstLeft = 0; p.fireT = 1.5;
+  p.jinkT = 0;
+  pirTmpA.subVectors(shipObj.position, p.group.position).normalize();
+  p.vel.copy(pirTmpA).multiplyScalar(60);
+  pirateWarnSound();   // the spawn shell sits inside RADAR_RANGE, so the red
+                       // blip lands the same frame this ping does — fair warning, twice
+}
+
+// quiet exit — culls and breaches. No bang, no pay, just gone.
+function pirateDespawn(p) {
+  p.alive = false;
+  p.group.visible = false;
+  p.respawnIn = PIRATE_RESPAWN_MIN + Math.random() * (PIRATE_RESPAWN_MAX - PIRATE_RESPAWN_MIN);
+}
+
+// the bang WITHOUT the payout — the ram path (junkDestroy's twin)
+function pirateDestroy(p, dist) {
+  pirateDespawn(p);
+  burstKill(p.group.position, 14, p.vel);
+  junkBoomSound(dist, 30);   // fake radius 30: a fighter dies with a whump, not a tink
+  if (dist < 900) padRumble(Math.min(0.6, 0.4 * (300 / Math.max(60, dist))), 90);
+}
+
+// shot down — the only pirate that pays (junkKill's twin)
+function pirateKill(p, dist) {
+  pirateDestroy(p, dist);
+  killsEl.textContent = ++junkKills;
+  // the bounty: same scatter as junkDropScrap — inherit the wreck's drift
+  // plus a gentle outward puff, so the loot hangs where the fight was
+  for (let i = 0; i < PIRATE_SCRAP_BITS; i++) {
+    randUnit(pirTmpA);
+    pirTmpA.multiplyScalar(8 + Math.random() * 18).add(p.vel);
+    emitScrap(p.group.position, pirTmpA, PIRATE_SCRAP_VAL);
+  }
+}
+
+function pirateDamage(p, at, boltVel) {
+  const dist = shipObj.position.distanceTo(p.group.position);
+  if (--p.hp > 0) {
+    p.flash = 1;
+    burstSparks(at, p.vel, 8);
+    junkTinkSound(dist);
+    p.vel.addScaledVector(pirTmpA.copy(boltVel).normalize(), 25);   // the hit shoves it
+    // getting shot makes it flinch: break off NOW and come back around —
+    // reads as a living thing, and gives you a beat to line up the next shot
+    pirTmpC.subVectors(shipObj.position, p.group.position).normalize();
+    randUnit(pirTmpB);
+    pirTmpB.addScaledVector(pirTmpC, -pirTmpB.dot(pirTmpC));        // strip the toward-you part
+    p.jinkDir.copy(pirTmpB).addScaledVector(pirTmpC, -0.6).normalize();
+    p.state = "BREAK"; p.stateT = 0;
+    return;
+  }
+  pirateKill(p, dist);
+}
+
+/* Player bolts vs pirates — junkTestBolt's sibling: same swept segment-vs-
+   sphere maths, its own scratch (both run in ONE expression in the fire
+   loop, so they can never share vectors). */
+function enemyTestBolt(p0, p1, boltVel) {
+  pirSeg.subVectors(p1, p0);
+  const segLen2 = pirSeg.lengthSq();
+  for (const p of pirates) {
+    if (!p.alive) continue;
+    pirToC.subVectors(p.group.position, p0);
+    const t = segLen2 > 0 ? THREE.MathUtils.clamp(pirToC.dot(pirSeg) / segLen2, 0, 1) : 0;
+    pirNearPt.copy(p0).addScaledVector(pirSeg, t);
+    if (pirNearPt.distanceToSquared(p.group.position) <= PIRATE_HIT_R * PIRATE_HIT_R) {
+      pirateDamage(p, pirNearPt, boltVel);
+      return true;
+    }
+  }
+  return false;
+}
+
+/* Hostile bolts get their own small pool — routing them through the player's
+   would let a pirate volley recycle your bolts mid-firefight. Shares the
+   player pool's geometry and glow texture; only the color differs. */
+const pirateBolts = [];
+for (let i = 0; i < PIRATE_BOLT_COUNT; i++) {
+  const mat = new THREE.MeshBasicMaterial({ color: RED_BOLT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const mesh = new THREE.Mesh(boltGeo, mat);
+  const glowMat = new THREE.SpriteMaterial({ map: boltGlowTex, color: RED_BOLT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const glow = new THREE.Sprite(glowMat); glow.scale.setScalar(3.2);
+  mesh.add(glow);
+  mesh.visible = false;
+  scene.add(mesh);
+  pirateBolts.push({ mesh, vel: new THREE.Vector3(), life: 0 });
+}
+let pirateBoltCursor = 0;
+function spawnPirateBolt(pos, dir, srcVel) {
+  const b = pirateBolts[pirateBoltCursor];
+  pirateBoltCursor = (pirateBoltCursor + 1) % PIRATE_BOLT_COUNT;
+  b.mesh.position.copy(pos);
+  b.mesh.quaternion.setFromUnitVectors(BOLT_AXIS, dir);   // long axis along travel
+  b.vel.copy(srcVel).addScaledVector(dir, PIRATE_BOLT_SPEED);  // inherits the pirate's velocity, same physics as yours
+  b.life = PIRATE_BOLT_LIFE;
+  b.mesh.visible = true;
+}
+
+// the fair-warning ping: two FALLING notes. The scrap chime climbs, so a
+// threat falls — opposite moods, opposite directions. Not distance-faded:
+// a warning you can't hear isn't a warning.
+function pirateWarnSound() {
+  if (!audio) return;
+  const { ctx } = audio, t = ctx.currentTime;
+  const notes = [880, 587];
+  for (let i = 0; i < notes.length; i++) {
+    const at = t + i * 0.16;
+    const o = ctx.createOscillator(); o.type = "triangle";
+    o.frequency.value = notes[i];
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(0.10, at + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.14);
+    o.connect(g); g.connect(ctx.destination);
+    o.start(at); o.stop(at + 0.15);
+  }
+}
+// blasterSound an octave down, faded with range — a pew you duck, not yours
+function pirateShotSound(dist) {
+  if (!audio) return;
+  const { ctx } = audio, t = ctx.currentTime;
+  const vol = Math.min(0.12, 0.12 * (1 / (1 + dist / 300)));
+  const o = ctx.createOscillator(); o.type = "square";
+  o.frequency.setValueAtTime(460, t);
+  o.frequency.exponentialRampToValueAtTime(110, t + 0.14);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+  o.connect(g); g.connect(ctx.destination);
+  o.start(t); o.stop(t + 0.16);
+}
+
+function updateEnemies(dt) {
+  for (const p of pirates) {
+    if (!p.alive) {
+      p.respawnIn -= dt;
+      if (p.respawnIn <= 0) pirateSpawn(p);
+      continue;
+    }
+    if (p.flash > 0) {                       // white-hot pop on a non-fatal hit
+      p.flash = Math.max(0, p.flash - dt * 4);
+      for (const m of p.mats) m.emissive.copy(m.userData.baseEmissive).lerp(FLASH_WHITE, p.flash);
+    }
+
+    pirTmpA.subVectors(shipObj.position, p.group.position);
+    const dist = pirTmpA.length();
+    if (dist > PIRATE_CULL) { pirateDespawn(p); continue; }   // you outran it
+    pirTmpA.divideScalar(dist || 1);   // unit pirate→ship; holds for this whole iteration
+
+    /* ---- the three-state brain ---- */
+    p.stateT += dt;
+    if (p.state === "HUNT") {
+      if (dist < PIRATE_ATTACK_R) {
+        p.state = "ATTACK"; p.stateT = 0; p.jinkT = 0;
+        p.burstLeft = PIRATE_BURST; p.fireT = 0.6;              // primed: first burst ~0.6s in
+        randUnit(p.aimErr).multiplyScalar(dist * PIRATE_AIM_ERR);
+      }
+    } else if (p.state === "ATTACK") {
+      if (dist < PIRATE_BREAK_R || p.stateT > PIRATE_ATTACK_T) {
+        p.state = "BREAK"; p.stateT = 0;
+        // escape dir: sideways, tipped away from you — a flyby, not a bounce
+        randUnit(pirTmpC);
+        pirTmpC.addScaledVector(pirTmpA, -pirTmpC.dot(pirTmpA));
+        p.jinkDir.copy(pirTmpC).addScaledVector(pirTmpA, -0.6).normalize();
+      } else if (dist > PIRATE_REENGAGE_R) {
+        p.state = "HUNT"; p.stateT = 0;
+      }
+    } else if (p.stateT > PIRATE_BREAK_T) {  // BREAK is just a timer
+      p.state = "HUNT"; p.stateT = 0;
+    }
+
+    /* ---- steer target into pirTmpB ---- */
+    if (p.state === "HUNT") {
+      pirTmpB.copy(shipObj.position).addScaledVector(ship.velocity, 0.8);  // crude pursuit lead
+    } else if (p.state === "ATTACK") {
+      p.jinkT -= dt;
+      if (p.jinkT <= 0) {                    // re-roll a lateral point on the standoff arc
+        randUnit(pirTmpC);
+        pirTmpC.addScaledVector(pirTmpA, -pirTmpC.dot(pirTmpA));
+        p.jinkDir.copy(pirTmpC).normalize();
+        p.jinkT = 1.2 + Math.random();
+      }
+      pirTmpB.copy(shipObj.position).addScaledVector(p.jinkDir, PIRATE_STANDOFF);
+    } else {
+      pirTmpB.copy(p.group.position).addScaledVector(p.jinkDir, 800);
+    }
+
+    /* ---- move: accelerate at the goal, damp, cap (the scrap-beam maths) ---- */
+    pirTmpC.subVectors(pirTmpB, p.group.position);
+    const goalDist = pirTmpC.length();
+    if (goalDist > 1) p.vel.addScaledVector(pirTmpC.divideScalar(goalDist), PIRATE_ACCEL * dt);
+    p.vel.multiplyScalar(Math.pow(0.995, dt * 60));
+    if (p.vel.length() > PIRATE_MAX_SPD) p.vel.setLength(PIRATE_MAX_SPD);
+    p.group.position.addScaledVector(p.vel, dt);
+
+    /* ---- face the work: lookAt aims +Z but the nose is -Z, so look at the
+       mirror point (the shipBreach trick). The slerp lag IS the imperfect
+       tracking — it aims where it's turning, never snap-on. ---- */
+    if (p.state === "ATTACK") {
+      pirTmpB.copy(shipObj.position)
+             .addScaledVector(ship.velocity, (dist / PIRATE_BOLT_SPEED) * PIRATE_LEAD)
+             .add(p.aimErr);
+    } else {
+      pirTmpB.copy(p.group.position).add(p.vel);   // cruise: face travel
+    }
+    pirAimObj.position.copy(p.group.position);
+    pirAimObj.lookAt(pirTmpC.copy(p.group.position).multiplyScalar(2).sub(pirTmpB));
+    p.group.quaternion.slerp(pirAimObj.quaternion, 1 - Math.exp(-6 * dt));
+
+    /* ---- fire: bursts of 4, only once the nose has actually come around ---- */
+    if (p.state === "ATTACK" && !landedOn) {
+      p.fireT -= dt;
+      if (p.fireT <= 0) {
+        if (p.burstLeft > 0) {
+          pirTmpC.subVectors(pirTmpB, p.group.position).normalize();  // the shot it WANTS
+          p.group.getWorldDirection(pirTmpA).negate();                // the nose it HAS
+          if (pirTmpA.dot(pirTmpC) > PIRATE_FIRE_CONE) {
+            pirTmpB.copy(p.group.position).addScaledVector(pirTmpA, 5);  // muzzle clear of its own hit sphere
+            spawnPirateBolt(pirTmpB, pirTmpC, p.vel);
+            pirateShotSound(dist);
+            p.fireT = PIRATE_BURST_GAP;
+            p.burstLeft--;
+          } else {
+            p.fireT = 0.1;   // nose not on yet — retry shortly, don't waste the burst
+          }
+        } else {
+          p.burstLeft = PIRATE_BURST;
+          p.fireT = PIRATE_BURST_COOL + Math.random();
+          randUnit(pirTmpC);
+          p.aimErr.copy(pirTmpC).multiplyScalar(dist * PIRATE_AIM_ERR);  // fresh slop each burst
+        }
+      }
+    }
+
+    /* ---- ram: a fighter is never a wall — it shatters on your hull.
+       Rams never pay (house rule, see 10c), and damage goes LAST in the
+       same load-bearing order as the junk ram: a lethal hit breaches,
+       teleports the ship, and respawns the field mid-call. ---- */
+    const rr = PIRATE_HIT_R + SHIP_HIT_R;
+    if (!landedOn && shipObj.position.distanceToSquared(p.group.position) < rr * rr) {
+      const relSpd = pirTmpB.subVectors(ship.velocity, p.vel).length();
+      const dmg = Math.min(RAM_DMG_CAP, (Math.max(0, relSpd - RAM_FREE_SPD) / 100) * PIRATE_RAM_HURT);
+      ship.velocity.multiplyScalar(0.9);     // it still bleeds your speed
+      pirateDestroy(p, 0);
+      thump(Math.min(360, 120 + relSpd * 0.5));
+      if (dmg > 0) {
+        spillCargo(dmg);   // knock loose cargo BEFORE shipDamage — same reason as the junk ram
+        shipDamage(dmg);
+      }
+      continue;
+    }
+
+    // the tail light rides how hard it's flying
+    p.engineGlow.scale.setScalar(1.5 + 2.5 * p.vel.length() / PIRATE_MAX_SPD);
+  }
+
+  /* ---- hostile bolts: advance, swept-test the one target they have ---- */
+  for (const b of pirateBolts) {
+    if (b.life <= 0) continue;
+    b.life -= dt;
+    if (b.life <= 0) { b.mesh.visible = false; continue; }
+    pirTmpA.copy(b.mesh.position);
+    b.mesh.position.addScaledVector(b.vel, dt);
+    if (landedOn) continue;                  // parked ships don't get shelled (junk-ram parity)
+    pirSeg.subVectors(b.mesh.position, pirTmpA);
+    const segLen2 = pirSeg.lengthSq();
+    pirToC.subVectors(shipObj.position, pirTmpA);
+    const t = segLen2 > 0 ? THREE.MathUtils.clamp(pirToC.dot(pirSeg) / segLen2, 0, 1) : 0;
+    pirNearPt.copy(pirTmpA).addScaledVector(pirSeg, t);
+    if (pirNearPt.distanceToSquared(shipObj.position) <= SHIP_HIT_R * SHIP_HIT_R) {
+      b.life = 0; b.mesh.visible = false;
+      thump(140);
+      padRumble(0.45, 60);
+      /* NO spillCargo on a bolt hit — spilling stays a ram-only mechanic.
+         (The future "cargo raider" variant is exactly this line + spillCargo.)
+         A lethal bolt breaches mid-loop and teleports the ship; the bolts
+         still in flight this frame miss at 20000u and expire — leave it. */
+      shipDamage(PIRATE_BOLT_DMG);
+    }
+  }
+  /* Pirate bolts deliberately DON'T test junk: routing them through
+     junkTestBolt would run junkKill payouts — pirates farming scrap FOR you. */
+}
+
 const VIEW_COCKPIT = 0, VIEW_CHASE = 1, VIEW_CINEMATIC = 2;
 let viewMode = VIEW_COCKPIT;                      // start in the cockpit
 const CHASE_OFFSET = new THREE.Vector3(0, 4.5, 17); // behind & above, in ship-local space
@@ -2951,7 +3371,8 @@ function drawNavHud(dt) {
   for (const p of planets) navBlipAt(p.b.group.position, cx, cy, r, NAV_TEAL, 4.5);
   const star = liveBodies.find(b => b.cfg.type === "star");
   if (star) navBlipAt(star.group.position, cx, cy, r, NAV_SUN, 4);
-  // enemies later: for (const e of enemies) navBlipAt(e.position, cx, cy, r, "#ff5544", 3);
+  // pirates: red and glowing (no fade arg) — threats pop, the field whispers
+  for (const p of pirates) if (p.alive) navBlipAt(p.group.position, cx, cy, r, "#ff5544", 3);
   c.fillStyle = "rgba(110,231,216,.6)"; c.font = "10px " + navFont; c.textAlign = "center";
   c.fillText("RADAR", cx, cy + r + 14);
   c.restore();
@@ -3360,6 +3781,7 @@ function animate() {
   /* ---- junk drifts first, so the bolt tests below hit where it IS ---- */
   updateJunk(dt);
   updateScrap(dt);    // reel in salvage from kills (may be created by the bolts below, next frame)
+  updateEnemies(dt);  // pirates move before the bolt tests below, same reason as the junk
 
   /* ---- blasters: fire from both cannons, advance live bolts ---- */
   fireCooldown -= dt;
@@ -3386,7 +3808,10 @@ function animate() {
     boltPrev.copy(b.mesh.position);
     b.mesh.position.addScaledVector(b.vel, dt);
     // test the whole segment it crossed this frame, not just where it landed
-    if (junkTestBolt(boltPrev, b.mesh.position, b.vel)) { b.life = 0; b.mesh.visible = false; }
+    // short-circuit: one bolt hits one thing, and junk can shield a pirate.
+    // safe in one expression — the two tests own disjoint scratch vectors.
+    if (junkTestBolt(boltPrev, b.mesh.position, b.vel) ||
+        enemyTestBolt(boltPrev, b.mesh.position, b.vel)) { b.life = 0; b.mesh.visible = false; }
   }
   for (const s of muzzleFlashes)     // fast fade after each shot
     if (s.scale.x > 0.002) s.scale.setScalar(Math.max(0.001, s.scale.x * Math.pow(0.00004, dt)));
