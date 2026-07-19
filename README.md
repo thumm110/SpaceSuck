@@ -81,11 +81,14 @@ and touchdowns rumble the controller, as do junk kills close aboard.
 - **Scavenger pirates — the field shoots back** — you're not the only junker
   out here. A rusty, mismatched fighter (two if you linger) spawns off the
   radar's rim — a falling two-note ping and a glowing red blip are your
-  warning — hunts you down, and makes strafing passes with slow red bolts
-  you can actually dodge. It's never faster than you, so running away always
-  works; it just pays nothing. Three hits crack it open for the richest
-  scrap drop in the game. House rules still hold: ramming one shatters it
-  for zero credit, and parked ships are off-limits
+  warning, and a red RAIDER chevron on the HUD edge tracks the nearest one —
+  then it flies attack passes by your own rules: nose-first, turn-rate
+  limited (you out-turn it), boring in with red bolt bursts before breaking
+  off on a straight, throttled-back extend — that getaway leg is your
+  window. It's never faster than you, so running away always works; it just
+  pays nothing. Three hits crack it open for the richest scrap drop in the
+  game. House rules still hold: ramming one shatters it for zero credit,
+  and parked ships are off-limits
 - **A bank — and Charleston holds the monopoly** — cargo in the hold is at
   risk: rams spill it, a closed tab loses it. Park on the Charleston pad and
   the hold pays out into the **BANK**, a few units a tick — banked scrap is

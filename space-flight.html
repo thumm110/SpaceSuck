@@ -1461,13 +1461,17 @@ if (THREE.GLTFLoader) {
     const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
     model.scale.setScalar(10 / size.z);
 
-    // thruster nozzles glow bright; the hull gets a faint self-lit floor so
-    // it still reads out past HELIOS, where the sun's inverse-square falloff
-    // would otherwise leave the whole ship near-black
+    // any "*Glow" material (thrusters, wing conduits, nav lights, canopy)
+    // glows bright; the hull gets a faint self-lit floor so it still reads
+    // out past HELIOS, where the sun's inverse-square falloff would
+    // otherwise leave the whole ship near-black
     model.traverse(o => {
       if (!o.isMesh || !o.material) return;
-      if (o.material.name === "EngineGlow") {
-        o.material.emissive.copy(o.material.color);
+      if (o.material.name.endsWith("Glow")) {
+        // pure-emission Blender materials export a BLACK base color with the
+        // real color in emissiveFactor — keep the loader's emissive, only
+        // falling back to base color if emissive came through empty
+        if (o.material.emissive.getHex() === 0) o.material.emissive.copy(o.material.color);
         o.material.emissiveIntensity = 1.5;
       } else {
         o.material.emissive.copy(o.material.color);
@@ -2464,19 +2468,32 @@ const PIRATE_BOLT_COUNT = 16;
 const PIRATE_BOLT_SPEED = 850;    // ~57% of BOLT_SPEED: dodgeable on purpose
 const PIRATE_BOLT_LIFE = 2.2;
 const PIRATE_BOLT_DMG = 7;
-/* v41: the fighter reads now. At the original 7u it was smaller than the
-   player's own ship, unlit, and parked 350-600u out — a black dot on black
-   space, and a nearly unhittable one (junk runs 20-60u). Scale fixes both. */
-const PIRATE_SCALE = 2.4;         // applied to the whole built group
-const PIRATE_HIT_R = 17;          // body sphere, for your bolts and for rams (~7u hull × scale)
+/* v42: sized like the player's fighter (~10u). v41's 2.4x visibility scale
+   overshot once the strobe and self-glow landed — parity feels right, and
+   the running light does the finding now. Hit sphere matches SHIP_HIT_R. */
+const PIRATE_SCALE = 1.3;         // applied to the whole built group
+const PIRATE_HIT_R = 12;          // body sphere, for your bolts and for rams — same as yours
 const PIRATE_MAX_SPD = 280;      // under your boosted top end — you can ALWAYS run
 const PIRATE_ACCEL = 300;
+/* v42: it flies by your rules now — nose-first, turn-rate-limited, grip.
+   The old velocity-steered UFO could sidestep at full speed and turn on a
+   dime; these three constants are what make it a jet you can out-fly. */
+const PIRATE_TURN = 1.1;         // rad/s nose swing IN THE FIGHT — under your 1.6: you OUT-TURN it
+const PIRATE_TURN_CRUISE = 2.2;  // rad/s out of the fight (hunt/extend). Probes found two
+                                 // failure modes at 1.1 everywhere: ~8s turnarounds that
+                                 // gut the pass rhythm, and a wide pure-pursuit orbit
+                                 // (turn radius 255u at top speed) that can lock in and
+                                 // never close. The fight stays fair; the commute doesn't.
+const PIRATE_GRIP = 2.0;         // velocity chases the nose (your grip is 2.5) — it carves, never sidesteps
+const PIRATE_PASS_SPD = 240;     // closing speed on a firing pass
+const PIRATE_EXTEND_SPD = 160;   // throttled straight getaway after a pass — your firing window
 const PIRATE_ATTACK_R = 600;     // HUNT closes to this, then the knife fight starts
 const PIRATE_REENGAGE_R = 900;   // fell this far behind mid-attack → back to HUNT
-const PIRATE_BREAK_R = 140;      // point-blank → break off (attack passes, not orbiting death)
+const PIRATE_BREAK_R = 180;      // point-blank → break off. v42: nose-first flight
+                                 // needs the extra room — the 1.1 rad/s turn cap
+                                 // has to bank it clear of a collision course
 const PIRATE_ATTACK_T = 6;       // max seconds per pass before a mandatory breather
-const PIRATE_BREAK_T = 2.2;
-const PIRATE_STANDOFF = 350;     // the arc it strafes on around you
+const PIRATE_BREAK_T = 3.5;      // v42: the extend leg is long on purpose — it's YOUR turn
 const PIRATE_FIRE_CONE = 0.90;   // dot(nose, aim) needed to shoot — ~26 degrees
                                  // (v41: 0.96 starved the bursts — the nose kept
                                  // chasing the jinking aim point and losing)
@@ -2553,7 +2570,7 @@ function buildPirateMesh() {
     map: boltGlowTex, color: 0xff3020, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   }));
   beacon.position.set(0, 1.4, 0);
-  beacon.scale.setScalar(5);
+  beacon.scale.setScalar(8);   // v42: hull shrank to player parity — keep the light loud
   g.add(beacon);
   g.scale.setScalar(PIRATE_SCALE);   // one knob scales hull, glows, everything
   return { group: g, engineGlow, beacon };
@@ -2576,9 +2593,8 @@ for (let i = 0; i < PIRATE_COUNT; i++) {
     hp: 3, maxHp: 3, flash: 0,
     alive: false,
     respawnIn: (i === 0 ? 45 : 140) + Math.random() * 40,  // staggered: first contact is a lone fighter
-    state: "HUNT", stateT: 0,      // "HUNT" | "ATTACK" | "BREAK"
-    jinkDir: new THREE.Vector3(),  // current strafe/escape direction
-    jinkT: 0,                      // seconds until the strafe re-rolls
+    state: "HUNT", stateT: 0,      // "HUNT" | "ATTACK" (firing pass) | "BREAK" (the extend)
+    jinkDir: new THREE.Vector3(),  // the extend's escape line, fixed at BREAK entry
     aimErr: new THREE.Vector3(),   // per-burst aim slop — what makes the bolts dodgeable
     burstLeft: 0, fireT: 1.5,
   });
@@ -2602,7 +2618,6 @@ function pirateSpawn(p) {
   for (const m of p.mats) m.emissive.copy(m.userData.baseEmissive);
   p.state = "HUNT"; p.stateT = 0;
   p.burstLeft = 0; p.fireT = 1.5;
-  p.jinkT = 0;
   pirTmpA.subVectors(shipObj.position, p.group.position).normalize();
   p.vel.copy(pirTmpA).multiplyScalar(60);
   pirateWarnSound();   // the spawn shell sits inside RADAR_RANGE, so the red
@@ -2758,21 +2773,42 @@ function updateEnemies(dt) {
     if (dist > PIRATE_CULL) { pirateDespawn(p); continue; }   // you outran it
     pirTmpA.divideScalar(dist || 1);   // unit pirate→ship; holds for this whole iteration
 
-    /* ---- the three-state brain ---- */
+    /* ---- the three-state brain (v42: a pass rhythm, not an orbit) ----
+       HUNT lines it up, ATTACK is a firing pass bored straight in, BREAK is
+       the extend — a throttled, dead-straight getaway leg. The extend is the
+       player's window: after every pass (and every flinch) you get a slow,
+       predictable tail to shoot at. That trade is the whole fight. */
     p.stateT += dt;
     if (p.state === "HUNT") {
       if (dist < PIRATE_ATTACK_R) {
-        p.state = "ATTACK"; p.stateT = 0; p.jinkT = 0;
+        p.state = "ATTACK"; p.stateT = 0;
         p.burstLeft = PIRATE_BURST; p.fireT = 0.6;              // primed: first burst ~0.6s in
-        randUnit(p.aimErr).multiplyScalar(dist * PIRATE_AIM_ERR);
+        // random FRACTION of max slop — randUnit alone is always length 1,
+        // which made every burst miss by exactly the max (found by probe:
+        // 12 shots, 0 hits on a parked ship). Some bursts fly true now.
+        randUnit(p.aimErr).multiplyScalar(Math.random() * dist * PIRATE_AIM_ERR);
       }
     } else if (p.state === "ATTACK") {
       if (dist < PIRATE_BREAK_R || p.stateT > PIRATE_ATTACK_T) {
         p.state = "BREAK"; p.stateT = 0;
-        // escape dir: sideways, tipped away from you — a flyby, not a bounce
-        randUnit(pirTmpC);
-        pirTmpC.addScaledVector(pirTmpA, -pirTmpC.dot(pirTmpA));
-        p.jinkDir.copy(pirTmpC).addScaledVector(pirTmpA, -0.6).normalize();
+        // extend along the overshoot — straight, no jinking. Don't "fix"
+        // this into an evasive weave: this leg is the player's reward.
+        if (p.vel.lengthSq() > 1) p.jinkDir.copy(p.vel).normalize();
+        else p.jinkDir.copy(pirTmpA).negate();
+        /* ...but never straight THROUGH the player. A head-on pass leaves
+           the overshoot aimed dead at the ship, and a nose-first jet that
+           "extends" along that line is a lawn dart (found by probe: it
+           rammed a parked ship). Bend the collision course off target. */
+        const into = p.jinkDir.dot(pirTmpA);
+        if (into > 0.5) {
+          p.jinkDir.addScaledVector(pirTmpA, -into);
+          if (p.jinkDir.lengthSq() < 0.05) {   // dead head-on: pick a side
+            randUnit(pirTmpC);
+            pirTmpC.addScaledVector(pirTmpA, -pirTmpC.dot(pirTmpA));
+            p.jinkDir.copy(pirTmpC);
+          }
+          p.jinkDir.normalize();
+        }
       } else if (dist > PIRATE_REENGAGE_R) {
         p.state = "HUNT"; p.stateT = 0;
       }
@@ -2780,49 +2816,42 @@ function updateEnemies(dt) {
       p.state = "HUNT"; p.stateT = 0;
     }
 
-    /* ---- steer target into pirTmpB ---- */
+    /* ---- v42: it flies by YOUR rules now. One target point per state; the
+       nose swings toward it at a capped rate, thrust only goes where the
+       nose points, and grip drags the velocity around the carve — the same
+       jet physics you fly, tuned slightly worse. The old velocity-steered
+       UFO could sidestep at full speed; nothing here can. ---- */
     if (p.state === "HUNT") {
-      pirTmpB.copy(shipObj.position).addScaledVector(ship.velocity, 0.8);  // crude pursuit lead
+      pirTmpB.copy(shipObj.position).addScaledVector(ship.velocity, 0.8);   // crude pursuit lead
     } else if (p.state === "ATTACK") {
-      p.jinkT -= dt;
-      if (p.jinkT <= 0) {                    // re-roll a lateral point on the standoff arc
-        randUnit(pirTmpC);
-        pirTmpC.addScaledVector(pirTmpA, -pirTmpC.dot(pirTmpA));
-        p.jinkDir.copy(pirTmpC).normalize();
-        p.jinkT = 1.2 + Math.random();
-      }
-      pirTmpB.copy(shipObj.position).addScaledVector(p.jinkDir, PIRATE_STANDOFF);
-    } else {
-      pirTmpB.copy(p.group.position).addScaledVector(p.jinkDir, 800);
-    }
-
-    /* ---- move: accelerate at the goal, damp, cap (the scrap-beam maths) ---- */
-    pirTmpC.subVectors(pirTmpB, p.group.position);
-    const goalDist = pirTmpC.length();
-    if (goalDist > 1) p.vel.addScaledVector(pirTmpC.divideScalar(goalDist), PIRATE_ACCEL * dt);
-    /* v41: hold the arc. Strafing between points ON the standoff sphere flies
-       straight chords THROUGH it, so the pirate steadily fell onto the player,
-       tripped the point-blank BREAK mid-reload, and never fired a second
-       burst. Inside the sphere, push back out along the radius. */
-    if (p.state === "ATTACK" && dist < PIRATE_STANDOFF)
-      p.vel.addScaledVector(pirTmpA, -(1 - dist / PIRATE_STANDOFF) * PIRATE_ACCEL * dt);
-    p.vel.multiplyScalar(Math.pow(0.995, dt * 60));
-    if (p.vel.length() > PIRATE_MAX_SPD) p.vel.setLength(PIRATE_MAX_SPD);
-    p.group.position.addScaledVector(p.vel, dt);
-
-    /* ---- face the work: lookAt aims +Z but the nose is -Z, so look at the
-       mirror point (the shipBreach trick). The slerp lag IS the imperfect
-       tracking — it aims where it's turning, never snap-on. ---- */
-    if (p.state === "ATTACK") {
-      pirTmpB.copy(shipObj.position)
+      pirTmpB.copy(shipObj.position)                                        // the firing solution IS the flight path
              .addScaledVector(ship.velocity, (dist / PIRATE_BOLT_SPEED) * PIRATE_LEAD)
              .add(p.aimErr);
     } else {
-      pirTmpB.copy(p.group.position).add(p.vel);   // cruise: face travel
+      pirTmpB.copy(p.group.position).addScaledVector(p.jinkDir, 800);       // extend: hold the escape line
     }
+    // nose: mirror-lookAt (lookAt aims +Z, the nose is -Z — the shipBreach
+    // trick), then a slerp CLAMPED to PIRATE_TURN rad/s. Proportional slerp
+    // alone has no ceiling — the clamp is what makes it out-turnable.
     pirAimObj.position.copy(p.group.position);
     pirAimObj.lookAt(pirTmpC.copy(p.group.position).multiplyScalar(2).sub(pirTmpB));
-    p.group.quaternion.slerp(pirAimObj.quaternion, 1 - Math.exp(-8 * dt));
+    const turnCap = p.state === "ATTACK" ? PIRATE_TURN : PIRATE_TURN_CRUISE;
+    const ang = p.group.quaternion.angleTo(pirAimObj.quaternion);
+    if (ang > 1e-4) p.group.quaternion.slerp(pirAimObj.quaternion, Math.min(1, turnCap * dt / ang));
+    // thrust along the nose, grip the velocity around the carve, damp,
+    // cap by state, integrate. Bleeding speed in a hard turn is free physics.
+    p.group.getWorldDirection(pirTmpC).negate();
+    p.vel.addScaledVector(pirTmpC, PIRATE_ACCEL * dt);
+    const spd = p.vel.length();
+    if (spd > 1) {
+      pirTmpC.multiplyScalar(spd);           // nose direction at current speed
+      p.vel.lerp(pirTmpC, 1 - Math.exp(-PIRATE_GRIP * dt));
+    }
+    p.vel.multiplyScalar(Math.pow(0.995, dt * 60));
+    const maxSpd = p.state === "ATTACK" ? PIRATE_PASS_SPD
+                 : p.state === "BREAK"  ? PIRATE_EXTEND_SPD : PIRATE_MAX_SPD;
+    if (p.vel.length() > maxSpd) p.vel.setLength(maxSpd);
+    p.group.position.addScaledVector(p.vel, dt);
 
     /* ---- fire: bursts of 4, only once the nose has actually come around ---- */
     if (p.state === "ATTACK" && !landedOn) {
@@ -2851,7 +2880,7 @@ function updateEnemies(dt) {
           p.burstLeft = PIRATE_BURST;
           p.fireT = PIRATE_BURST_COOL + Math.random();
           randUnit(pirTmpC);
-          p.aimErr.copy(pirTmpC).multiplyScalar(dist * PIRATE_AIM_ERR);  // fresh slop each burst
+          p.aimErr.copy(pirTmpC).multiplyScalar(Math.random() * dist * PIRATE_AIM_ERR);  // fresh slop each burst (fraction, not max)
         }
       }
     }
@@ -3293,6 +3322,42 @@ function drawHomeChevron(c, W, H) {
   c.restore();
 }
 
+/* (D2) THREAT marker (v42) — the HOME chevron's hostile twin, answering
+   "WHERE is he": red edge chevron toward the nearest live raider. Off-screen
+   only — on-screen the strobe is the marker, and a second label pinned to a
+   ship you're already looking at is clutter. Parked ships aren't stalked. */
+function drawThreatChevron(c, W, H) {
+  if (landedOn) return;
+  let threat = null, threatD2 = Infinity;
+  for (const p of pirates) {
+    if (!p.alive) continue;
+    const d2 = p.group.position.distanceToSquared(shipObj.position);
+    if (d2 < threatD2) { threatD2 = d2; threat = p; }
+  }
+  if (!threat) return;
+  _nCam.copy(threat.group.position).applyMatrix4(camera.matrixWorldInverse);
+  _nProj.copy(threat.group.position).project(camera);
+  let x = _nProj.x, y = _nProj.y;
+  const behind = _nCam.z >= 0;
+  if (behind) { x = -x; y = -y; }             // projection mirrors behind the camera
+  if (!behind && Math.abs(x) < 1 && Math.abs(y) < 1) return;   // on-screen: the strobe has it
+  c.save();
+  c.fillStyle = "#ff5544"; c.shadowColor = "#ff5544"; c.shadowBlur = 6;
+  c.font = "11px " + navFont; c.textAlign = "center";
+  const m = Math.max(Math.abs(x), Math.abs(y)) || 1e-6;   // dead-center-behind: don't divide by 0
+  x /= m; y /= m;
+  const M = 52;
+  const sx = M + (x * 0.5 + 0.5) * (W - 2 * M);
+  const sy = M + (-y * 0.5 + 0.5) * (H - 2 * M);
+  const ang = Math.atan2(sy - H / 2, sx - W / 2);
+  c.translate(sx, sy); c.rotate(ang);
+  c.beginPath(); c.moveTo(11, 0); c.lineTo(-2, -6); c.lineTo(-2, 6); c.closePath(); c.fill();
+  c.rotate(-ang);
+  c.fillText("RAIDER " + Math.round(Math.sqrt(threatD2)).toLocaleString() + " u",
+             -Math.cos(ang) * 46, -Math.sin(ang) * 46 + 4);
+  c.restore();
+}
+
 /* (E) LANDING MARKER (v35) — on close approach, a reticle on the ACTUAL
    Charleston deck. The deck moves (the planet spins and orbits), so this is
    computed live every frame. Shows range, a closing-rate arrow, and turns
@@ -3420,6 +3485,7 @@ function drawNavHud(dt) {
 
   // --- D: the way home, whenever the hold is worth banking ---
   drawHomeChevron(c, W, H);
+  drawThreatChevron(c, W, H);
   // --- E: the landing reticle, on close approach to the pad ---
   drawPadMarker(c, W, H, dt);
 }
