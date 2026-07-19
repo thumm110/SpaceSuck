@@ -2464,7 +2464,11 @@ const PIRATE_BOLT_COUNT = 16;
 const PIRATE_BOLT_SPEED = 850;    // ~57% of BOLT_SPEED: dodgeable on purpose
 const PIRATE_BOLT_LIFE = 2.2;
 const PIRATE_BOLT_DMG = 7;
-const PIRATE_HIT_R = 7;           // body sphere, for your bolts and for rams
+/* v41: the fighter reads now. At the original 7u it was smaller than the
+   player's own ship, unlit, and parked 350-600u out — a black dot on black
+   space, and a nearly unhittable one (junk runs 20-60u). Scale fixes both. */
+const PIRATE_SCALE = 2.4;         // applied to the whole built group
+const PIRATE_HIT_R = 17;          // body sphere, for your bolts and for rams (~7u hull × scale)
 const PIRATE_MAX_SPD = 280;      // under your boosted top end — you can ALWAYS run
 const PIRATE_ACCEL = 300;
 const PIRATE_ATTACK_R = 600;     // HUNT closes to this, then the knife fight starts
@@ -2473,9 +2477,13 @@ const PIRATE_BREAK_R = 140;      // point-blank → break off (attack passes, no
 const PIRATE_ATTACK_T = 6;       // max seconds per pass before a mandatory breather
 const PIRATE_BREAK_T = 2.2;
 const PIRATE_STANDOFF = 350;     // the arc it strafes on around you
-const PIRATE_FIRE_CONE = 0.96;   // dot(nose, aim) needed to shoot — ~16 degrees
-const PIRATE_BURST = 4, PIRATE_BURST_GAP = 0.16, PIRATE_BURST_COOL = 2.6;
-const PIRATE_AIM_ERR = 0.055;    // aim slop per unit of range — misses are real, not cosmetic
+const PIRATE_FIRE_CONE = 0.90;   // dot(nose, aim) needed to shoot — ~26 degrees
+                                 // (v41: 0.96 starved the bursts — the nose kept
+                                 // chasing the jinking aim point and losing)
+const PIRATE_BURST = 4, PIRATE_BURST_GAP = 0.16, PIRATE_BURST_COOL = 2.0;
+const PIRATE_AIM_ERR = 0.04;     // aim slop per unit of range — misses are real, not
+                                 // cosmetic. v41: 0.055 was ±22u at combat range vs a
+                                 // 12u hull — even a PARKED ship never got tagged
 const PIRATE_LEAD = 0.85;        // leads your velocity, imperfectly
 const PIRATE_SPAWN_NEAR = 2600, PIRATE_SPAWN_FAR = 3400;  // inside RADAR_RANGE (3500): blip before contact
 const PIRATE_CULL = 5000;        // outrun it and it slinks off — no bang, no pay
@@ -2495,8 +2503,10 @@ const pirAimObj = new THREE.Object3D();   // scratch for the mirror-lookAt trick
    white when you clipped either one (same rule as the junk slots). */
 function buildPirateMesh() {
   const g = new THREE.Group();
-  const rustMat = new THREE.MeshStandardMaterial({ color: 0x5a4a3a, metalness: 0.75, roughness: 0.45 });
-  const darkMat = new THREE.MeshStandardMaterial({ color: 0x2c2622, metalness: 0.6, roughness: 0.6 });
+  // self-lit like the junk rocks: one sun + dim ambient means an unlit hull
+  // is a silhouette, and a fighter you can't see isn't a fight
+  const rustMat = new THREE.MeshStandardMaterial({ color: 0x5a4a3a, metalness: 0.75, roughness: 0.45, emissive: 0x4a3c2e, emissiveIntensity: 0.55 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x2c2622, metalness: 0.6, roughness: 0.6, emissive: 0x241f1a, emissiveIntensity: 0.55 });
   const redMat  = new THREE.MeshStandardMaterial({ color: 0x8a2015, metalness: 0.4, roughness: 0.4, emissive: 0xff2a12, emissiveIntensity: 0.7 });
 
   const hull = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.8, 5), rustMat);
@@ -2537,7 +2547,16 @@ function buildPirateMesh() {
   engineGlow.position.set(0.3, -0.05, 3.4);
   engineGlow.scale.setScalar(0.001);
   g.add(engineGlow);
-  return { group: g, engineGlow };
+  // a fast red strobe, the satellite-beacon trick turned hostile: at 400u the
+  // hull is a couple of pixels, and you track the bandit by its running light
+  const beacon = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: boltGlowTex, color: 0xff3020, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  beacon.position.set(0, 1.4, 0);
+  beacon.scale.setScalar(5);
+  g.add(beacon);
+  g.scale.setScalar(PIRATE_SCALE);   // one knob scales hull, glows, everything
+  return { group: g, engineGlow, beacon };
 }
 
 const pirates = [];
@@ -2550,6 +2569,8 @@ for (let i = 0; i < PIRATE_COUNT; i++) {
     name: PIRATE_NAMES[i % PIRATE_NAMES.length],   // for the hails, later
     group: built.group,
     engineGlow: built.engineGlow,
+    beacon: built.beacon,
+    phase: Math.random() * 6.28,                   // de-syncs the two strobes
     mats: junkCollectMats(built.group),            // per-slot emissives for the white hit-flash
     vel: new THREE.Vector3(),
     hp: 3, maxHp: 3, flash: 0,
@@ -2662,7 +2683,10 @@ for (let i = 0; i < PIRATE_BOLT_COUNT; i++) {
   const mat = new THREE.MeshBasicMaterial({ color: RED_BOLT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
   const mesh = new THREE.Mesh(boltGeo, mat);
   const glowMat = new THREE.SpriteMaterial({ map: boltGlowTex, color: RED_BOLT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
-  const glow = new THREE.Sprite(glowMat); glow.scale.setScalar(3.2);
+  // v41: 7.0, not the player's 3.2 — an incoming bolt is seen NOSE-ON, so the
+  // cylinder foreshortens to a dot and the glow is all you get. Yours streak
+  // away and don't need the help.
+  const glow = new THREE.Sprite(glowMat); glow.scale.setScalar(7.0);
   mesh.add(glow);
   mesh.visible = false;
   scene.add(mesh);
@@ -2677,6 +2701,9 @@ function spawnPirateBolt(pos, dir, srcVel) {
   b.vel.copy(srcVel).addScaledVector(dir, PIRATE_BOLT_SPEED);  // inherits the pirate's velocity, same physics as yours
   b.life = PIRATE_BOLT_LIFE;
   b.mesh.visible = true;
+  // muzzle flash from the ember pool (a grow-flash, like a kill pop in
+  // miniature) — the blink that tells you WHERE the shot came from
+  emitEmber(pos, srcVel, 9, 0.12, true);
 }
 
 // the fair-warning ping: two FALLING notes. The scrap chime climbs, so a
@@ -2702,7 +2729,7 @@ function pirateWarnSound() {
 function pirateShotSound(dist) {
   if (!audio) return;
   const { ctx } = audio, t = ctx.currentTime;
-  const vol = Math.min(0.12, 0.12 * (1 / (1 + dist / 300)));
+  const vol = Math.min(0.12, 0.12 * (1 / (1 + dist / 500)));   // carries to combat range — incoming fire you can't hear isn't fair
   const o = ctx.createOscillator(); o.type = "square";
   o.frequency.setValueAtTime(460, t);
   o.frequency.exponentialRampToValueAtTime(110, t + 0.14);
@@ -2773,6 +2800,12 @@ function updateEnemies(dt) {
     pirTmpC.subVectors(pirTmpB, p.group.position);
     const goalDist = pirTmpC.length();
     if (goalDist > 1) p.vel.addScaledVector(pirTmpC.divideScalar(goalDist), PIRATE_ACCEL * dt);
+    /* v41: hold the arc. Strafing between points ON the standoff sphere flies
+       straight chords THROUGH it, so the pirate steadily fell onto the player,
+       tripped the point-blank BREAK mid-reload, and never fired a second
+       burst. Inside the sphere, push back out along the radius. */
+    if (p.state === "ATTACK" && dist < PIRATE_STANDOFF)
+      p.vel.addScaledVector(pirTmpA, -(1 - dist / PIRATE_STANDOFF) * PIRATE_ACCEL * dt);
     p.vel.multiplyScalar(Math.pow(0.995, dt * 60));
     if (p.vel.length() > PIRATE_MAX_SPD) p.vel.setLength(PIRATE_MAX_SPD);
     p.group.position.addScaledVector(p.vel, dt);
@@ -2789,7 +2822,7 @@ function updateEnemies(dt) {
     }
     pirAimObj.position.copy(p.group.position);
     pirAimObj.lookAt(pirTmpC.copy(p.group.position).multiplyScalar(2).sub(pirTmpB));
-    p.group.quaternion.slerp(pirAimObj.quaternion, 1 - Math.exp(-6 * dt));
+    p.group.quaternion.slerp(pirAimObj.quaternion, 1 - Math.exp(-8 * dt));
 
     /* ---- fire: bursts of 4, only once the nose has actually come around ---- */
     if (p.state === "ATTACK" && !landedOn) {
@@ -2799,7 +2832,14 @@ function updateEnemies(dt) {
           pirTmpC.subVectors(pirTmpB, p.group.position).normalize();  // the shot it WANTS
           p.group.getWorldDirection(pirTmpA).negate();                // the nose it HAS
           if (pirTmpA.dot(pirTmpC) > PIRATE_FIRE_CONE) {
-            pirTmpB.copy(p.group.position).addScaledVector(pirTmpA, 5);  // muzzle clear of its own hit sphere
+            pirTmpB.copy(p.group.position).addScaledVector(pirTmpA, 12);  // muzzle at the nose tip (scaled hull)
+            /* v41: the bolt inherits OUR velocity — up to 280 u/s sideways in
+               a strafe — so a bolt aimed dead-on drifts ~18° wide and NOTHING
+               ever landed. Cancel the sideways part out of the shot direction
+               so the bolt's true travel line points at the aim point.
+               (aimErr stays — misses should come from slop, not physics.) */
+            pirTmpA.copy(p.vel).addScaledVector(pirTmpC, -p.vel.dot(pirTmpC));
+            pirTmpC.multiplyScalar(PIRATE_BOLT_SPEED).sub(pirTmpA).normalize();
             spawnPirateBolt(pirTmpB, pirTmpC, p.vel);
             pirateShotSound(dist);
             p.fireT = PIRATE_BURST_GAP;
@@ -2834,8 +2874,9 @@ function updateEnemies(dt) {
       continue;
     }
 
-    // the tail light rides how hard it's flying
+    // the tail light rides how hard it's flying; the strobe just menaces
     p.engineGlow.scale.setScalar(1.5 + 2.5 * p.vel.length() / PIRATE_MAX_SPD);
+    p.beacon.material.opacity = Math.sin(clock.elapsedTime * 7 + p.phase) > 0 ? 0.9 : 0.15;
   }
 
   /* ---- hostile bolts: advance, swept-test the one target they have ---- */
