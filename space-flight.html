@@ -2597,7 +2597,68 @@ for (let i = 0; i < PIRATE_COUNT; i++) {
     jinkDir: new THREE.Vector3(),  // the extend's escape line, fixed at BREAK entry
     aimErr: new THREE.Vector3(),   // per-burst aim slop — what makes the bolts dodgeable
     burstLeft: 0, fireT: 1.5,
+    muzzles: null,                 // raider.glb GunTipL/R nodes once loaded; null = fire from the nose
   });
+}
+
+/* ---- the REAL raider: Tanner's Blender fighter (raider.glb) ----
+   Same async swap as the player's ship.glb: the primitives fly until it
+   arrives and stay as the fallback. One file, CLONED per slot — and the
+   materials cloned per clone, because the hit-flash mutates emissive and
+   shared mats would flash both pirates when you clip one (the junk rule
+   again). The .blend's authored idle float is deliberately not wired up:
+   a dogfighting AI never sits still enough to show it — wire it to the
+   future neutral "loiter" state instead. */
+if (THREE.GLTFLoader) {
+  new THREE.GLTFLoader().load("raider.glb", gltf => {
+    for (const p of pirates) {
+      const model = gltf.scene.clone(true);
+      model.traverse(o => { if (o.isMesh && o.material) o.material = o.material.clone(); });
+
+      // normalize to the primitives' footprint, so PIRATE_SCALE (on the
+      // group) still lands the hull at player parity and the 12u hit
+      // sphere keeps meaning what it means
+      const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+      model.scale.setScalar((10 / PIRATE_SCALE) / size.z);
+
+      // same material pass as the ship swap: *Glow mats glow, the hull
+      // gets a self-lit floor. The raider's gunmetal is near-black by
+      // design, so it gets a higher floor than the player's 0.15 — the
+      // dagger silhouette stays, the edges still catch
+      model.traverse(o => {
+        if (!o.isMesh || !o.material) return;
+        if (o.material.name.endsWith("Glow")) {
+          if (o.material.emissive.getHex() === 0) o.material.emissive.copy(o.material.color);
+          o.material.emissiveIntensity = 1.5;
+        } else {
+          o.material.emissive.copy(o.material.color);
+          o.material.emissiveIntensity = 0.5;
+        }
+      });
+
+      // swap hulls: strip the primitives, KEEP the sprites the game loop
+      // holds references to (strobe beacon + engine glow)
+      for (const child of [...p.group.children]) {
+        if (child !== p.engineGlow && child !== p.beacon) p.group.remove(child);
+      }
+      p.group.add(model);
+
+      // re-anchor the engine glow between the twin thrusters, and hand the
+      // fire block the wingtip gun tips as muzzles
+      p.group.updateMatrixWorld(true);
+      const tL = model.getObjectByName("ThrusterL"), tR = model.getObjectByName("ThrusterR");
+      if (tL && tR) {
+        const a = tL.getWorldPosition(new THREE.Vector3()), b = tR.getWorldPosition(new THREE.Vector3());
+        p.engineGlow.position.copy(p.group.worldToLocal(a.add(b).multiplyScalar(0.5)));
+        p.engineGlow.position.z += 0.8;   // nudge clear of the nozzles
+      }
+      p.muzzles = [model.getObjectByName("GunTipL"), model.getObjectByName("GunTipR")].filter(Boolean);
+      if (!p.muzzles.length) p.muzzles = null;
+
+      // refresh the hit-flash list for THIS slot's cloned materials
+      p.mats = junkCollectMats(p.group);
+    }
+  }, undefined, err => console.warn("raider.glb didn't load — flying the primitives", err));
 }
 
 function pirateSpawn(p) {
@@ -2861,7 +2922,10 @@ function updateEnemies(dt) {
           pirTmpC.subVectors(pirTmpB, p.group.position).normalize();  // the shot it WANTS
           p.group.getWorldDirection(pirTmpA).negate();                // the nose it HAS
           if (pirTmpA.dot(pirTmpC) > PIRATE_FIRE_CONE) {
-            pirTmpB.copy(p.group.position).addScaledVector(pirTmpA, 12);  // muzzle at the nose tip (scaled hull)
+            // muzzle: the raider's wingtip guns once the GLB lands
+            // (alternating L/R like the player's cannons), else the nose tip
+            if (p.muzzles) p.muzzles[p.burstLeft % p.muzzles.length].getWorldPosition(pirTmpB);
+            else pirTmpB.copy(p.group.position).addScaledVector(pirTmpA, 12);
             /* v41: the bolt inherits OUR velocity — up to 280 u/s sideways in
                a strafe — so a bolt aimed dead-on drifts ~18° wide and NOTHING
                ever landed. Cancel the sideways part out of the shot direction

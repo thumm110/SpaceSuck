@@ -79,8 +79,11 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   every run is a quiet argument between one more pass and flying home to bank
   it. A lethal hit tows you to Earth and the spill stays at the wreck
 - **Scavenger pirates — the field shoots back** — you're not the only junker
-  out here. A rusty, mismatched fighter (two if you linger) spawns off the
-  radar's rim — a falling two-note ping and a glowing red blip are your
+  out here. A Blender-built raider — a flat-black forward-swept dagger with
+  blood-red trim, deliberately the player ship's opposite (`raider.glb`,
+  source + build script in `raider/`, primitives as the loading fallback) —
+  spawns off the radar's rim (two if you linger) — a falling two-note ping
+  and a glowing red blip are your
   warning, and a red RAIDER chevron on the HUD edge tracks the nearest one —
   then it flies attack passes by your own rules: nose-first, turn-rate
   limited (you out-turn it), boring in with red bolt bursts before breaking

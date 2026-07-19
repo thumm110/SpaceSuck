@@ -1,0 +1,63 @@
+/home/thumm/Blender/raider/build_raider.py:32: DeprecationWarning: 'Material.use_nodes' is expected to be removed in Blender 6.0
+  m.use_nodes = True
+/home/thumm/Blender/raider/build_raider.py:44: DeprecationWarning: 'Material.use_nodes' is expected to be removed in Blender 6.0
+  m.use_nodes = True
+cyclic modifiers applied
+INFO Draco is available, use library at /snap/blender/7599/5.2/scripts/addons_core/io_scene_gltf2/libbf_intern_draco_bridge.so
+INFO MeshOptimizer is available, use library at /snap/blender/7599/5.2/scripts/addons_core/io_scene_gltf2/libbf_intern_meshopt_bridge.so
+13:31:48 | INFO: Starting glTF 2.0 export
+13:31:48 | INFO: Extracting primitive: Body
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: Sphere
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: DorsalSpine
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: Cylinder.005
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: Cylinder.002
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: Cylinder.006
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: Cylinder.003
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: FinL
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: FinR
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: Cylinder.001
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: Cylinder
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: Cone.001
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: Cone
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: Intake
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: Nose
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: Cylinder.007
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: Cylinder.004
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: WingEdgeL
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: WingEdgeR
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: WingL
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | INFO: Extracting primitive: WingR
+13:31:48 | INFO: Primitives created: 1
+13:31:48 | WARNING: Baking animation because the number of keyframes is not equal for all channel tracks
+13:31:48 | INFO: Finished glTF 2.0 export in 0.09965682029724121 s
+/home/thumm/Blender/raider/build_raider.py:226: DeprecationWarning: 'World.use_nodes' is expected to be removed in Blender 6.0
+  world.use_nodes = True
+00:10.488  render           | Saved: '/home/thumm/Blender/raider/preview_front.png'
+00:18.667  render           | Saved: '/home/thumm/Blender/raider/preview_rear.png'
+
+wrote /home/thumm/Blender/raider/raider.glb
+Info: Saved as "raider.blend"
+DONE — files in /home/thumm/Blender/raider
+Blender 5.2.0 LTS (hash fbe6228777e7 built 2026-07-14 01:32:04)
+
+Blender quit
