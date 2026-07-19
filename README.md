@@ -22,7 +22,7 @@ when the page loads.
 | ↑ / ↓ | Nose down / up (flight-stick style) |
 | Shift | Boost |
 | Space | Fire blasters |
-| V | Cycle view: cockpit → chase → cinematic |
+| V | Cycle view: cockpit → chase → chase far → cinematic |
 
 Touch devices get on-screen thrust/brake/reverse buttons, a big red **FIRE**
 button, and drag steering. Hold FIRE with your right thumb while your left
@@ -36,7 +36,9 @@ head-look: glance around at space and planets while the ship flies on —
 release and your view springs back to forward. **RT/LT are analog
 thrust/reverse** (half a pull is half
 thrust), X full stop, B boost, LB/RB nose left/right, **A fires the
-blasters** (twin nose cannons, aqua + orange), Y cycles the view.
+blasters** (twin nose cannons, aqua + orange), Y cycles the four views, and
+**clicking the right stick (R3) holds a look-back** — camera off the nose,
+your ship centered, and whatever's chasing you framed right behind it.
 Docked at the outfitter, the **D-pad** picks an upgrade and **A** buys it.
 Atmospheric entry
 and touchdowns rumble the controller, as do junk kills close aboard.
@@ -91,7 +93,10 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   window. It's never faster than you, so running away always works; it just
   pays nothing. Three hits crack it open for the richest scrap drop in the
   game. House rules still hold: ramming one shatters it for zero credit,
-  and parked ships are off-limits
+  and parked ships are off-limits. Earth's sky is a **safe harbor**: inside
+  two radii of the bank world pirates neither spawn nor hunt — cross the
+  line with one on your tail and it breaks off and slinks over the horizon.
+  No pad camping
 - **A bank — and Charleston holds the monopoly** — cargo in the hold is at
   risk: rams spill it, a closed tab loses it. Park on the Charleston pad and
   the hold pays out into the **BANK**, a few units a tick — banked scrap is

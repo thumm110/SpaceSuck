@@ -2505,6 +2505,13 @@ const PIRATE_LEAD = 0.85;        // leads your velocity, imperfectly
 const PIRATE_SPAWN_NEAR = 2600, PIRATE_SPAWN_FAR = 3400;  // inside RADAR_RANGE (3500): blip before contact
 const PIRATE_CULL = 5000;        // outrun it and it slinks off — no bang, no pay
 const PIRATE_RESPAWN_MIN = 60, PIRATE_RESPAWN_MAX = 120;
+/* Safe harbor (v44): the bank's sky is a no-hunt zone. Sitting a radius off
+   the pad waiting for you to lift is a strategy (ask any camper), so inside
+   PIRATE_SAFE_R of the spaceport world pirates neither spawn nor hunt — a
+   pursuer breaks off and runs for open space, then slinks away entirely.
+   Player-centric on purpose: the harbor protects YOU near the bank. */
+const PIRATE_SAFE_R = 2;         // radii around the pads world — atmosphere + approach both covered
+const PIRATE_HARBOR_GONE = 1200; // fled this far while you're in harbor → quietly gone
 const PIRATE_RAM_HURT = 6;       // hull per 100 u/s closing — a fighter, not a boulder
 const PIRATE_SCRAP_BITS = 8, PIRATE_SCRAP_VAL = 5;   // 40 — richest kill in the game (satellite = 24)
 const PIRATE_NAMES = ["RUST VULTURE", "SCRAPJACK", "THE MAGPIE", "KESSLER'S GHOST"];
@@ -2661,9 +2668,17 @@ if (THREE.GLTFLoader) {
   }, undefined, err => console.warn("raider.glb didn't load — flying the primitives", err));
 }
 
+// same lazy find as the HOME chevron (homeBody is shared with the nav HUD)
+function pirateInHarbor() {
+  if (!homeBody) homeBody = liveBodies.find(b => b.pads) || null;
+  return !!homeBody && shipObj.position.distanceTo(homeBody.group.position)
+         < homeBody.cfg.radius * PIRATE_SAFE_R;
+}
+
 function pirateSpawn(p) {
-  // nobody jumps a parked ship (junk-ram parity) — try again shortly after liftoff
-  if (landedOn) { p.respawnIn = 6; return; }
+  // nobody jumps a parked ship (junk-ram parity), and nobody hunts the
+  // harbor — try again shortly after you leave
+  if (landedOn || pirateInHarbor()) { p.respawnIn = 6; return; }
   let placed = false;
   for (let tries = 0; tries < 5 && !placed; tries++) {
     randUnit(pirTmpA);
@@ -2818,6 +2833,7 @@ function pirateShotSound(dist) {
 }
 
 function updateEnemies(dt) {
+  const harbor = pirateInHarbor();   // once per frame, not per pirate
   for (const p of pirates) {
     if (!p.alive) {
       p.respawnIn -= dt;
@@ -2833,6 +2849,14 @@ function updateEnemies(dt) {
     const dist = pirTmpA.length();
     if (dist > PIRATE_CULL) { pirateDespawn(p); continue; }   // you outran it
     pirTmpA.divideScalar(dist || 1);   // unit pirate→ship; holds for this whole iteration
+
+    // harbor: any pursuer breaks off, runs for open space, and despawns
+    // over the horizon. The retreat is pinned so it can't re-engage.
+    if (harbor) {
+      if (dist > PIRATE_HARBOR_GONE) { pirateDespawn(p); continue; }
+      if (p.state !== "BREAK") { p.state = "BREAK"; p.jinkDir.copy(pirTmpA).negate(); }
+      p.stateT = 0;
+    }
 
     /* ---- the three-state brain (v42: a pass rhythm, not an orbit) ----
        HUNT lines it up, ATTACK is a firing pass bored straight in, BREAK is
@@ -3000,9 +3024,11 @@ function updateEnemies(dt) {
      junkTestBolt would run junkKill payouts — pirates farming scrap FOR you. */
 }
 
-const VIEW_COCKPIT = 0, VIEW_CHASE = 1, VIEW_CINEMATIC = 2;
+const VIEW_COCKPIT = 0, VIEW_CHASE = 1, VIEW_CHASE_FAR = 2, VIEW_CINEMATIC = 3;
 let viewMode = VIEW_COCKPIT;                      // start in the cockpit
 const CHASE_OFFSET = new THREE.Vector3(0, 4.5, 17); // behind & above, in ship-local space
+const CHASE_FAR_OFFSET = new THREE.Vector3(0, 7, 30); // v44: same chase brain, wider stage
+const LOOKBACK_OFFSET = new THREE.Vector3(0, 4.5, -17); // v44: off the nose, looking back (R3 glance)
 const tmpOffset = new THREE.Vector3();
 const viewTag = document.getElementById("viewtag");
 
@@ -3015,6 +3041,7 @@ const Z_AXIS = new THREE.Vector3(0, 0, 1);
    little. Tightened hard in v19 (rates 2x, leash 55→34, cone 28°→12°):
    the ship breathes inside a small window instead of wandering the frame. */
 const MAX_CHASE_DIST = 34;                    // leash: max camera-to-ship gap
+const MAX_CHASE_FAR_DIST = 60;                // the far chase gets a longer leash
 const MAX_OFFSCREEN = THREE.MathUtils.degToRad(7); // keep ship within 7° of center (tighter, v38)
 const chaseDir = new THREE.Vector3();
 const chaseFwd = new THREE.Vector3();
@@ -3091,9 +3118,9 @@ function applyView() {
 }
 
 function toggleView() {
-  viewMode = (viewMode + 1) % 3;
+  viewMode = (viewMode + 1) % 4;
   if (viewMode === VIEW_CINEMATIC) cineCutNewShot();   // seed the first shot
-  viewTag.textContent = "VIEW: " + ["COCKPIT", "CHASE", "CINEMATIC"][viewMode];
+  viewTag.textContent = "VIEW: " + ["COCKPIT", "CHASE", "CHASE FAR", "CINEMATIC"][viewMode];
   applyView();
 }
 applyView();   // seed the initial (cockpit) view state
@@ -3565,7 +3592,7 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
 
   /* ---- gamepad: polled every frame ---- */
-  let padLX = 0, padYaw = 0, padThrust = 0, padReverse = 0, padStop = false, padBoost = false, padFire = false;
+  let padLX = 0, padYaw = 0, padThrust = 0, padReverse = 0, padStop = false, padBoost = false, padFire = false, padLookBack = false;
   let lookTargetYaw = 0, lookTargetPitch = 0;   // 0 unless the stick says otherwise
   if (padIndex !== null) {
     const gp = navigator.getGamepads()[padIndex];
@@ -3596,6 +3623,7 @@ function animate() {
       if (gp.buttons[5] && gp.buttons[5].pressed) padYaw -= 1;   // RB — nose right
       shipObj.rotateY(padYaw * ship.turnSpeed * dt);
       padFire = !!(gp.buttons[0] && gp.buttons[0].pressed);       // A — FIRE BLASTERS
+      padLookBack = !!(gp.buttons[11] && gp.buttons[11].pressed); // R3 — hold to check your six
       const yBtn = !!(gp.buttons[3] && gp.buttons[3].pressed); // Y — view toggle
       if (yBtn && !padViewHeld) toggleView();
       padViewHeld = yBtn;
@@ -3855,6 +3883,16 @@ function animate() {
       shipObj.position.z + orbitRadius * cp * Math.cos(orbitYaw)
     );
     camera.lookAt(shipObj.position);
+  } else if (padLookBack) {
+    // R3 held: check your six — camera off the nose looking back THROUGH
+    // the ship at whatever's chasing you. Outranks every view (you glance
+    // from the cockpit too — that's the whole point). A glance, not a
+    // mode: no easing, no state; release and the view takes back over.
+    shipMesh.visible = true;
+    shipMesh.rotation.z = bank;
+    tmpOffset.copy(LOOKBACK_OFFSET).applyQuaternion(shipObj.quaternion);
+    camera.position.copy(shipObj.position).add(tmpOffset);
+    camera.lookAt(shipObj.position);
   } else if (viewMode === VIEW_COCKPIT) {
     shipMesh.visible = false;                 // don't render the hull in your face
     camera.position.copy(shipObj.position);
@@ -3862,11 +3900,12 @@ function animate() {
     bankQ.setFromAxisAngle(Z_AXIS, bank * 0.5);
     // head-look composes in the SHIP's frame: glance around the canopy
     camera.quaternion.copy(shipObj.quaternion).multiply(lookQ).multiply(bankQ);
-  } else if (viewMode === VIEW_CHASE) {
+  } else if (viewMode === VIEW_CHASE || viewMode === VIEW_CHASE_FAR) {
     shipMesh.visible = true;
     shipMesh.rotation.z = bank;               // the model leans, the physics don't
-    // desired camera spot: CHASE_OFFSET rotated into the ship's frame
-    tmpOffset.copy(CHASE_OFFSET).applyQuaternion(shipObj.quaternion);
+    // desired camera spot: the view's offset rotated into the ship's frame
+    tmpOffset.copy(viewMode === VIEW_CHASE_FAR ? CHASE_FAR_OFFSET : CHASE_OFFSET)
+             .applyQuaternion(shipObj.quaternion);
     tmpOffset.add(shipObj.position);
     // exponential easing — framerate-independent smooth pursuit. Tightened
     // again in v38 (16→20 here, 14→20 on the orientation slerp below) so the
@@ -3878,11 +3917,12 @@ function animate() {
     chaseQuat.slerp(shipObj.quaternion, 1 - Math.exp(-20 * dt));
 
     // leash: at speed the lag grows with velocity — never let the ship
-    // recede past MAX_CHASE_DIST no matter how fast we're going
+    // recede past the view's leash no matter how fast we're going
+    const leash = viewMode === VIEW_CHASE_FAR ? MAX_CHASE_FAR_DIST : MAX_CHASE_DIST;
     const gap = camera.position.distanceTo(shipObj.position);
-    if (gap > MAX_CHASE_DIST) {
+    if (gap > leash) {
       camera.position.sub(shipObj.position)
-        .multiplyScalar(MAX_CHASE_DIST / gap)
+        .multiplyScalar(leash / gap)
         .add(shipObj.position);
     }
 
