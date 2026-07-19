@@ -357,6 +357,13 @@ if (typeof THREE === "undefined") {
 }
 
 /* ============ 1. CONFIG — YOUR SOLAR SYSTEM ============ */
+/* Asset cache-bust (v46): play.sh launches the page with ?v=<timestamp> to
+   dodge Chrome's cache — but the models fetched bare (ship.glb, planets,
+   height grids) were still heuristically cached for HOURS, so a rebuilt
+   ship kept flying its old hull. Ride the page's own query onto every
+   asset URL: fresh launch → fresh models; loaded without a query (Pages)
+   → behaves exactly as before. */
+const ASSET_V = location.search;
 /* Scale story: v9 ×3 radii; v14 ×2.5; v15 doubles radii AGAIN (distances
    ×2.5) and pushes Earth to 2500u — the flagship destination. A low
    sightseeing lap of Earth is a ~15,700u journey now: minutes of flying,
@@ -1106,7 +1113,7 @@ function buildShipMesh() {
    base64. groundRadius() bilinearly samples it — that's the ENTIRE
    terrain-collision system. No raycasts against 80k triangles. */
 function loadHeightGrid(body, url) {
-  fetch(url).then(r => r.json()).then(j => {
+  fetch(url + ASSET_V).then(r => r.json()).then(j => {
     const raw = atob(j.b64), d = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) d[i] = raw.charCodeAt(i);
     body.height = { w: j.w, h: j.h, min: j.min, max: j.max, d };
@@ -1238,7 +1245,7 @@ function buildBody(cfg) {
       const fallback = () =>
         holder.add(makeProceduralSurface({ ...cfg, style: "terrestrial" }));
       if (THREE.GLTFLoader) {
-        new THREE.GLTFLoader().load(cfg.file, gltf => {
+        new THREE.GLTFLoader().load(cfg.file + ASSET_V, gltf => {
           const model = gltf.scene;
           model.scale.setScalar(cfg.radius / 100);
           holder.add(model);
@@ -1454,7 +1461,7 @@ shipObj.add(shipMesh);
    loop through an AnimationMixer: visual only, physics untouched. */
 let shipMixer = null;
 if (THREE.GLTFLoader) {
-  new THREE.GLTFLoader().load("ship.glb", gltf => {
+  new THREE.GLTFLoader().load("ship.glb" + ASSET_V, gltf => {
     const model = gltf.scene;
 
     // scale to match the placeholder's presence (~10u nose to tail)
@@ -2617,7 +2624,7 @@ for (let i = 0; i < PIRATE_COUNT; i++) {
    a dogfighting AI never sits still enough to show it — wire it to the
    future neutral "loiter" state instead. */
 if (THREE.GLTFLoader) {
-  new THREE.GLTFLoader().load("raider.glb", gltf => {
+  new THREE.GLTFLoader().load("raider.glb" + ASSET_V, gltf => {
     for (const p of pirates) {
       const model = gltf.scene.clone(true);
       model.traverse(o => { if (o.isMesh && o.material) o.material = o.material.clone(); });
