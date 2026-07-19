@@ -165,8 +165,9 @@ art, that's why: check the URL, not the model.
 
 ## History
 
-Thirty-seven versions across 51 commits, each `vN:` tagged in the log — `git log`
+Thirty-nine versions across 53 commits, each `vN:` tagged in the log — `git log`
 tells the story from "v1: first flight — mouse steer, throttle physics" to a
-Blender fighter mining a junk field for scrap, banking it at Charleston, and
-spending it on upgrades — across two hand-built worlds you can land on: Earth,
+Blender fighter — flying tight, its momentum gripping to the nose, framed in a
+cockpit gunsight — mining a junk field for scrap, banking it at Charleston, and
+spending it on upgrades, across two hand-built worlds you can land on: Earth,
 and the red desert of RUBICON on the far rim.

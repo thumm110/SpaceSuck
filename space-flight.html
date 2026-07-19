@@ -31,6 +31,19 @@
   }
   #crosshair::before { left: 50%; top: 0; width: 1px; height: 100%; transform: translateX(-50%); }
   #crosshair::after  { top: 50%; left: 0; height: 1px; width: 100%; transform: translateY(-50%); }
+  /* cockpit gunsight (v39): a ring around a shrunk crosshair, first-person only */
+  body.cockpit #crosshair { width: 18px; height: 18px; opacity: .95; }
+  #gunsight {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    width: 92px; height: 92px; border-radius: 50%; display: none; pointer-events: none;
+    border: 1.5px solid rgba(110,231,216,.42);
+    box-shadow: 0 0 7px rgba(110,231,216,.28), inset 0 0 9px rgba(110,231,216,.12);
+  }
+  #gunsight::before {   /* a faint inner ring for a layered gunsight look */
+    content:""; position:absolute; inset:14px; border-radius:50%;
+    border: 1px solid rgba(110,231,216,.22);
+  }
+  body.cockpit #gunsight { display: block; }
   #flightdata {
     position: absolute; left: 18px; bottom: 16px;
     font-size: 13px; line-height: 1.7; letter-spacing: 1px;
@@ -212,6 +225,7 @@
   <div class="bracket tl"></div><div class="bracket tr"></div>
   <div class="bracket bl"></div><div class="bracket br"></div>
   <div id="crosshair"></div>
+  <div id="gunsight"></div>
   <div id="ctrlmenu">
     <button id="ctrlToggle" type="button">CONTROLS ▾</button>
     <div id="ctrlList">
@@ -2516,11 +2530,19 @@ function cineCutNewShot() {
   cineOffsetVel.add(cineTmpV);
 }
 
+/* cockpit dressing (v39): a gunsight ring and a shrunk crosshair, first-person only */
+function applyView() {
+  const cockpit = viewMode === VIEW_COCKPIT;
+  document.body.classList.toggle("cockpit", cockpit);   // ring on + crosshair shrinks
+}
+
 function toggleView() {
   viewMode = (viewMode + 1) % 3;
   if (viewMode === VIEW_CINEMATIC) cineCutNewShot();   // seed the first shot
   viewTag.textContent = "VIEW: " + ["COCKPIT", "CHASE", "CINEMATIC"][viewMode];
+  applyView();
 }
+applyView();   // seed the initial (cockpit) view state
 
 /* ============ 11. INPUT ============ */
 const keys = {};
