@@ -1409,9 +1409,16 @@ const ship = {
   boostMult: 2.5,
   damping: 0.995,
   turnSpeed: 1.6,
+  grip: 2.5,          // how fast (rad/s) the ship steers its momentum toward
+                      // the nose (v38): higher = snappier "goes where it
+                      // points"; 0 = the old floaty Newtonian drift. Reverse
+                      // and full-stop are unaffected.
   hull: 100,
   hullMax: 100,
 };
+const _gripAim = new THREE.Vector3();      // scratch for the grip steer
+const _gripQ = new THREE.Quaternion();
+const _gripQ2 = new THREE.Quaternion();
 const shipObj = new THREE.Group();
 shipObj.position.set(0, 0, 3000);
 /* Aim the spawn so the first frame is a view, not empty void: HELIOS dead
@@ -2440,7 +2447,7 @@ const Z_AXIS = new THREE.Vector3(0, 0, 1);
    little. Tightened hard in v19 (rates 2x, leash 55→34, cone 28°→12°):
    the ship breathes inside a small window instead of wandering the frame. */
 const MAX_CHASE_DIST = 34;                    // leash: max camera-to-ship gap
-const MAX_OFFSCREEN = THREE.MathUtils.degToRad(12); // keep ship within 12° of center
+const MAX_OFFSCREEN = THREE.MathUtils.degToRad(7); // keep ship within 7° of center (tighter, v38)
 const chaseDir = new THREE.Vector3();
 const chaseFwd = new THREE.Vector3();
 const chaseAxis = new THREE.Vector3();
@@ -3071,6 +3078,23 @@ function animate() {
   // drag: pow(damping, dt*60) applies the same drag PER SECOND on any
   // monitor — plain multiplyScalar(damping) would double the drag at 144Hz
   ship.velocity.multiplyScalar(Math.pow(ship.damping, dt * 60));
+  // GRIP (v38): rotate the travel direction toward the nose at up to ship.grip
+  // rad/s, so the ship curves to go where it points instead of crabbing
+  // sideways through a turn. Speed is preserved (it's a rotation), and it only
+  // acts while moving forward-ish (reverse still backs straight up) and not
+  // parked — so this changes your heading, never how fast you fly.
+  if (!landedOn && ship.grip > 0) {
+    const gspd = ship.velocity.length();
+    if (gspd > 1e-3) {
+      _gripAim.copy(ship.velocity).divideScalar(gspd);       // current travel dir
+      const off = _gripAim.angleTo(tmpDir);
+      if (tmpDir.dot(_gripAim) > 0 && off > 1e-4) {
+        _gripQ.setFromUnitVectors(_gripAim, tmpDir);          // full turn-to-nose
+        _gripQ2.identity().slerp(_gripQ, Math.min(1, ship.grip * dt / off));
+        ship.velocity.applyQuaternion(_gripQ2);
+      }
+    }
+  }
   // atmospheric drag — the air grabs you; melts away as you climb out
   // (entryDepth is last frame's value, which at 60fps is close enough).
   // depth² so the tall upper atmosphere is scenic cruising, not mud —
@@ -3230,14 +3254,14 @@ function animate() {
     // desired camera spot: CHASE_OFFSET rotated into the ship's frame
     tmpOffset.copy(CHASE_OFFSET).applyQuaternion(shipObj.quaternion);
     tmpOffset.add(shipObj.position);
-    // exponential easing — framerate-independent smooth pursuit. Rates
-    // doubled in v19: still eases (a hint of life in hard turns), but the
-    // ship stays essentially planted in its spot on screen.
-    const k = 1 - Math.exp(-16 * dt);
+    // exponential easing — framerate-independent smooth pursuit. Tightened
+    // again in v38 (16→20 here, 14→20 on the orientation slerp below) so the
+    // crosshair tracks the guns and the ship stays planted through turns.
+    const k = 1 - Math.exp(-20 * dt);
     camera.position.lerp(tmpOffset, k);
     // the pursuit easing lives on chaseQuat; head-look is layered on
     // top afterward so the two never feed back into each other
-    chaseQuat.slerp(shipObj.quaternion, 1 - Math.exp(-14 * dt));
+    chaseQuat.slerp(shipObj.quaternion, 1 - Math.exp(-20 * dt));
 
     // leash: at speed the lag grows with velocity — never let the ship
     // recede past MAX_CHASE_DIST no matter how fast we're going
@@ -3323,9 +3347,12 @@ function animate() {
     retroGlows[1].getWorldPosition(muzzleR);              // right prong tip
     spawnBolt(muzzleL, boltDir, AQUA_BOLT);
     spawnBolt(muzzleR, boltDir, ORANGE_BOLT);
-    // flashes are children of shipObj — position them in ship-local space
-    muzzleFlashes[0].position.copy(shipObj.worldToLocal(flashLocal.copy(muzzleL))); muzzleFlashes[0].scale.setScalar(2.6);
-    muzzleFlashes[1].position.copy(shipObj.worldToLocal(flashLocal.copy(muzzleR))); muzzleFlashes[1].scale.setScalar(2.6);
+    // flashes are children of shipObj — position them in ship-local space.
+    // NOT in cockpit (v38): the two muzzle dots bloomed dead-centre of the
+    // first-person view; the bolts still fire, just without the flash.
+    const flashScale = (viewMode === VIEW_COCKPIT) ? 0.001 : 2.6;
+    muzzleFlashes[0].position.copy(shipObj.worldToLocal(flashLocal.copy(muzzleL))); muzzleFlashes[0].scale.setScalar(flashScale);
+    muzzleFlashes[1].position.copy(shipObj.worldToLocal(flashLocal.copy(muzzleR))); muzzleFlashes[1].scale.setScalar(flashScale);
     blasterSound();
     padRumble(0.25, 35);
     fireCooldown = FIRE_COOLDOWN;
