@@ -232,7 +232,8 @@
       <div class="grp">FLIGHT</div>
       <b>W</b> thrust · <b>S</b> reverse · <b>X</b> full stop<br>
       <b>A / D</b> roll · <b>← / →</b> turn · <b>↑ / ↓</b> nose down / up<br>
-      <b>SHIFT</b> boost · <b>SPACE</b> fire · <b>V</b> view (cockpit / chase / cinematic)
+      <b>SHIFT</b> boost · <b>SPACE</b> fire · <b>V</b> view (cockpit / chase / cinematic)<br>
+      <b>E</b> answer a hail — hire a neutral raider as your wingman
       <div class="grp">MOUSE</div>
       <b>Click</b> capture — steer · <b>ESC</b> release<br>
       <b>Right-drag</b> orbit camera · <b>Wheel</b> zoom
@@ -254,6 +255,12 @@
       While docked, the OUTFITTER sells upgrades — beam range, hull
       plating, cargo clamps. Click a row, press <b>1 / 2 / 3</b>, or
       D-pad + A on a gamepad.
+      <div class="grp">RAIDERS</div>
+      A red strobe is a bandit — fight or run (you're faster). An amber
+      blink is a neutral scavenger: it holds fire unless you shoot first.
+      Fly close with guns cold and it hails you — <b>E</b> (or D-pad ↑)
+      pays its fee from the bank and it flies your wing, two max. The
+      bank's sky is a safe harbor; nobody hunts you there.
       <div class="grp">HUD</div>
       <b>H</b> toggle this menu
     </div>
@@ -1645,7 +1652,10 @@ function shipBreach() {
                    .sub(e.group.position));
   }
   for (const j of junk) junkRespawn(j, false);   // don't wake up inside a rock
-  for (const p of pirates) if (p.alive) pirateDespawn(p);   // you don't respawn under fire
+  // you don't respawn under fire — but the tow doesn't repo your WINGMEN:
+  // they're 4700u+ behind after the teleport, and the ally rejoin branch
+  // reels them onto your six within a few frames
+  for (const p of pirates) if (p.alive && p.faction !== "ally") pirateDespawn(p);
   breachUntil = clock.elapsedTime + 4;
   breachEl.style.visibility = "visible";
 }
@@ -2465,11 +2475,12 @@ for (const j of junk) junkRespawn(j, true);
    can actually dodge. Three hits kill it, and it pays the richest scrap in
    the game — the first target that can shoot back is also the first one
    really worth shooting.
-   Future-proofing: each slot carries `faction` and a junker name. "hostile"
-   is all that exists today; "neutral" (holds fire till provoked) and "ally"
-   (a hired escort, 2-wingman cap) are planned as a faction swap on this
-   same struct — no rewrite. */
-const PIRATE_COUNT = 2;           // max alive at once — a duel, not a swarm
+   v47 cashed the future-proofing in: `faction` is live. "hostile" is the
+   v42 dogfighter, "neutral" loiters until provoked (and hails you the fee
+   deal), "ally" is a hired wing — all a faction swap on the same struct,
+   exactly as planned. Stage 3 teaches the wing to fight. */
+const PIRATE_COUNT = 4;           // SLOTS, not a swarm cap: 2 possible wingmen + 2 wild.
+                                  // WILD_CAP below keeps the fight itself a duel.
 const RED_BOLT = 0xff4444;        // aqua and orange both mean "yours" (10b) — red means duck
 const PIRATE_BOLT_COUNT = 16;
 const PIRATE_BOLT_SPEED = 850;    // ~57% of BOLT_SPEED: dodgeable on purpose
@@ -2522,6 +2533,28 @@ const PIRATE_HARBOR_GONE = 1200; // fled this far while you're in harbor → qui
 const PIRATE_RAM_HURT = 6;       // hull per 100 u/s closing — a fighter, not a boulder
 const PIRATE_SCRAP_BITS = 8, PIRATE_SCRAP_VAL = 5;   // 40 — richest kill in the game (satellite = 24)
 const PIRATE_NAMES = ["RUST VULTURE", "SCRAPJACK", "THE MAGPIE", "KESSLER'S GHOST"];
+/* ---- Stage 2 (v47): factions. A spawn rolls neutral or hostile. Neutrals
+   loiter in the field about their own business — amber light, no warn ping,
+   no chevron — and only turn hostile if YOU shoot first (the kill still pays,
+   so piracy is a career choice; they just shoot back). Fly close holding
+   fire and they hail you: pay a bank fee, gain a wingman. Combat escorting
+   is stage 3 — a v47 wingman flies your wing and stays out of your line of
+   fire, nothing more. */
+const WILD_CAP = 2;              // max NON-ally raiders alive at once — the old duel rule
+const NEUTRAL_ODDS = 0.5;        // a spawn's coin flip: scavenger or bandit
+const NEUTRAL_SPD = 110;         // loiter trawl — slow enough to read as "not hunting"
+const HAIL_R = 420;              // inside this, a neutral opens the channel
+const ALLY_FEE = 150;            // the recruit fee — bank sink between plating-1 and clamps-2
+const ALLY_CAP = 2;              // two wingmen, a vic — Tanner's call from the brainstorm
+const ALLY_SPD = 300, ALLY_CATCHUP_SPD = 460;   // formation cruise / burn-to-rejoin
+const BEACON_HOSTILE = 0xff3020, BEACON_NEUTRAL = 0xffb020, BEACON_ALLY = 0x30e0c8;
+const HAIL_LINES = [             // junker chatter — the name goes in front
+  "EASY, FLYER. GUNS COLD, SALVAGE WARM.",
+  "THIS YOUR PATCH? DIDN'T SEE A FLAG ON IT.",
+  "NOT LOOKING FOR TROUBLE. LOOKING FOR SCRAP.",
+  "YOU HAULING OR HUNTING?",
+];
+let hailTarget = null;           // nearest in-range neutral this frame — the [E] target
 // pirate-owned scratch — NEVER junkTmp*/scrapTmp*: a lethal ram below runs
 // shipBreach → junkRespawn × 44, which rewrites the junk scratch mid-call
 // (the same trap documented at the junk ram)
@@ -2607,11 +2640,19 @@ for (let i = 0; i < PIRATE_COUNT; i++) {
     hp: 3, maxHp: 3, flash: 0,
     alive: false,
     respawnIn: (i === 0 ? 45 : 140) + Math.random() * 40,  // staggered: first contact is a lone fighter
-    state: "HUNT", stateT: 0,      // "HUNT" | "ATTACK" (firing pass) | "BREAK" (the extend)
+    state: "HUNT", stateT: 0,      // hostile: "HUNT" | "ATTACK" | "BREAK" · neutral: "LOITER" · ally: "FORM"
     jinkDir: new THREE.Vector3(),  // the extend's escape line, fixed at BREAK entry
     aimErr: new THREE.Vector3(),   // per-burst aim slop — what makes the bolts dodgeable
     burstLeft: 0, fireT: 1.5,
     muzzles: null,                 // raider.glb GunTipL/R nodes once loaded; null = fire from the nose
+    // ---- stage 2 (v47) ----
+    wanderPt: new THREE.Vector3(), // LOITER/FORM flight target — the brain writes it, the physics reads it
+    wanderT: 0,                    // seconds until the loiter picks a fresh leg
+    formCap: ALLY_SPD,             // FORM's per-frame speed cap (distance-proportional station keeping)
+    wingSide: 0,                   // ally slot: -1 left wing, +1 right — the vic
+    hailed: false,                 // edge-detect: the hail chirp plays once per contact
+    hailLine: 0,                   // which junker line this one opens with
+    mixer: null,                   // raider.glb's authored idle float — runs only while loitering
   });
 }
 
@@ -2620,9 +2661,9 @@ for (let i = 0; i < PIRATE_COUNT; i++) {
    arrives and stay as the fallback. One file, CLONED per slot — and the
    materials cloned per clone, because the hit-flash mutates emissive and
    shared mats would flash both pirates when you clip one (the junk rule
-   again). The .blend's authored idle float is deliberately not wired up:
-   a dogfighting AI never sits still enough to show it — wire it to the
-   future neutral "loiter" state instead. */
+   again). The .blend's authored idle float (unwired v43-v46) now runs in
+   the neutral LOITER state — the one state that sits still enough to show
+   it. */
 if (THREE.GLTFLoader) {
   new THREE.GLTFLoader().load("raider.glb" + ASSET_V, gltf => {
     for (const p of pirates) {
@@ -2669,6 +2710,14 @@ if (THREE.GLTFLoader) {
       p.muzzles = [model.getObjectByName("GunTipL"), model.getObjectByName("GunTipR")].filter(Boolean);
       if (!p.muzzles.length) p.muzzles = null;
 
+      // the .blend's idle float, unwired since v43 waiting for exactly this:
+      // a mixer per clone (bindings resolve by node name, so the clone is
+      // fine), advanced only in LOITER — a dogfight never shows it
+      if (gltf.animations && gltf.animations.length) {
+        p.mixer = new THREE.AnimationMixer(model);
+        p.mixer.clipAction(gltf.animations[0]).play();
+      }
+
       // refresh the hit-flash list for THIS slot's cloned materials
       p.mats = junkCollectMats(p.group);
     }
@@ -2699,12 +2748,23 @@ function pirateSpawn(p) {
   p.hp = p.maxHp;
   p.flash = 0;
   for (const m of p.mats) m.emissive.copy(m.userData.baseEmissive);
-  p.state = "HUNT"; p.stateT = 0;
+  p.stateT = 0;
   p.burstLeft = 0; p.fireT = 1.5;
   pirTmpA.subVectors(shipObj.position, p.group.position).normalize();
   p.vel.copy(pirTmpA).multiplyScalar(60);
-  pirateWarnSound();   // the spawn shell sits inside RADAR_RANGE, so the red
-                       // blip lands the same frame this ping does — fair warning, twice
+  // stage 2: the coin flip. Scavenger or bandit — the beacon color IS the
+  // tell (amber = business, red = duck), so only a bandit earns the ping.
+  p.wingSide = 0; p.hailed = false;
+  p.hailLine = (Math.random() * HAIL_LINES.length) | 0;
+  if (Math.random() < NEUTRAL_ODDS) {
+    p.faction = "neutral"; p.state = "LOITER"; p.wanderT = 0;   // picks a leg first frame
+    p.beacon.material.color.setHex(BEACON_NEUTRAL);
+  } else {
+    p.faction = "hostile"; p.state = "HUNT";
+    p.beacon.material.color.setHex(BEACON_HOSTILE);
+    pirateWarnSound();   // the spawn shell sits inside RADAR_RANGE, so the red
+                         // blip lands the same frame this ping does — fair warning, twice
+  }
 }
 
 // quiet exit — culls and breaches. No bang, no pay, just gone.
@@ -2735,7 +2795,18 @@ function pirateKill(p, dist) {
   }
 }
 
+// stage 2: shooting a neutral is a declaration. It gets the full bandit
+// treatment — red light, warn ping, the v42 fight brain — and the flinch
+// in pirateDamage below hands it straight to BREAK, so it comes back mad.
+function pirateProvoke(p) {
+  p.faction = "hostile";
+  p.beacon.material.color.setHex(BEACON_HOSTILE);
+  if (hailTarget === p) hailTarget = null;   // channel closed
+  pirateWarnSound();
+}
+
 function pirateDamage(p, at, boltVel) {
+  if (p.faction === "neutral") pirateProvoke(p);
   const dist = shipObj.position.distanceTo(p.group.position);
   if (--p.hp > 0) {
     p.flash = 1;
@@ -2761,7 +2832,10 @@ function enemyTestBolt(p0, p1, boltVel) {
   pirSeg.subVectors(p1, p0);
   const segLen2 = pirSeg.lengthSq();
   for (const p of pirates) {
-    if (!p.alive) continue;
+    // your bolts pass through a hired wing — formation flying plus stray fire
+    // would otherwise kill the thing you just paid 150 for. Stage 3 (real
+    // escort combat) is where wingman mortality lands.
+    if (!p.alive || p.faction === "ally") continue;
     pirToC.subVectors(p.group.position, p0);
     const t = segLen2 > 0 ? THREE.MathUtils.clamp(pirToC.dot(pirSeg) / segLen2, 0, 1) : 0;
     pirNearPt.copy(p0).addScaledVector(pirSeg, t);
@@ -2823,6 +2897,49 @@ function pirateWarnSound() {
     o.start(at); o.stop(at + 0.15);
   }
 }
+// the hail: the warn ping's two notes REVERSED — rising, not falling. Same
+// vocabulary, opposite mood: falling = incoming, rising = an open channel.
+function pirateHailSound() {
+  if (!audio) return;
+  const { ctx } = audio, t = ctx.currentTime;
+  const notes = [587, 880];
+  for (let i = 0; i < notes.length; i++) {
+    const at = t + i * 0.16;
+    const o = ctx.createOscillator(); o.type = "triangle";
+    o.frequency.value = notes[i];
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(0.08, at + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.14);
+    o.connect(g); g.connect(ctx.destination);
+    o.start(at); o.stop(at + 0.15);
+  }
+}
+
+/* Stage 2's whole point: the bank buys a FRIEND. [E] (or D-pad Up) while a
+   neutral is hailing → the fee leaves the bank and the raider takes a wing
+   slot. Reuses the shop's buy/deny sounds — it IS a purchase. */
+function tryRecruit() {
+  const p = hailTarget;
+  if (!p || !p.alive || p.faction !== "neutral" || landedOn) return;
+  let allies = 0, leftTaken = false;
+  for (const q of pirates) if (q.alive && q.faction === "ally") {
+    allies++;
+    if (q.wingSide === -1) leftTaken = true;
+  }
+  if (allies >= ALLY_CAP || banked < ALLY_FEE) { shopDenySound(); return; }
+  banked -= ALLY_FEE;
+  bankEl.textContent = banked;
+  saveBank();
+  shopDirty = true;                // the outfitter quotes the same bank
+  p.faction = "ally";
+  p.state = "FORM"; p.stateT = 0;
+  p.wingSide = leftTaken ? 1 : -1; // first hire takes the left wing — a vic fills outward
+  p.beacon.material.color.setHex(BEACON_ALLY);
+  hailTarget = null;
+  shopBuySound();
+}
+
 // blasterSound an octave down, faded with range — a pew you duck, not yours
 function pirateShotSound(dist) {
   if (!audio) return;
@@ -2841,10 +2958,20 @@ function pirateShotSound(dist) {
 
 function updateEnemies(dt) {
   const harbor = pirateInHarbor();   // once per frame, not per pirate
+  // stage 2: 4 slots but never a swarm — count the wild (non-ally) raiders
+  // up front and gate the spawns on WILD_CAP. Wingmen don't crowd out bandits;
+  // bandits don't stack past the old duel.
+  let wildAlive = 0;
+  for (const q of pirates) if (q.alive && q.faction !== "ally") wildAlive++;
+  let hailBest = null, hailD2 = HAIL_R * HAIL_R;   // nearest open channel this frame
   for (const p of pirates) {
     if (!p.alive) {
       p.respawnIn -= dt;
-      if (p.respawnIn <= 0) pirateSpawn(p);
+      if (p.respawnIn <= 0) {
+        if (wildAlive >= WILD_CAP) { p.respawnIn = 8; continue; }   // pool's full — wait a beat
+        pirateSpawn(p);
+        if (p.alive) wildAlive++;
+      }
       continue;
     }
     if (p.flash > 0) {                       // white-hot pop on a non-fatal hit
@@ -2853,25 +2980,75 @@ function updateEnemies(dt) {
     }
 
     pirTmpA.subVectors(shipObj.position, p.group.position);
-    const dist = pirTmpA.length();
-    if (dist > PIRATE_CULL) { pirateDespawn(p); continue; }   // you outran it
+    let dist = pirTmpA.length();
+    if (dist > PIRATE_CULL) {
+      // wild: you outran it — it slinks off. A WINGMAN never slinks: he lost
+      // you and burns to rejoin, quietly repositioned onto your six (the junk
+      // bubble's travel trick) — losing 150 of bank to a boost run would sting.
+      if (p.faction !== "ally") { pirateDespawn(p); continue; }
+      randUnit(pirTmpB).multiplyScalar(200);
+      p.group.position.copy(shipObj.position).addScaledVector(pirTmpA, -1500 / dist).add(pirTmpB);
+      p.vel.copy(ship.velocity);
+      pirTmpA.subVectors(shipObj.position, p.group.position);
+      dist = pirTmpA.length();
+    }
     pirTmpA.divideScalar(dist || 1);   // unit pirate→ship; holds for this whole iteration
 
-    // harbor: any pursuer breaks off, runs for open space, and despawns
-    // over the horizon. The retreat is pinned so it can't re-engage.
-    if (harbor) {
+    // harbor: any HOSTILE pursuer breaks off, runs for open space, and
+    // despawns over the horizon. The retreat is pinned so it can't re-engage.
+    // Neutrals aren't hunting and wingmen are yours — the harbor ignores both.
+    if (harbor && p.faction === "hostile") {
       if (dist > PIRATE_HARBOR_GONE) { pirateDespawn(p); continue; }
       if (p.state !== "BREAK") { p.state = "BREAK"; p.jinkDir.copy(pirTmpA).negate(); }
       p.stateT = 0;
     }
 
-    /* ---- the three-state brain (v42: a pass rhythm, not an orbit) ----
-       HUNT lines it up, ATTACK is a firing pass bored straight in, BREAK is
-       the extend — a throttled, dead-straight getaway leg. The extend is the
-       player's window: after every pass (and every flinch) you get a slow,
-       predictable tail to shoot at. That trade is the whole fight. */
+    /* ---- the brain, keyed off faction (stage 2) ----
+       HOSTILE keeps the v42 three-state pass rhythm untouched: HUNT lines it
+       up, ATTACK is a firing pass bored straight in, BREAK is the extend —
+       the player's window. NEUTRAL loiters about its business. ALLY holds
+       your wing. Neutral and ally write their flight target into wanderPt;
+       the shared jet physics below flies whatever point the brain picked. */
     p.stateT += dt;
-    if (p.state === "HUNT") {
+    if (p.faction === "neutral") {
+      /* LOITER: wander legs that drift AROUND your shell, never across it —
+         perturb the current bearing instead of rolling a fresh one, so the
+         path stays off your hull and accidental rams stay rare. */
+      p.wanderT -= dt;
+      if (p.wanderT <= 0 || p.group.position.distanceToSquared(p.wanderPt) < 120 * 120) {
+        p.wanderT = 6 + Math.random() * 5;
+        pirTmpC.copy(pirTmpA).negate();                     // unit ship→pirate: the current bearing
+        randUnit(pirTmpB);
+        pirTmpC.addScaledVector(pirTmpB, 0.7).normalize();  // swing it up to ~35°
+        p.wanderPt.copy(shipObj.position).addScaledVector(pirTmpC, 700 + Math.random() * 1100);
+      }
+    } else if (p.faction === "ally") {
+      if (landedOn) {
+        /* you're parked; a jet can't hover. Circle overhead instead — legs
+           perturbed around the planet's shell (same trick as the loiter, so
+           the chords never cut through the terrain). */
+        p.wanderT -= dt;
+        if (p.wanderT <= 0 || p.group.position.distanceToSquared(p.wanderPt) < 200 * 200) {
+          p.wanderT = 8 + Math.random() * 6;
+          pirTmpC.subVectors(p.group.position, landedOn.group.position).normalize();
+          randUnit(pirTmpB);
+          pirTmpC.addScaledVector(pirTmpB, 0.5).normalize();
+          p.wanderPt.copy(landedOn.group.position).addScaledVector(pirTmpC, landedOn.cfg.radius * 1.6);
+        }
+        p.formCap = NEUTRAL_SPD;
+      } else {
+        /* FORM: hold the vic slot — wingSide out, a touch high, trailing, in
+           YOUR frame. The speed cap is distance-proportional (far = burn,
+           at the slot = your speed), so it settles onto the wing instead of
+           orbiting you; the floor keeps the jet honest — it weaves a lazy
+           little circle when you stop, because jets don't hover. */
+        pirTmpC.set(p.wingSide * 55, 8, 70).applyQuaternion(shipObj.quaternion);
+        p.wanderPt.copy(shipObj.position).add(pirTmpC);
+        const slotDist = p.group.position.distanceTo(p.wanderPt);
+        p.formCap = Math.min(slotDist > 700 ? ALLY_CATCHUP_SPD : ALLY_SPD,
+                             Math.max(60, ship.velocity.length() + slotDist * 0.8));
+      }
+    } else if (p.state === "HUNT") {
       if (dist < PIRATE_ATTACK_R) {
         p.state = "ATTACK"; p.stateT = 0;
         p.burstLeft = PIRATE_BURST; p.fireT = 0.6;              // primed: first burst ~0.6s in
@@ -2919,8 +3096,10 @@ function updateEnemies(dt) {
       pirTmpB.copy(shipObj.position)                                        // the firing solution IS the flight path
              .addScaledVector(ship.velocity, (dist / PIRATE_BOLT_SPEED) * PIRATE_LEAD)
              .add(p.aimErr);
-    } else {
+    } else if (p.state === "BREAK") {
       pirTmpB.copy(p.group.position).addScaledVector(p.jinkDir, 800);       // extend: hold the escape line
+    } else {
+      pirTmpB.copy(p.wanderPt);      // LOITER / FORM: the brain already picked the point
     }
     // nose: mirror-lookAt (lookAt aims +Z, the nose is -Z — the shipBreach
     // trick), then a slerp CLAMPED to PIRATE_TURN rad/s. Proportional slerp
@@ -2941,7 +3120,9 @@ function updateEnemies(dt) {
     }
     p.vel.multiplyScalar(Math.pow(0.995, dt * 60));
     const maxSpd = p.state === "ATTACK" ? PIRATE_PASS_SPD
-                 : p.state === "BREAK"  ? PIRATE_EXTEND_SPD : PIRATE_MAX_SPD;
+                 : p.state === "BREAK"  ? PIRATE_EXTEND_SPD
+                 : p.state === "LOITER" ? NEUTRAL_SPD
+                 : p.state === "FORM"   ? p.formCap : PIRATE_MAX_SPD;
     if (p.vel.length() > maxSpd) p.vel.setLength(maxSpd);
     p.group.position.addScaledVector(p.vel, dt);
 
@@ -2985,7 +3166,9 @@ function updateEnemies(dt) {
        same load-bearing order as the junk ram: a lethal hit breaches,
        teleports the ship, and respawns the field mid-call. ---- */
     const rr = PIRATE_HIT_R + SHIP_HIT_R;
-    if (!landedOn && shipObj.position.distanceToSquared(p.group.position) < rr * rr) {
+    // allies are exempt: formation flying + a collision kill would eat the
+    // wingman you just paid for on the first hard brake. He ghosts instead.
+    if (!landedOn && p.faction !== "ally" && shipObj.position.distanceToSquared(p.group.position) < rr * rr) {
       const relSpd = pirTmpB.subVectors(ship.velocity, p.vel).length();
       const dmg = Math.min(RAM_DMG_CAP, (Math.max(0, relSpd - RAM_FREE_SPD) / 100) * PIRATE_RAM_HURT);
       ship.velocity.multiplyScalar(0.9);     // it still bleeds your speed
@@ -2998,10 +3181,28 @@ function updateEnemies(dt) {
       continue;
     }
 
-    // the tail light rides how hard it's flying; the strobe just menaces
+    // an in-range neutral opens the channel — nearest one wins, the HUD draws it
+    if (p.faction === "neutral" && !landedOn && dist * dist < hailD2) {
+      hailD2 = dist * dist; hailBest = p;
+    }
+
+    // the authored idle float, LOITER only — a wandering scavenger bobs and
+    // rolls like it's half-watching the field; everyone else flies too hard
+    if (p.state === "LOITER" && p.mixer) p.mixer.update(dt);
+
+    // the tail light rides how hard it's flying. Running lights by faction:
+    // hostile strobes fast and angry, neutral blinks slow amber, a wingman's
+    // is a steady teal breath — the color plus the RHYTHM is the tell.
     p.engineGlow.scale.setScalar(1.5 + 2.5 * p.vel.length() / PIRATE_MAX_SPD);
-    p.beacon.material.opacity = Math.sin(clock.elapsedTime * 7 + p.phase) > 0 ? 0.9 : 0.15;
+    p.beacon.material.opacity =
+        p.faction === "hostile" ? (Math.sin(clock.elapsedTime * 7 + p.phase) > 0 ? 0.9 : 0.15)
+      : p.faction === "neutral" ? (Math.sin(clock.elapsedTime * 2.2 + p.phase) > 0 ? 0.7 : 0.25)
+      : 0.55 + 0.25 * Math.sin(clock.elapsedTime * 2.5 + p.phase);
   }
+
+  // the channel: latch the frame's winner, chirp once per contact
+  hailTarget = hailBest;
+  if (hailTarget && !hailTarget.hailed) { hailTarget.hailed = true; pirateHailSound(); }
 
   /* ---- hostile bolts: advance, swept-test the one target they have ---- */
   for (const b of pirateBolts) {
@@ -3137,6 +3338,7 @@ const keys = {};
 addEventListener("keydown", e => {
   if (e.code === "KeyV" && !keys["KeyV"]) toggleView(); // fire once per press
   if (e.code === "KeyH" && !keys["KeyH"]) ctrlMenu.classList.toggle("open"); // controls menu
+  if (e.code === "KeyE" && !keys["KeyE"]) tryRecruit(); // answer a hail — hire the wingman (v47)
   if (e.code === "Space") e.preventDefault();           // Space fires; don't scroll
   // docked at the outfitter, 1/2/3 buy the rows (fire once per press)
   if (shopEl.style.display === "block" && !keys[e.code]) {
@@ -3428,7 +3630,7 @@ function drawThreatChevron(c, W, H) {
   if (landedOn) return;
   let threat = null, threatD2 = Infinity;
   for (const p of pirates) {
-    if (!p.alive) continue;
+    if (!p.alive || p.faction !== "hostile") continue;   // v47: only a bandit is a THREAT
     const d2 = p.group.position.distanceToSquared(shipObj.position);
     if (d2 < threatD2) { threatD2 = d2; threat = p; }
   }
@@ -3575,11 +3777,40 @@ function drawNavHud(dt) {
   for (const p of planets) navBlipAt(p.b.group.position, cx, cy, r, NAV_TEAL, 4.5);
   const star = liveBodies.find(b => b.cfg.type === "star");
   if (star) navBlipAt(star.group.position, cx, cy, r, NAV_SUN, 4);
-  // pirates: red and glowing (no fade arg) — threats pop, the field whispers
-  for (const p of pirates) if (p.alive) navBlipAt(p.group.position, cx, cy, r, "#ff5544", 3);
+  // raiders: glowing, no fade arg — colored by faction (v47): red = bandit,
+  // amber = neutral going about its business, teal = your own wing
+  for (const p of pirates) if (p.alive)
+    navBlipAt(p.group.position, cx, cy, r,
+              p.faction === "hostile" ? "#ff5544" : p.faction === "neutral" ? NAV_AMBER : NAV_TEAL, 3);
   c.fillStyle = "rgba(110,231,216,.6)"; c.font = "10px " + navFont; c.textAlign = "center";
   c.fillText("RADAR", cx, cy + r + 14);
   c.restore();
+
+  /* --- C2: the hail (v47) — a neutral inside HAIL_R opens a channel above
+     the radar: its junker line, then the deal. The button hint matches the
+     hardware in hand, same trick as the shop. */
+  if (hailTarget && !landedOn) {
+    const hp = hailTarget;
+    let allies = 0;
+    for (const q of pirates) if (q.alive && q.faction === "ally") allies++;
+    c.save();
+    c.textAlign = "center"; c.shadowBlur = 6;
+    c.fillStyle = NAV_AMBER; c.shadowColor = NAV_AMBER;
+    c.font = "12px " + navFont;
+    c.fillText(hp.name + ": “" + HAIL_LINES[hp.hailLine] + "”", cx, cy - r - 44);
+    const btn = padIndex !== null ? "[D-PAD ↑]" : "[E]";
+    if (allies >= ALLY_CAP) {
+      c.fillStyle = "rgba(255,176,102,.55)"; c.shadowBlur = 0;
+      c.fillText("WING'S FULL — TWO'S COMPANY", cx, cy - r - 28);
+    } else if (banked < ALLY_FEE) {
+      c.fillStyle = "rgba(255,176,102,.55)"; c.shadowBlur = 0;
+      c.fillText("HIRE AS WINGMAN — NEED " + ALLY_FEE + " BANK", cx, cy - r - 28);
+    } else {
+      c.fillStyle = "#7dffa8"; c.shadowColor = "#7dffa8";
+      c.fillText(btn + " HIRE AS WINGMAN — " + ALLY_FEE + " BANK", cx, cy - r - 28);
+    }
+    c.restore();
+  }
 
   // --- D: the way home, whenever the hold is worth banking ---
   drawHomeChevron(c, W, H);
@@ -3652,7 +3883,11 @@ function animate() {
         padUpHeld = up; padDownHeld = down; padBuyHeld = buy;
         padFire = false;                                   // parked: don't fire while shopping
       } else {
-        padUpHeld = padDownHeld = padBuyHeld = false;
+        // in flight, D-pad Up answers a hail (v47) — same edge-detect trick
+        const up = !!(gp.buttons[12] && gp.buttons[12].pressed);
+        if (up && !padUpHeld) tryRecruit();
+        padUpHeld = up;
+        padDownHeld = padBuyHeld = false;
         shopCursor = 0;
       }
     }

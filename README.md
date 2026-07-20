@@ -22,6 +22,7 @@ when the page loads.
 | ↑ / ↓ | Nose down / up (flight-stick style) |
 | Shift | Boost |
 | Space | Fire blasters |
+| E | Answer a hail — hire a neutral raider as your wingman |
 | V | Cycle view: cockpit → chase → chase far → cinematic |
 
 Touch devices get on-screen thrust/brake/reverse buttons, a big red **FIRE**
@@ -97,6 +98,17 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   two radii of the bank world pirates neither spawn nor hunt — cross the
   line with one on your tail and it breaks off and slinks over the horizon.
   No pad camping
+- **Neutral raiders — and a wingman for hire** — half the raiders you meet
+  aren't hunting anybody. An amber slow-blink (against the bandit's fast red
+  strobe) is a neutral scavenger loitering about its own business — it holds
+  fire unless you shoot first, at which point it turns full bandit, and yes,
+  the kill still pays: piracy is a career choice, they just shoot back. Fly
+  close with your guns cold instead and it hails you by name — RUST VULTURE,
+  SCRAPJACK, THE MAGPIE, KESSLER'S GHOST — with a junker line and a deal:
+  **E** (or D-pad ↑) pays 150 from the bank and it takes a slot on your
+  wing, vic formation, two max. A v47 wingman is company, not cavalry — it
+  holds formation, circles overhead while you're parked, survives a tow, and
+  burns to rejoin if you lose it; teaching it to fight is the next stage
 - **A bank — and Charleston holds the monopoly** — cargo in the hold is at
   risk: rams spill it, a closed tab loses it. Park on the Charleston pad and
   the hold pays out into the **BANK**, a few units a tick — banked scrap is
@@ -184,9 +196,10 @@ art, that's why: check the URL, not the model.
 
 ## History
 
-Thirty-nine versions across 53 commits, each `vN:` tagged in the log — `git log`
+Forty-seven versions across 61 commits, each `vN:` tagged in the log — `git log`
 tells the story from "v1: first flight — mouse steer, throttle physics" to a
 Blender fighter — flying tight, its momentum gripping to the nose, framed in a
-cockpit gunsight — mining a junk field for scrap, banking it at Charleston, and
-spending it on upgrades, across two hand-built worlds you can land on: Earth,
-and the red desert of RUBICON on the far rim.
+cockpit gunsight — mining a junk field for scrap, banking it at Charleston,
+spending it on upgrades, and hiring a raider off the field to fly your wing,
+across two hand-built worlds you can land on: Earth, and the red desert of
+RUBICON on the far rim.
