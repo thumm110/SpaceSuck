@@ -1493,6 +1493,7 @@ shipObj.add(shipMesh);
    idle float (ShipRootAction — a gentle bob + rock on the root) plays on
    loop through an AnimationMixer: visual only, physics untouched. */
 let shipMixer = null;
+let gearHinges = [], gearDoors = [], gearT = 0;   // landing gear: 0 = stowed, 1 = deployed
 if (THREE.GLTFLoader) {
   new THREE.GLTFLoader().load("ship.glb" + ASSET_V, gltf => {
     const model = gltf.scene;
@@ -1545,6 +1546,17 @@ if (THREE.GLTFLoader) {
       shipMixer = new THREE.AnimationMixer(model);
       shipMixer.clipAction(gltf.animations[0]).play();
     }
+
+    // landing gear: grab the pivots the model exposes. Legs rest folded up
+    // (their rotation.x IS the stow angle); bay doors rest closed (0) and carry
+    // their open angle in userData.swing (Blender custom prop -> glTF extras).
+    // updateGear() in the main loop swings them out when we're landed.
+    gearHinges = ["GearHingeNose", "GearHingeMainL", "GearHingeMainR"]
+      .map(n => model.getObjectByName(n)).filter(Boolean);
+    gearHinges.forEach(h => h.userData.stow = h.rotation.x);
+    gearDoors = ["GearDoorNoseLHinge", "GearDoorNoseRHinge", "GearDoorMainLHinge", "GearDoorMainRHinge"]
+      .map(n => model.getObjectByName(n)).filter(Boolean);
+    gearDoors.forEach(d => d.userData.swing = d.userData.swing ?? THREE.MathUtils.degToRad(100));
   }, undefined, err => console.warn("ship.glb didn't load — flying the placeholder", err));
 }
 
@@ -4542,6 +4554,19 @@ function animate() {
   for (const belt of belts) belt.rotation.y += 0.02 * dt;
   for (const c of cloudLayers) c.mesh.rotation.y += c.speed * dt;
   if (shipMixer) shipMixer.update(dt);   // the idle float, authored in Blender
+
+  // landing gear: ease toward deployed while parked (landedOn set), stowed while
+  // flying. Doors LEAD — they open over the first half of the throw, and the
+  // legs only start dropping once the bays are ~open, so a leg never clips a
+  // closed hatch. Both pivots ride in from ship.glb; no-op until the model loads.
+  gearT += ((landedOn ? 1 : 0) - gearT) * Math.min(1, dt * 3);   // ~1s full cycle
+  if (gearHinges.length || gearDoors.length) {
+    const clamp01 = x => x < 0 ? 0 : x > 1 ? 1 : x;
+    const doorT = clamp01(gearT / 0.5);
+    const legT  = clamp01((gearT - 0.4) / 0.6);
+    for (const d of gearDoors)  d.rotation.x = doorT * d.userData.swing;
+    for (const h of gearHinges) h.rotation.x = h.userData.stow * (1 - legT);
+  }
 
   /* ---- junk drifts first, so the bolt tests below hit where it IS ---- */
   updateJunk(dt);
