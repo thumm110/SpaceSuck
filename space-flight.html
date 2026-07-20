@@ -2557,7 +2557,7 @@ const PIRATE_RESPAWN_MIN = 60, PIRATE_RESPAWN_MAX = 120;
 const PIRATE_SAFE_R = 2;         // radii around the pads world — atmosphere + approach both covered
 const PIRATE_HARBOR_GONE = 1200; // fled this far while you're in harbor → quietly gone
 const PIRATE_RAM_HURT = 6;       // hull per 100 u/s closing — a fighter, not a boulder
-const PIRATE_SCRAP_BITS = 8, PIRATE_SCRAP_VAL = 5;   // 40 — richest kill in the game (satellite = 24)
+const PIRATE_SCRAP_BITS = 8, PIRATE_SCRAP_VAL = 5;   // 40 — richest kill that shoots back (satellite = 24; v50 freight pays more, but freight runs)
 const PIRATE_NAMES = ["RUST VULTURE", "SCRAPJACK", "THE MAGPIE", "KESSLER'S GHOST"];
 /* ---- Stage 2 (v47): factions. A spawn rolls neutral or hostile. Neutrals
    loiter in the field about their own business — amber light, no warn ping,
@@ -2749,6 +2749,283 @@ if (THREE.GLTFLoader) {
     }
   }, undefined, err => console.warn("raider.glb didn't load — flying the primitives", err));
 }
+
+/* ================= 10f: FREIGHT TRAFFIC (v50) =================
+   Cargo haulers — the working stiffs of the junk field. Two Blender trucks
+   (SS OVERTIME, hauler.glb) and her max-cap sister (SS DOUBLE OVERTIME,
+   hauler_max.glb, double-stacked containers, rarer and richer) trundle
+   delivery legs that happen to pass near you. They never shoot; shooting
+   THEM is a career choice, same as provoking a neutral — except a freighter
+   can't fight back, only run. The kill pays the biggest scrap burst in the
+   game: OVERTIME ~60, DOUBLE OVERTIME ~160 (a raider is 40). House rules
+   hold: ramming one pays NOTHING — and the truck is the wall in that
+   collision, you bounce. Self-contained on purpose: own slots, own scratch
+   vectors, own update — three hooks total (bolt test, update call, radar). */
+const HAULER_LEN = 34;             // world-units nose→tail (fighter is ~13): a truck, visibly
+const HAULER_HIT_R = 17;           // one junk-style sphere over the container stack
+const HAULER_SPD = 70;             // cruise — slower than everything, on purpose
+const HAULER_FLEE_SPD = 150;       // panic throttle. Still no match for you: piracy stays easy, that's the point
+const HAULER_ACCEL = 90, HAULER_GRIP = 1.2;
+const HAULER_TURN = 0.35;          // rad/s — a loaded truck turns like one
+const HAULER_TURN_FLEE = 0.9;
+const HAULER_CULL = 5200;          // fell off your radar → made its delivery
+const HAULER_FLEE_T = 14;          // seconds of panic per provocation
+const HAULER_RAM_HURT = 9;         // hull per 100 u/s closing — heavier than a fighter's 6
+
+const HAULER_DEFS = [
+  //                                             hp: no guns, so durability IS the fight
+  { file: "hauler.glb",     name: "SS OVERTIME",        hp: 4, bits: 10, val: 6,   // 60 — the everyday truck
+    first: 70,  firstRnd: 40,  rMin: 110, rMax: 220 },
+  { file: "hauler_max.glb", name: "SS DOUBLE OVERTIME", hp: 9, bits: 20, val: 8,   // 160 — the loot piñata,
+    first: 300, firstRnd: 120, rMin: 420, rMax: 720 },                             // priced by its rarity
+];
+
+const haulTmpA = new THREE.Vector3(), haulTmpB = new THREE.Vector3(), haulTmpC = new THREE.Vector3();
+const haulSeg = new THREE.Vector3(), haulToC = new THREE.Vector3(), haulNearPt = new THREE.Vector3();
+const haulAimObj = new THREE.Object3D();
+
+const haulers = [];
+for (const def of HAULER_DEFS) {
+  const g = new THREE.Group();
+  g.visible = false;
+  scene.add(g);
+  // engine glow + running light, the pirate pattern: ion-blue exhaust bloom,
+  // and a slow amber blink — honest traffic, the neutral scavenger's rhythm
+  const engineGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: boltGlowTex, color: 0x55aaff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  engineGlow.scale.setScalar(6);
+  g.add(engineGlow);
+  const beacon = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: boltGlowTex, color: BEACON_NEUTRAL, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  beacon.position.set(0, 7, -9);   // over the cab — the nose is -Z after export
+  beacon.scale.setScalar(9);
+  g.add(beacon);
+  haulers.push({
+    def, group: g, engineGlow, beacon,
+    model: null,                   // set when the GLB lands — no model, no spawns (no primitive stand-in)
+    mixer: null, mats: [],
+    vel: new THREE.Vector3(), wanderPt: new THREE.Vector3(),
+    hp: def.hp, flash: 0, alive: false,
+    respawnIn: def.first + Math.random() * def.firstRnd,
+    state: "CRUISE", fleeT: 0, legT: 0,   // "CRUISE" | "FLEE" — that's the whole brain
+    phase: Math.random() * 6.28,
+  });
+}
+
+// one file per slot, loaded straight in — no cloning, no primitives fallback:
+// a hauler that fails to load simply never joins the traffic
+if (THREE.GLTFLoader) for (const h of haulers) {
+  new THREE.GLTFLoader().load(h.def.file + ASSET_V, gltf => {
+    const model = gltf.scene;
+    // material pass, generalized from the raider swap: anything the Blender
+    // script authored as emissive (EngineGlow, ReeferGlow, nav + marker
+    // lights) gets boosted; plain hull gets the self-lit floor
+    model.traverse(o => {
+      if (!o.isMesh || !o.material) return;
+      if (o.material.emissive && o.material.emissive.getHex() !== 0) {
+        o.material.emissiveIntensity = Math.max(o.material.emissiveIntensity || 1, 1.5);
+      } else if (o.material.emissive) {   // unlit materials have no emissive — skip, don't throw
+        o.material.emissive.copy(o.material.color);
+        o.material.emissiveIntensity = 0.5;
+      }
+    });
+    const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+    model.scale.setScalar(HAULER_LEN / size.z);
+    h.group.add(model);
+    h.model = model;
+    // exhaust bloom sits behind the center engine bell
+    h.group.updateMatrixWorld(true);
+    const tC = model.getObjectByName("ThrusterC");
+    if (tC) {
+      h.engineGlow.position.copy(h.group.worldToLocal(tC.getWorldPosition(new THREE.Vector3())));
+      h.engineGlow.position.z += 1.5;
+    }
+    // the authored idle float — a loaded truck riding its suspension
+    if (gltf.animations && gltf.animations.length) {
+      h.mixer = new THREE.AnimationMixer(model);
+      h.mixer.clipAction(gltf.animations[0]).play();
+    }
+    h.mats = junkCollectMats(h.group);   // for the white hit-flash
+  }, undefined, err => console.warn(h.def.file + " didn't load — no " + h.def.name + " traffic", err));
+}
+
+/* a delivery leg that happens to pass close: aim through a point a few
+   hundred units off your bow, then keep going — space truckers don't orbit
+   you, they have somewhere to be. Re-legged when stale so the traffic keeps
+   crossing your patch of sky. */
+function haulerPickLeg(h) {
+  randUnit(haulTmpA).multiplyScalar(300 + Math.random() * 500).add(shipObj.position);  // the near-miss point
+  haulTmpC.subVectors(haulTmpA, h.group.position).normalize();
+  h.wanderPt.copy(h.group.position).addScaledVector(haulTmpC, 9000);  // through it and beyond
+  h.legT = 45 + Math.random() * 30;
+}
+
+function haulerSpawn(h) {
+  if (landedOn) { h.respawnIn = 10; return; }   // nobody materializes over a parked ship
+  let placed = false;
+  for (let tries = 0; tries < 5 && !placed; tries++) {
+    randUnit(haulTmpA);
+    haulTmpB.copy(shipObj.position)
+            .addScaledVector(haulTmpA, PIRATE_SPAWN_NEAR + Math.random() * (PIRATE_SPAWN_FAR - PIRATE_SPAWN_NEAR));
+    if (!junkPointBlocked(haulTmpB)) { h.group.position.copy(haulTmpB); placed = true; }
+  }
+  if (!placed) { h.respawnIn = 10; return; }
+  h.alive = true;
+  h.group.visible = true;
+  h.hp = h.def.hp;
+  h.flash = 0;
+  for (const m of h.mats) m.emissive.copy(m.userData.baseEmissive);
+  h.state = "CRUISE"; h.fleeT = 0;
+  haulerPickLeg(h);
+  // already underway and already pointed down the route — mid-shift, not launching
+  haulTmpC.subVectors(h.wanderPt, h.group.position).normalize();
+  h.vel.copy(haulTmpC).multiplyScalar(HAULER_SPD * 0.8);
+  haulAimObj.position.copy(h.group.position);
+  haulAimObj.lookAt(haulTmpB.copy(h.group.position).multiplyScalar(2).sub(h.wanderPt));
+  h.group.quaternion.copy(haulAimObj.quaternion);
+}
+
+// quiet exit — culls only. No bang, no pay, just a delivery completed elsewhere.
+function haulerDespawn(h) {
+  h.alive = false;
+  h.group.visible = false;
+  h.respawnIn = h.def.rMin + Math.random() * (h.def.rMax - h.def.rMin);
+}
+
+function haulerFlee(h) {
+  h.state = "FLEE";
+  h.fleeT = HAULER_FLEE_T;
+}
+
+// shot down — the payout. The whole manifest blows wide as live scrap.
+function haulerKill(h, dist) {
+  haulerDespawn(h);
+  burstKill(h.group.position, 22, h.vel);
+  junkBoomSound(dist, 45);   // fake radius 45: a freighter dies with a real whump
+  if (dist < 1100) padRumble(Math.min(0.7, 0.5 * (350 / Math.max(60, dist))), 110);
+  killsEl.textContent = ++junkKills;
+  for (let i = 0; i < h.def.bits; i++) {
+    randUnit(haulTmpA);
+    haulTmpA.multiplyScalar(10 + Math.random() * 24).add(h.vel);
+    emitScrap(h.group.position, haulTmpA, h.def.val);
+  }
+}
+
+function haulerDamage(h, at, boltVel) {
+  const dist = shipObj.position.distanceTo(h.group.position);
+  if (--h.hp > 0) {
+    h.flash = 1;
+    burstSparks(at, h.vel, 10);
+    junkTinkSound(dist);
+    h.vel.addScaledVector(haulTmpA.copy(boltVel).normalize(), 6);   // barely shoves — she's HEAVY
+    haulerFlee(h);
+    return;
+  }
+  haulerKill(h, dist);
+}
+
+/* Player bolts vs freight — enemyTestBolt's sibling with its own scratch:
+   all three tests run in ONE expression in the fire loop. */
+function haulerTestBolt(p0, p1, boltVel) {
+  haulSeg.subVectors(p1, p0);
+  const segLen2 = haulSeg.lengthSq();
+  for (const h of haulers) {
+    if (!h.alive) continue;
+    haulToC.subVectors(h.group.position, p0);
+    const t = segLen2 > 0 ? THREE.MathUtils.clamp(haulToC.dot(haulSeg) / segLen2, 0, 1) : 0;
+    haulNearPt.copy(p0).addScaledVector(haulSeg, t);
+    if (haulNearPt.distanceToSquared(h.group.position) <= HAULER_HIT_R * HAULER_HIT_R) {
+      haulerDamage(h, haulNearPt, boltVel);
+      return true;
+    }
+  }
+  return false;
+}
+
+function updateHaulers(dt) {
+  for (const h of haulers) {
+    if (!h.alive) {
+      h.respawnIn -= dt;
+      if (h.respawnIn <= 0) {
+        if (!h.model) { h.respawnIn = 15; continue; }   // GLB never landed — keep waiting, not crashing
+        haulerSpawn(h);
+      }
+      continue;
+    }
+    if (h.flash > 0) {                       // white-hot pop on a non-fatal hit
+      h.flash = Math.max(0, h.flash - dt * 4);
+      for (const m of h.mats) m.emissive.copy(m.userData.baseEmissive).lerp(FLASH_WHITE, h.flash);
+    }
+
+    haulTmpA.subVectors(shipObj.position, h.group.position);
+    const dist = haulTmpA.length();
+    if (dist > HAULER_CULL) { haulerDespawn(h); continue; }   // made its delivery, off the books
+    haulTmpA.divideScalar(dist || 1);   // unit hauler→ship; FLEE reads it below
+
+    // the whole brain: fly the delivery line, or run from the shooter
+    h.legT -= dt;
+    if (h.state === "FLEE") {
+      h.fleeT -= dt;
+      if (h.fleeT <= 0) { h.state = "CRUISE"; haulerPickLeg(h); }   // back to the schedule
+    } else if (h.legT <= 0 || h.group.position.distanceToSquared(h.wanderPt) < 400 * 400) {
+      haulerPickLeg(h);
+    }
+    if (h.state === "FLEE") haulTmpB.copy(h.group.position).addScaledVector(haulTmpA, -900);
+    else haulTmpB.copy(h.wanderPt);
+
+    // same nose-first jet physics the raiders fly, tuned like a loaded truck:
+    // mirror-lookAt, capped slerp, thrust along the nose, grip, damp, cap
+    haulAimObj.position.copy(h.group.position);
+    haulAimObj.lookAt(haulTmpC.copy(h.group.position).multiplyScalar(2).sub(haulTmpB));
+    const turnCap = h.state === "FLEE" ? HAULER_TURN_FLEE : HAULER_TURN;
+    const ang = h.group.quaternion.angleTo(haulAimObj.quaternion);
+    if (ang > 1e-4) h.group.quaternion.slerp(haulAimObj.quaternion, Math.min(1, turnCap * dt / ang));
+    h.group.getWorldDirection(haulTmpC).negate();
+    h.vel.addScaledVector(haulTmpC, HAULER_ACCEL * dt);
+    const spd = h.vel.length();
+    if (spd > 1) {
+      haulTmpC.multiplyScalar(spd);
+      h.vel.lerp(haulTmpC, 1 - Math.exp(-HAULER_GRIP * dt));
+    }
+    h.vel.multiplyScalar(Math.pow(0.997, dt * 60));
+    const maxSpd = h.state === "FLEE" ? HAULER_FLEE_SPD : HAULER_SPD;
+    if (h.vel.length() > maxSpd) h.vel.setLength(maxSpd);
+    h.group.position.addScaledVector(h.vel, dt);
+
+    /* ---- ram: the truck is the WALL in this collision — you bounce off,
+       it rolls on rattled. Rams never pay (house rule 10c), and damage goes
+       last for the same load-bearing reason as the junk and pirate rams. ---- */
+    const rr = HAULER_HIT_R + SHIP_HIT_R;
+    if (!landedOn && shipObj.position.distanceToSquared(h.group.position) < rr * rr) {
+      haulTmpB.subVectors(shipObj.position, h.group.position).normalize();
+      haulTmpC.subVectors(ship.velocity, h.vel);
+      const relSpd = haulTmpC.length();
+      const into = haulTmpC.dot(haulTmpB);                                  // negative = closing
+      if (into < 0) ship.velocity.addScaledVector(haulTmpB, -1.5 * into);   // bounce, a little restitution
+      shipObj.position.copy(h.group.position).addScaledVector(haulTmpB, rr + 1);  // shove clear — no sticky overlap
+      const dmg = Math.min(RAM_DMG_CAP, (Math.max(0, relSpd - RAM_FREE_SPD) / 100) * HAULER_RAM_HURT);
+      thump(Math.min(360, 140 + relSpd * 0.5));
+      haulerFlee(h);   // insured, not brave
+      if (dmg > 0) {
+        spillCargo(dmg);   // knock loose cargo BEFORE shipDamage — same reason as the junk ram
+        shipDamage(dmg);
+      }
+      continue;
+    }
+
+    if (h.mixer) h.mixer.update(dt);   // the authored float — she rides her suspension
+
+    // exhaust bloom rides the throttle; the running light tells the mood:
+    // slow amber blink = a shift being worked, fast strobe = a truck in trouble
+    h.engineGlow.scale.setScalar(4 + 4 * h.vel.length() / HAULER_FLEE_SPD);
+    h.beacon.material.opacity = h.state === "FLEE"
+      ? (Math.sin(clock.elapsedTime * 8 + h.phase) > 0 ? 0.9 : 0.1)
+      : (Math.sin(clock.elapsedTime * 1.6 + h.phase) > 0 ? 0.6 : 0.2);
+  }
+}
+/* ================= end 10f: FREIGHT TRAFFIC ================= */
 
 // same lazy find as the HOME chevron (homeBody is shared with the nav HUD)
 function pirateInHarbor() {
@@ -3814,6 +4091,8 @@ function drawNavHud(dt) {
   for (const p of pirates) if (p.alive)
     navBlipAt(p.group.position, cx, cy, r,
               p.faction === "hostile" ? "#ff5544" : p.faction === "neutral" ? NAV_AMBER : NAV_TEAL, 3);
+  // freight: a fat gold blip — the scrap/HOME gold on purpose: loot on the hoof
+  for (const h of haulers) if (h.alive) navBlipAt(h.group.position, cx, cy, r, NAV_GOLD, 3.5);
   c.fillStyle = "rgba(110,231,216,.6)"; c.font = "10px " + navFont; c.textAlign = "center";
   c.fillText("RADAR", cx, cy + r + 14);
   c.restore();
@@ -4267,6 +4546,7 @@ function animate() {
   updateJunk(dt);
   updateScrap(dt);    // reel in salvage from kills (may be created by the bolts below, next frame)
   updateEnemies(dt);  // pirates move before the bolt tests below, same reason as the junk
+  updateHaulers(dt);  // freight too — same ordering rule
 
   /* ---- blasters: fire from both cannons, advance live bolts ---- */
   fireCooldown -= dt;
@@ -4294,9 +4574,10 @@ function animate() {
     b.mesh.position.addScaledVector(b.vel, dt);
     // test the whole segment it crossed this frame, not just where it landed
     // short-circuit: one bolt hits one thing, and junk can shield a pirate.
-    // safe in one expression — the two tests own disjoint scratch vectors.
+    // safe in one expression — the three tests own disjoint scratch vectors.
     if (junkTestBolt(boltPrev, b.mesh.position, b.vel) ||
-        enemyTestBolt(boltPrev, b.mesh.position, b.vel)) { b.life = 0; b.mesh.visible = false; }
+        enemyTestBolt(boltPrev, b.mesh.position, b.vel) ||
+        haulerTestBolt(boltPrev, b.mesh.position, b.vel)) { b.life = 0; b.mesh.visible = false; }
   }
   for (const s of muzzleFlashes)     // fast fade after each shot
     if (s.scale.x > 0.002) s.scale.setScalar(Math.max(0.001, s.scale.x * Math.pow(0.00004, dt)));
