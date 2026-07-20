@@ -92,6 +92,43 @@
      hidden — the front door owns the whole screen. */
   body.menu #hud, body.menu #navhud { display: none; }
   body.menu .touchbtn { display: none !important; }
+  /* a quieter sibling of the big START button — menu rows that aren't the
+     main event (SETTINGS today, whatever slots in tomorrow) */
+  .ss-btn.sub { font-size: 13px; letter-spacing: 4px; padding: 9px 30px; opacity: .85; }
+
+  /* ---- SETTINGS / PAUSE PANEL (v54): one panel, two doors. Opened from
+     the front door's SETTINGS button, or over a frozen game by P / ESC /
+     pad-Start. Sits above the start screen (z 30 > 20). ---- */
+  #settings {
+    position: fixed; inset: 0; z-index: 30; display: none;
+    align-items: center; justify-content: center;
+    font-family: "Lucida Console", Monaco, monospace; color: #6ee7d8;
+    background: rgba(0,0,0,.55);
+  }
+  #settingsPanel {
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+    padding: 22px 28px; max-height: 88vh; box-sizing: border-box;
+    background: rgba(6,14,16,.92); border: 1px solid rgba(110,231,216,.35);
+    border-radius: 8px; box-shadow: 0 0 30px rgba(110,231,216,.12);
+  }
+  #settingsTitle { font-size: 24px; letter-spacing: 8px;
+                   text-shadow: 0 0 12px rgba(110,231,216,.6); }
+  .volrow { display: grid; grid-template-columns: 70px 170px 42px;
+            align-items: center; gap: 10px;
+            font-size: 11px; letter-spacing: 2px; }
+  .volrow input { width: 100%; accent-color: #6ee7d8; cursor: pointer; }
+  .volrow .vpct { text-align: right; color: #ffd34d;
+                  text-shadow: 0 0 6px rgba(255,211,77,.4); }
+  /* the cheat-sheet: the flight CONTROLS list cloned in, tucked behind its
+     own toggle so the mixer stays front and center */
+  #settingsCtrls {
+    display: none; max-height: 38vh; overflow-y: auto;
+    max-width: 340px; padding: 10px 14px; text-align: left;
+    font-size: 11px; line-height: 1.7; letter-spacing: .5px; opacity: .92;
+    background: rgba(10,25,25,.55); border: 1px solid rgba(110,231,216,.25);
+    border-radius: 6px;
+  }
+  #settings.ctrls #settingsCtrls { display: block; }
 
   #hud {
     position: fixed; inset: 0; pointer-events: none;
@@ -242,22 +279,22 @@
 
   /* controls: a tuck-away menu instead of a wall of text in the corner */
   #ctrlmenu { position: absolute; top: 12px; left: 14px; pointer-events: auto; }
-  #ctrlToggle {
+  #ctrlToggle, #settingsCtrlsToggle {
     cursor: pointer; font-family: inherit; font-size: 11px; letter-spacing: 2px;
     color: #6ee7d8; background: rgba(10,25,25,.5);
     border: 1px solid rgba(110,231,216,.4); border-radius: 4px; padding: 4px 11px;
     text-shadow: 0 0 6px rgba(110,231,216,.6);
   }
-  #ctrlToggle:hover { background: rgba(20,45,45,.75); }
+  #ctrlToggle:hover, #settingsCtrlsToggle:hover { background: rgba(20,45,45,.75); }
   #ctrlList {
     display: none; margin-top: 8px; padding: 10px 14px; max-width: 340px;
     font-size: 11px; line-height: 1.7; letter-spacing: .5px; opacity: .92;
     background: rgba(6,14,16,.82); border: 1px solid rgba(110,231,216,.3); border-radius: 6px;
   }
   #ctrlmenu.open #ctrlList { display: block; }
-  #ctrlList .grp { color: #6ee7d8; opacity: .55; letter-spacing: 2px; font-size: 10px; margin: 9px 0 3px; }
-  #ctrlList .grp:first-child { margin-top: 0; }
-  #ctrlList b { color: #bffef4; font-weight: normal; }
+  #ctrlList .grp, #settingsCtrls .grp { color: #6ee7d8; opacity: .55; letter-spacing: 2px; font-size: 10px; margin: 9px 0 3px; }
+  #ctrlList .grp:first-child, #settingsCtrls .grp:first-child { margin-top: 0; }
+  #ctrlList b, #settingsCtrls b { color: #bffef4; font-weight: normal; }
   .bracket { position:absolute; width: 40px; height: 40px; opacity:.4; }
   .bracket.tl { top:8px; left:8px; border-top:1px solid #6ee7d8; border-left:1px solid #6ee7d8; }
   .bracket.tr { top:8px; right:8px; border-top:1px solid #6ee7d8; border-right:1px solid #6ee7d8; }
@@ -313,8 +350,23 @@
         <button id="shipNext" type="button" class="ss-arrow">›</button>
       </div>
       <button id="btnStart" type="button" class="ss-btn">START</button>
+      <button id="btnSettings" type="button" class="ss-btn sub">SETTINGS</button>
     </div>
     <div class="ss-hint">SALVAGE · UPGRADE · HAUL · SURVIVE</div>
+  </div>
+</div>
+<!-- v54: the mixer + cheat-sheet. Doubles as the pause menu in flight —
+     #settingsCtrls is filled by cloning #ctrlList, so the controls text
+     lives in exactly one place. -->
+<div id="settings">
+  <div id="settingsPanel">
+    <div id="settingsTitle">SETTINGS</div>
+    <div class="volrow"><span>MUSIC</span><input id="volMusic" type="range" min="0" max="100" step="5"><span class="vpct" id="volMusicPct"></span></div>
+    <div class="volrow"><span>EFFECTS</span><input id="volSfx" type="range" min="0" max="100" step="5"><span class="vpct" id="volSfxPct"></span></div>
+    <div class="volrow"><span>ENGINE</span><input id="volEngine" type="range" min="0" max="100" step="5"><span class="vpct" id="volEnginePct"></span></div>
+    <button id="settingsCtrlsToggle" type="button">CONTROLS ▾</button>
+    <div id="settingsCtrls"></div>
+    <button id="btnResume" type="button" class="ss-btn sub">CLOSE</button>
   </div>
 </div>
 <div id="atmo"></div>
@@ -339,7 +391,7 @@
       <div class="grp">GAMEPAD</div>
       <b>L-stick</b> roll / pitch · <b>R-stick</b> look around<br>
       <b>RT / LT</b> thrust / reverse · <b>LB / RB</b> nose left / right<br>
-      <b>A</b> fire · <b>B</b> boost · <b>X</b> stop · <b>Y</b> view<br>
+      <b>A</b> fire · <b>B</b> boost · <b>X</b> stop · <b>Y</b> view · <b>Start</b> pause<br>
       <b>D-pad</b> ↑/↓ pick upgrade · <b>A</b> buy (docked at the outfitter)
       <div class="grp">TOUCH</div>
       <b>Drag</b> to steer · on-screen THRUST / REVERSE / STOP / FIRE / VIEW
@@ -361,7 +413,7 @@
       pays its fee from the bank and it flies your wing, two max. The
       bank's sky is a safe harbor; nobody hunts you there.
       <div class="grp">HUD</div>
-      <b>H</b> toggle this menu · <b>M</b> music on / off
+      <b>H</b> toggle this menu · <b>M</b> music on / off · <b>P / ESC</b> pause + settings
     </div>
   </div>
   <div id="viewtag">VIEW: COCKPIT</div>
@@ -1499,21 +1551,54 @@ scene.add(wisps);
 let audio = null;
 let music = null;        // SpaceMusic instance (v48) — null until the first gesture, or forever on file://
 let musicMuted = false;
+
+/* ---- the mixer (v54) ----
+   Three sliders, one localStorage key. Its OWN key (spacesuck.settings,
+   never spacesuck.save) so a progress #reset can't touch your speakers.
+   Values are 0..1 multipliers on the shipped levels — all-1s sounds
+   exactly like v53 did. Engine and SFX each get a bus gain in initAudio;
+   music already has a master gain inside SpaceMusic. */
+let paused = false;      // the settings panel doubles as the pause menu
+const SETTINGS_KEY = "spacesuck.settings";
+const settings = { music: 1, sfx: 1, engine: 1 };
+try {
+  const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+  for (const k in settings)
+    if (typeof s[k] === "number") settings[k] = Math.max(0, Math.min(1, s[k]));
+} catch (e) {}
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+}
+function applyAudioSettings() {
+  if (audio) {
+    audio.sfx.gain.value = settings.sfx;
+    /* paused ⇒ engine ducks to 0: the drone's oscillators never stop, and a
+       frozen game holding a frozen throttle would howl through the menu */
+    audio.engineBus.gain.value = paused ? 0 : settings.engine;
+  }
+  if (music) music.setMasterVolume(musicMuted ? 0 : 0.55 * settings.music);
+}
 function toggleMusic() {
   if (!music) return;
   musicMuted = !musicMuted;
-  music.setMasterVolume(musicMuted ? 0 : 0.55);
+  applyAudioSettings();
 }
 function initAudio() {
   if (audio) return;
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  /* v54: two bus gains sit between the game and the speakers — engine
+     (drone + entry rumble) and SFX (every one-shot) — so each settings
+     slider has exactly one knob to turn. */
+  const engineBus = ctx.createGain(); engineBus.gain.value = settings.engine;
+  const sfxBus = ctx.createGain(); sfxBus.gain.value = settings.sfx;
+  engineBus.connect(ctx.destination); sfxBus.connect(ctx.destination);
   const gain = ctx.createGain(); gain.gain.value = 0;
   const filter = ctx.createBiquadFilter();
   filter.type = "lowpass"; filter.frequency.value = 220;
   const osc1 = ctx.createOscillator(); osc1.type = "sawtooth"; osc1.frequency.value = 48;
   const osc2 = ctx.createOscillator(); osc2.type = "sawtooth"; osc2.frequency.value = 48.7;
   osc1.connect(filter); osc2.connect(filter);
-  filter.connect(gain); gain.connect(ctx.destination);
+  filter.connect(gain); gain.connect(engineBus);
   osc1.start(); osc2.start();
 
   // entry rumble: looping low-pass noise, silent until you hit atmosphere
@@ -1523,10 +1608,10 @@ function initAudio() {
   const nsrc = ctx.createBufferSource(); nsrc.buffer = nbuf; nsrc.loop = true;
   const nfilter = ctx.createBiquadFilter(); nfilter.type = "lowpass"; nfilter.frequency.value = 110;
   const ngain = ctx.createGain(); ngain.gain.value = 0;
-  nsrc.connect(nfilter); nfilter.connect(ngain); ngain.connect(ctx.destination);
+  nsrc.connect(nfilter); nfilter.connect(ngain); ngain.connect(engineBus);
   nsrc.start();
 
-  audio = { ctx, gain, filter, osc1, osc2, rumble: ngain };
+  audio = { ctx, gain, filter, osc1, osc2, rumble: ngain, engineBus, sfx: sfxBus };
 
   /* v48: the score. Shares THIS ctx (one context, one hardware stream) and
      starts here because this is already the game's audio-unlock gesture.
@@ -1536,6 +1621,7 @@ function initAudio() {
     music = new window.SpaceMusic(ctx);
     music.start();
   }
+  applyAudioSettings();   // the saved mixer applies from the first note
 }
 function thump(strength) {
   padRumble(Math.min(1, strength / 300), 150);   // impacts shake the pad too
@@ -1548,7 +1634,7 @@ function thump(strength) {
   const src = ctx.createBufferSource(); src.buffer = buf;
   const f = ctx.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 150;
   const g = ctx.createGain(); g.gain.value = Math.min(0.5, strength / 400);
-  src.connect(f); f.connect(g); g.connect(ctx.destination);
+  src.connect(f); f.connect(g); g.connect(audio.sfx);
   src.start();
 }
 ["keydown", "mousedown", "touchstart"].forEach(ev => addEventListener(ev, initAudio));
@@ -1764,7 +1850,7 @@ function blasterSound() {
   g.gain.setValueAtTime(0.0001, t);
   g.gain.exponentialRampToValueAtTime(0.16, t + 0.005);
   g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
-  o.connect(g); g.connect(ctx.destination);
+  o.connect(g); g.connect(audio.sfx);
   o.start(t); o.stop(t + 0.14);
 }
 
@@ -2259,7 +2345,7 @@ function junkBoomSound(dist, radius) {
   f.frequency.setValueAtTime(2400, t);
   f.frequency.exponentialRampToValueAtTime(110, t + 0.45);   // sweep down = "whump"
   const g = ctx.createGain(); g.gain.value = vol;
-  src.connect(f); f.connect(g); g.connect(ctx.destination);
+  src.connect(f); f.connect(g); g.connect(audio.sfx);
   src.start(t);
 }
 function junkTinkSound(dist) {
@@ -2272,7 +2358,7 @@ function junkTinkSound(dist) {
   const g = ctx.createGain();
   g.gain.setValueAtTime(vol, t);
   g.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
-  o.connect(g); g.connect(ctx.destination);
+  o.connect(g); g.connect(audio.sfx);
   o.start(t); o.stop(t + 0.09);
 }
 /* A soft coin-blip when scrap hits the intake. When several bits land in the
@@ -2293,7 +2379,7 @@ function scrapPickupSound(count) {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(0.05, t + 0.008);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
-    o.connect(g); g.connect(ctx.destination);
+    o.connect(g); g.connect(audio.sfx);
     o.start(t); o.stop(t + 0.14);
   }
 }
@@ -2307,7 +2393,7 @@ function cargoSpillSound() {
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.10, t);
   g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
-  o.connect(g); g.connect(ctx.destination);
+  o.connect(g); g.connect(audio.sfx);
   o.start(t); o.stop(t + 0.21);
 }
 
@@ -2373,7 +2459,7 @@ function bankTickSound() {
   g.gain.setValueAtTime(0.0001, t);
   g.gain.exponentialRampToValueAtTime(0.028, t + 0.006);
   g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
-  o.connect(g); g.connect(ctx.destination);
+  o.connect(g); g.connect(audio.sfx);
   o.start(t); o.stop(t + 0.08);
 }
 function bankDoneSound() {
@@ -2386,7 +2472,7 @@ function bankDoneSound() {
     g.gain.setValueAtTime(0.0001, at);
     g.gain.exponentialRampToValueAtTime(0.07, at + 0.01);
     g.gain.exponentialRampToValueAtTime(0.0001, at + 0.3);
-    o.connect(g); g.connect(ctx.destination);
+    o.connect(g); g.connect(audio.sfx);
     o.start(at); o.stop(at + 0.32);
   });
 }
@@ -2484,7 +2570,7 @@ function shopBuySound() {
     g.gain.setValueAtTime(0.0001, at);
     g.gain.exponentialRampToValueAtTime(0.08, at + 0.01);
     g.gain.exponentialRampToValueAtTime(0.0001, at + 0.22);
-    o.connect(g); g.connect(ctx.destination);
+    o.connect(g); g.connect(audio.sfx);
     o.start(at); o.stop(at + 0.24);
   });
 }
@@ -2496,7 +2582,7 @@ function shopDenySound() {
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.05, t);
   g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
-  o.connect(g); g.connect(ctx.destination);
+  o.connect(g); g.connect(audio.sfx);
   o.start(t); o.stop(t + 0.16);
 }
 
@@ -3362,7 +3448,7 @@ function pirateWarnSound() {
     g.gain.setValueAtTime(0.0001, at);
     g.gain.exponentialRampToValueAtTime(0.10, at + 0.01);
     g.gain.exponentialRampToValueAtTime(0.0001, at + 0.14);
-    o.connect(g); g.connect(ctx.destination);
+    o.connect(g); g.connect(audio.sfx);
     o.start(at); o.stop(at + 0.15);
   }
 }
@@ -3380,7 +3466,7 @@ function pirateHailSound() {
     g.gain.setValueAtTime(0.0001, at);
     g.gain.exponentialRampToValueAtTime(0.08, at + 0.01);
     g.gain.exponentialRampToValueAtTime(0.0001, at + 0.14);
-    o.connect(g); g.connect(ctx.destination);
+    o.connect(g); g.connect(audio.sfx);
     o.start(at); o.stop(at + 0.15);
   }
 }
@@ -3421,7 +3507,7 @@ function pirateShotSound(dist) {
   g.gain.setValueAtTime(0.0001, t);
   g.gain.exponentialRampToValueAtTime(vol, t + 0.005);
   g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
-  o.connect(g); g.connect(ctx.destination);
+  o.connect(g); g.connect(audio.sfx);
   o.start(t); o.stop(t + 0.16);
 }
 
@@ -3810,6 +3896,11 @@ applyView();   // seed the initial (cockpit) view state
 /* ============ 11. INPUT ============ */
 const keys = {};
 addEventListener("keydown", e => {
+  // P pauses mid-flight — ESC too, when the browser doesn't spend it on
+  // releasing pointer-lock (locked, the first ESC frees the mouse and the
+  // second one lands here). Checked BEFORE the input guard below so a
+  // focused volume slider can't eat the key.
+  if ((e.code === "KeyP" || e.code === "Escape") && !keys[e.code]) togglePause();
   // typing a callsign (or any future menu field) — the cockpit stays quiet:
   // no view/music toggles, and Space must type a space, not preventDefault
   if (e.target && e.target.tagName === "INPUT") return;
@@ -3939,6 +4030,7 @@ document.getElementById("btnView").addEventListener("touchstart", e => {
    A FIRE BLASTERS (twin nose cannons, aqua + orange). */
 let padIndex = null;
 let padViewHeld = false;      // edge-detect for the view toggle
+let padStartHeld = false;     // edge-detect for pad-Start pause (v54)
 let padUpHeld = false, padDownHeld = false, padBuyHeld = false;   // shop D-pad edge-detect (v35)
 let lastPadRumble = 0;
 addEventListener("gamepadconnected", e => { padIndex = e.gamepad.index; initAudio(); });
@@ -4366,6 +4458,60 @@ document.getElementById("shipPrev").addEventListener("click", () => pickShip(-1)
 document.getElementById("shipNext").addEventListener("click", () => pickShip(1));
 renderShipCard();
 
+/* ---- SETTINGS / PAUSE (v54, step 3 of the front door) ----
+   One panel, two doors. The front door's SETTINGS button opens it as a
+   plain dialog; in flight, P / ESC / pad-Start open it as the PAUSE menu —
+   `paused` then gates animate() with the same one-return trick as
+   `gameStarted`, so the world genuinely freezes behind the glass. */
+const settingsEl = document.getElementById("settings");
+const settingsTitleEl = document.getElementById("settingsTitle");
+const btnResumeEl = document.getElementById("btnResume");
+// the cheat-sheet IS the in-flight CONTROLS list, cloned once at boot —
+// the controls text keeps a single source of truth
+document.getElementById("settingsCtrls").innerHTML =
+  document.getElementById("ctrlList").innerHTML;
+document.getElementById("settingsCtrlsToggle").addEventListener("click", () =>
+  settingsEl.classList.toggle("ctrls"));
+
+function openSettings() {
+  settingsTitleEl.textContent = gameStarted ? "PAUSED" : "SETTINGS";
+  btnResumeEl.textContent = gameStarted ? "RESUME" : "CLOSE";
+  settingsEl.style.display = "flex";
+  if (gameStarted) {
+    paused = true;
+    if (document.pointerLockElement) document.exitPointerLock();  // free the mouse for the sliders
+    applyAudioSettings();   // paused ⇒ the engine bus ducks to 0
+  }
+}
+function closeSettings() {
+  settingsEl.style.display = "none";
+  paused = false;
+  applyAudioSettings();     // engine bus back up to the slider's value
+}
+function togglePause() {
+  if (settingsEl.style.display === "flex") closeSettings();
+  else if (gameStarted) openSettings();
+}
+document.getElementById("btnSettings").addEventListener("click", openSettings);
+btnResumeEl.addEventListener("click", closeSettings);
+
+/* sliders: 0-100 on screen ↔ 0..1 in `settings`. Every notch applies live
+   and persists; releasing EFFECTS answers with a chime at the new level,
+   so the knob can be set by ear. */
+function bindVol(id, key) {
+  const el = document.getElementById(id), pct = document.getElementById(id + "Pct");
+  const show = () => pct.textContent = el.value + "%";
+  el.value = Math.round(settings[key] * 100); show();
+  el.addEventListener("input", () => {
+    settings[key] = el.value / 100;
+    show(); applyAudioSettings(); saveSettings();
+  });
+}
+bindVol("volMusic", "music");
+bindVol("volSfx", "sfx");
+bindVol("volEngine", "engine");
+document.getElementById("volSfx").addEventListener("change", () => scrapPickupSound(1));
+
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -4384,6 +4530,21 @@ function animate() {
     );
     // aim above the hull so the ship rides in the lower third, clear of the menu text
     camera.lookAt(shipObj.position.x, shipObj.position.y + 7, shipObj.position.z);
+    renderer.render(scene, camera);
+    return;
+  }
+
+  /* ---- pause (v54): pad-Start is polled BEFORE the gate (it must work
+     while frozen, and the main pad poll below never runs then). The gate
+     itself is the same one-return trick as the menu above: render the
+     frozen frame, touch nothing else. ---- */
+  if (padIndex !== null) {
+    const gp = navigator.getGamepads()[padIndex];
+    const sBtn = !!(gp && gp.buttons[9] && gp.buttons[9].pressed);  // Start / Menu
+    if (sBtn && !padStartHeld) togglePause();
+    padStartHeld = sBtn;
+  }
+  if (paused) {
     renderer.render(scene, camera);
     return;
   }
