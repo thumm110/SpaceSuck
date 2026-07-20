@@ -24,6 +24,7 @@ when the page loads.
 | Space | Fire blasters |
 | E | Answer a hail — hire a neutral raider as your wingman |
 | V | Cycle view: cockpit → chase → chase far → cinematic |
+| M | Music on / off (sound effects stay up) |
 
 Touch devices get on-screen thrust/brake/reverse buttons, a big red **FIRE**
 button, and drag steering. Hold FIRE with your right thumb while your left
@@ -135,6 +136,14 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   atmosphere reads as a slightly bigger bubble now, too
 - **Synthesized audio** — Web Audio engine hum that follows the throttle,
   plus a rumble that rises during atmospheric entry; no sound files
+- **A generative score that knows when you're in trouble** — `sounds/
+  SpaceMusic.js`, pure Web Audio, no files: an A-minor ambient bed (detuned
+  drones breathing through a filter, reverb-washed bell twinkles) plays from
+  your first click, and the moment a bandit is up a danger layer fades in
+  over it — tritone drone, tense shimmer, a driving 112 BPM heartbeat with
+  a dissonant arpeggio — then melts away when the sky is clear. Neutrals
+  and your own wingmen don't scare the band. **M** mutes the music; the
+  engine and effects stay up
 - **Ship + camera rig** — a Blender-designed fighter (`ship.glb`) with an
   authored idle-float animation, cockpit view, and a chase cam with easing
   lag so you see the ship bank through turns. `build_icon.py` renders that
@@ -196,10 +205,11 @@ art, that's why: check the URL, not the model.
 
 ## History
 
-Forty-seven versions across 61 commits, each `vN:` tagged in the log — `git log`
+Forty-eight versions across 62 commits, each `vN:` tagged in the log — `git log`
 tells the story from "v1: first flight — mouse steer, throttle physics" to a
 Blender fighter — flying tight, its momentum gripping to the nose, framed in a
 cockpit gunsight — mining a junk field for scrap, banking it at Charleston,
 spending it on upgrades, and hiring a raider off the field to fly your wing,
 across two hand-built worlds you can land on: Earth, and the red desert of
-RUBICON on the far rim.
+RUBICON on the far rim — all of it under a generative score that hears the
+radar.

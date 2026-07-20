@@ -262,7 +262,7 @@
       pays its fee from the bank and it flies your wing, two max. The
       bank's sky is a safe harbor; nobody hunts you there.
       <div class="grp">HUD</div>
-      <b>H</b> toggle this menu
+      <b>H</b> toggle this menu · <b>M</b> music on / off
     </div>
   </div>
   <div id="viewtag">VIEW: COCKPIT</div>
@@ -319,6 +319,16 @@
 <!-- loads ship.glb (the Blender fighter); if this file is missing the
      game still flies with the built-in primitive placeholder -->
 <script src="GLTFLoader.js"></script>
+<script type="module">
+  /* SpaceMusic (v48) is an ES module; the game is one classic script. This
+     shim imports it — with the same cache-bust the .glbs ride — and hands
+     the class over on window. Modules are CORS-blocked on file://, so the
+     catch keeps the double-click fallback alive: no music, game flies on. */
+  try {
+    const m = await import("./sounds/SpaceMusic.js" + location.search);
+    window.SpaceMusic = m.default;
+  } catch (e) { console.warn("SpaceMusic didn't load — flying without a score", e); }
+</script>
 <script>
 /* =========================================================================
    SPACESUCK v14 — destinations, not fly-bys
@@ -1387,6 +1397,13 @@ scene.add(wisps);
 
 /* ============ 9. ENGINE AUDIO ============ */
 let audio = null;
+let music = null;        // SpaceMusic instance (v48) — null until the first gesture, or forever on file://
+let musicMuted = false;
+function toggleMusic() {
+  if (!music) return;
+  musicMuted = !musicMuted;
+  music.setMasterVolume(musicMuted ? 0 : 0.55);
+}
 function initAudio() {
   if (audio) return;
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1410,6 +1427,15 @@ function initAudio() {
   nsrc.start();
 
   audio = { ctx, gain, filter, osc1, osc2, rumble: ngain };
+
+  /* v48: the score. Shares THIS ctx (one context, one hardware stream) and
+     starts here because this is already the game's audio-unlock gesture.
+     start() is async (it may await ctx.resume()); fire-and-forget is fine —
+     the ambient bed fades itself up over 3s once it's running. */
+  if (window.SpaceMusic) {
+    music = new window.SpaceMusic(ctx);
+    music.start();
+  }
 }
 function thump(strength) {
   padRumble(Math.min(1, strength / 300), 150);   // impacts shake the pad too
@@ -3204,6 +3230,11 @@ function updateEnemies(dt) {
   hailTarget = hailBest;
   if (hailTarget && !hailTarget.hailed) { hailTarget.hailed = true; pirateHailSound(); }
 
+  // v48: the score reacts — the danger layer rides while any BANDIT is up.
+  // Neutrals about their business and your own wing don't scare the band.
+  // setDanger ignores redundant calls, so per-frame is fine.
+  if (music) music.setDanger(pirates.some(p => p.alive && p.faction === "hostile"));
+
   /* ---- hostile bolts: advance, swept-test the one target they have ---- */
   for (const b of pirateBolts) {
     if (b.life <= 0) continue;
@@ -3339,6 +3370,7 @@ addEventListener("keydown", e => {
   if (e.code === "KeyV" && !keys["KeyV"]) toggleView(); // fire once per press
   if (e.code === "KeyH" && !keys["KeyH"]) ctrlMenu.classList.toggle("open"); // controls menu
   if (e.code === "KeyE" && !keys["KeyE"]) tryRecruit(); // answer a hail — hire the wingman (v47)
+  if (e.code === "KeyM" && !keys["KeyM"]) toggleMusic(); // music on/off (v48) — effects stay up
   if (e.code === "Space") e.preventDefault();           // Space fires; don't scroll
   // docked at the outfitter, 1/2/3 buy the rows (fire once per press)
   if (shopEl.style.display === "block" && !keys[e.code]) {
