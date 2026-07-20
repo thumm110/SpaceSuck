@@ -15,6 +15,84 @@
     font-size: 14px; text-shadow: 0 0 8px rgba(110,231,216,.7);
   }
 
+  /* ---- START SCREEN (v53): the front door. Same teal-on-black HUD look;
+     sits above everything (z 20) and eats pointer events so a click can't
+     leak past it to the canvas and grab pointer-lock behind the menu.
+     Built as a centered column so NAME / SHIP SELECT / SETTINGS drop in
+     later without touching the layout. ---- */
+  #startscreen {
+    position: fixed; inset: 0; z-index: 20; display: none;
+    align-items: flex-start; justify-content: center; text-align: center;
+    padding-top: 7vh; box-sizing: border-box;
+    pointer-events: auto;
+    font-family: "Lucida Console", Monaco, monospace; color: #6ee7d8;
+    background: radial-gradient(ellipse at center,
+                rgba(0,0,0,.30) 0%, rgba(0,0,0,.70) 68%, rgba(0,0,0,.9) 100%);
+  }
+  .ss-inner { display: flex; flex-direction: column; align-items: center; gap: 20px; padding: 24px; }
+  .ss-title {
+    font-size: 66px; letter-spacing: 12px; font-weight: bold; line-height: 1;
+    text-shadow: 0 0 18px rgba(110,231,216,.75), 0 0 42px rgba(110,231,216,.35);
+    animation: ssPulse 3.2s ease-in-out infinite;
+  }
+  /* SUCK is gold — the scrap/money color — so the title itself hints at the
+     loop: haul teal into gold. */
+  .ss-title span { color: #ffd34d; text-shadow: 0 0 18px rgba(255,211,77,.7), 0 0 42px rgba(255,211,77,.3); }
+  @keyframes ssPulse { 50% { text-shadow: 0 0 26px rgba(110,231,216,.95), 0 0 60px rgba(110,231,216,.5); } }
+  .ss-tag  { font-size: 13px; letter-spacing: 3px; opacity: .72; }
+  #menuButtons { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
+  .ss-btn {
+    cursor: pointer; font-family: inherit; font-size: 18px; letter-spacing: 6px;
+    color: #6ee7d8; background: rgba(10,25,25,.55);
+    border: 1px solid rgba(110,231,216,.5); border-radius: 6px;
+    padding: 13px 46px; text-shadow: 0 0 8px rgba(110,231,216,.7);
+    transition: background .15s, box-shadow .15s;
+  }
+  .ss-btn:hover, .ss-btn:focus {
+    background: rgba(24,55,52,.85); outline: none;
+    box-shadow: 0 0 16px rgba(110,231,216,.45), inset 0 0 12px rgba(110,231,216,.15);
+  }
+  .ss-hint { font-size: 11px; letter-spacing: 4px; opacity: .42; margin-top: 2px; }
+  /* the callsign field — same glass as the buttons, but clearly a place to
+     type: dimmer border until focus, centered all-caps text */
+  .ss-input {
+    font-family: inherit; font-size: 15px; letter-spacing: 4px; text-align: center;
+    text-transform: uppercase; color: #bffef4; caret-color: #6ee7d8;
+    background: rgba(10,25,25,.55); border: 1px solid rgba(110,231,216,.3);
+    border-radius: 6px; padding: 11px 18px; width: 240px; box-sizing: border-box;
+  }
+  .ss-input:focus { outline: none; border-color: rgba(110,231,216,.65);
+                    box-shadow: 0 0 12px rgba(110,231,216,.3); }
+  .ss-input::placeholder { color: rgba(110,231,216,.35); letter-spacing: 4px; }
+  /* the hangar picker: ‹ card › — the turntable below IS the preview */
+  #shiprow { display: flex; align-items: center; gap: 10px; }
+  .ss-arrow {
+    cursor: pointer; font-family: inherit; font-size: 22px; line-height: 1;
+    color: #6ee7d8; background: rgba(10,25,25,.55);
+    border: 1px solid rgba(110,231,216,.4); border-radius: 6px;
+    padding: 8px 13px 11px; text-shadow: 0 0 8px rgba(110,231,216,.7);
+  }
+  .ss-arrow:hover { background: rgba(24,55,52,.85);
+                    box-shadow: 0 0 12px rgba(110,231,216,.35); }
+  #shipCard {
+    width: 250px; padding: 9px 12px 10px; box-sizing: border-box;
+    background: rgba(10,25,25,.55); border: 1px solid rgba(110,231,216,.3);
+    border-radius: 6px;
+  }
+  #shipName  { font-size: 15px; letter-spacing: 4px; color: #ffd34d;
+               text-shadow: 0 0 8px rgba(255,211,77,.5); }
+  #shipBlurb { font-size: 9px; letter-spacing: 1px; opacity: .6; margin: 4px 0 7px;
+               min-height: 22px; }
+  .pipRow { display: flex; justify-content: space-between;
+            font-size: 10px; letter-spacing: 2px; line-height: 1.6; }
+  .pipRow .p { color: #6ee7d8; }
+  .pipRow .p .off { opacity: .25; }
+  @media (max-width: 480px) { .ss-title { font-size: 42px; letter-spacing: 8px; } }
+  /* while the menu is up the flight HUD, radar canvas and touch pads stay
+     hidden — the front door owns the whole screen. */
+  body.menu #hud, body.menu #navhud { display: none; }
+  body.menu .touchbtn { display: none !important; }
+
   #hud {
     position: fixed; inset: 0; pointer-events: none;
     font-family: "Lucida Console", Monaco, monospace;
@@ -218,6 +296,27 @@
 </head>
 <body>
 <div id="loading">GENERATING WORLDS…</div>
+<div id="startscreen">
+  <div class="ss-inner">
+    <div class="ss-title">SPACE<span>SUCK</span></div>
+    <div class="ss-tag">mine the junk · bank the scrap · don't get towed home</div>
+    <div id="menuButtons">
+      <input id="pilotname" class="ss-input" type="text" maxlength="12"
+             placeholder="CALLSIGN" autocomplete="off" spellcheck="false">
+      <div id="shiprow">
+        <button id="shipPrev" type="button" class="ss-arrow">‹</button>
+        <div id="shipCard">
+          <div id="shipName"></div>
+          <div id="shipBlurb"></div>
+          <div id="shipPips"></div>
+        </div>
+        <button id="shipNext" type="button" class="ss-arrow">›</button>
+      </div>
+      <button id="btnStart" type="button" class="ss-btn">START</button>
+    </div>
+    <div class="ss-hint">SALVAGE · UPGRADE · HAUL · SURVIVE</div>
+  </div>
+</div>
 <div id="atmo"></div>
 <canvas id="navhud"></canvas>
 <div id="damageflash"></div>
@@ -282,6 +381,7 @@
     <div class="shopRow"></div>
   </div>
   <div id="flightdata">
+    <span id="pilotrow" style="display:none"><span class="dim">PILOT</span> <span id="pilot"></span><br></span>
     <span class="dim">HULL</span> <span id="hullpct">100%</span>
     <div id="hullbar"><div id="hullfill"></div></div>
     <span class="dim">VELOCITY</span><br>
@@ -1485,22 +1585,54 @@ scene.add(shipObj);
 const { mesh: shipMesh, engineGlows, retroGlows } = buildShipMesh();
 shipObj.add(shipMesh);
 
-/* ---- the REAL ship: the Blender fighter (ship.glb) ----
+/* ---- THE HANGAR (v53): every flyable ship, as data ----
+   Same philosophy as BODIES: a ship is a config row, the loader is generic.
+   Stats are the BASE the outfitter stacks on — hullMul/beamMul/spillMul
+   multiply the shop's tier values, so upgrades carry across ships.
+   muzzles = named nodes the bolts fire from (graceful: a missing node
+   falls back to its partner, then to wherever the glow already sits).
+   A ship without Gear or ProngTip nodes simply skips those features —
+   rig differences are character, not bugs. pips are the menu stat bars. */
+const SHIPS = [
+  { file: "ship/ship.glb", name: "USS THUMM", len: 10,
+    blurb: "THE FACTORY FIGHTER — QUICK ON THE STICK",
+    accel: 220, boost: 2.5, turn: 1.6, grip: 2.5,
+    hullMul: 1.0, beamMul: 1.0, spillMul: 1.0,
+    muzzles: ["ProngTipL", "ProngTipR"],
+    pips: { AGILITY: 4, THRUST: 3, HULL: 2, BEAM: 3 } },
+  { file: "ship/ship2.glb", name: "USS BOO", len: 11.5,
+    blurb: "QUAD-ENGINE HEAVY — TAKES A HIT, TURNS LIKE A TRUCK",
+    // turn 1.25 stays above PIRATE_TURN (1.1): even the truck out-turns a raider
+    accel: 260, boost: 2.2, turn: 1.25, grip: 2.0,
+    hullMul: 1.5, beamMul: 1.15, spillMul: 0.8,
+    muzzles: ["GunTipC", "GunTipC"],   // one chin cannon — both bolts, small spread
+    pips: { AGILITY: 2, THRUST: 4, HULL: 4, BEAM: 4 } },
+];
+let shipSel = 0;   // which hangar row flies — picked on the start screen
+try { shipSel = Math.min(SHIPS.length - 1, Math.max(0, Math.floor(+localStorage.getItem("spacesuck.ship")) || 0)); } catch (e) {}
+
+/* ---- the REAL ship: a Blender fighter from the hangar ----
    Loads async — the primitive placeholder flies until it arrives, and
    stays as the fallback if the file (or the loader) is missing.
    Blender +Y-forward exports as glTF -Z-forward, which is exactly our
-   nose convention, so no rotation fixup is needed. The .blend's authored
-   idle float (ShipRootAction — a gentle bob + rock on the root) plays on
-   loop through an AnimationMixer: visual only, physics untouched. */
+   nose convention, so no rotation fixup is needed. Each .blend's authored
+   idle float (an *RootAction — a gentle bob + rock on the root) plays on
+   loop through an AnimationMixer: visual only, physics untouched.
+   Re-callable: the start screen's ‹ › picker swaps hulls live. */
 let shipMixer = null;
 let gearHinges = [], gearDoors = [], gearT = 0;   // landing gear: 0 = stowed, 1 = deployed
-if (THREE.GLTFLoader) {
-  new THREE.GLTFLoader().load("ship/ship.glb" + ASSET_V, gltf => {
+let shipLoadSeq = 0;   // stale-load guard: a fast picker flip outruns a slow fetch
+function loadPlayerShip(def) {
+  if (!THREE.GLTFLoader) return;
+  const seq = ++shipLoadSeq;
+  new THREE.GLTFLoader().load(def.file + ASSET_V, gltf => {
+    if (seq !== shipLoadSeq) return;   // a newer pick superseded this load
+    shipMixer = null; gearHinges = []; gearDoors = [];
     const model = gltf.scene;
 
-    // scale to match the placeholder's presence (~10u nose to tail)
+    // scale to the hangar row's presence (nose to tail, in units)
     const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
-    model.scale.setScalar(10 / size.z);
+    model.scale.setScalar(def.len / size.z);
 
     // any "*Glow" material (thrusters, wing conduits, nav lights, canopy)
     // glows bright; the hull gets a faint self-lit floor so it still reads
@@ -1520,26 +1652,37 @@ if (THREE.GLTFLoader) {
       }
     });
 
-    // swap hulls: strip the placeholder but KEEP the glow sprites — the
-    // game loop holds references to them
+    // swap hulls: strip everything that isn't a glow sprite — the primitive
+    // placeholder on first load, the PREVIOUS fighter on a picker swap. The
+    // glows survive because the game loop holds references to them.
     for (const child of [...shipMesh.children]) {
       if (!engineGlows.includes(child) && !retroGlows.includes(child)) shipMesh.remove(child);
     }
     shipMesh.add(model);
 
-    // re-anchor the glows to the model's named parts
+    // re-anchor the glows to the model's named parts (missing node = the
+    // glow keeps its last seat — graceful, never a crash)
     shipMesh.updateMatrixWorld(true);
     const anchor = (name, glow, back) => {
       const node = model.getObjectByName(name);
-      if (!node) return;
+      if (!node) return false;
       const p = node.getWorldPosition(new THREE.Vector3());
       glow.position.copy(shipMesh.worldToLocal(p));
       glow.position.z += back;   // nudge clear of the nozzle
+      return true;
     };
     anchor("ThrusterL", engineGlows[0],  0.8);
     anchor("ThrusterR", engineGlows[1],  0.8);
-    anchor("ProngTipL", retroGlows[0],  -0.6);
-    anchor("ProngTipR", retroGlows[1],  -0.6);
+    // muzzles: bolts fire from the retro glows' world positions, so seating
+    // the glows on the hangar row's muzzle nodes IS the armament wiring. A
+    // single-cannon ship names the same node twice — spread the pair a
+    // touch so twin bolts leave as a tight double, not one overlap.
+    anchor(def.muzzles[0], retroGlows[0], -0.6);
+    anchor(def.muzzles[1], retroGlows[1], -0.6);
+    if (def.muzzles[0] === def.muzzles[1]) {
+      retroGlows[0].position.x -= 0.45;
+      retroGlows[1].position.x += 0.45;
+    }
 
     // the float
     if (gltf.animations.length) {
@@ -1551,14 +1694,16 @@ if (THREE.GLTFLoader) {
     // (their rotation.x IS the stow angle); bay doors rest closed (0) and carry
     // their open angle in userData.swing (Blender custom prop -> glTF extras).
     // updateGear() in the main loop swings them out when we're landed.
+    // A ship with no Gear* nodes (ship2 today) simply belly-lands.
     gearHinges = ["GearHingeNose", "GearHingeMainL", "GearHingeMainR"]
       .map(n => model.getObjectByName(n)).filter(Boolean);
     gearHinges.forEach(h => h.userData.stow = h.rotation.x);
     gearDoors = ["GearDoorNoseLHinge", "GearDoorNoseRHinge", "GearDoorMainLHinge", "GearDoorMainRHinge"]
       .map(n => model.getObjectByName(n)).filter(Boolean);
     gearDoors.forEach(d => d.userData.swing = d.userData.swing ?? THREE.MathUtils.degToRad(100));
-  }, undefined, err => console.warn("ship.glb didn't load — flying the placeholder", err));
+  }, undefined, err => console.warn(def.file + " didn't load — flying the placeholder", err));
 }
+loadPlayerShip(SHIPS[shipSel]);   // the saved pick (or the THUMM) flies at boot
 
 /* ============ 10b. BLASTERS (v20) ============
    Twin nose cannons — left fires AQUA, right fires ORANGE — from the same
@@ -2275,12 +2420,21 @@ try {
 } catch (e) {}
 if (location.hash === "#reset") { upLvl = [0, 0, 0]; try { localStorage.removeItem("spacesuck.up"); } catch (e) {} }
 function saveUpgrades() { try { localStorage.setItem("spacesuck.up", JSON.stringify(upLvl)); } catch (e) {} }
+// stat apply (v53): the shop's tier value × the hangar row's multiplier.
+// Called at load, on an outfitter buy, and when the start-screen picker
+// swaps ships — upgrades are bought once and carry across every hull.
+function applyShipStats() {
+  const d = SHIPS[shipSel];
+  ship.maxAccel = d.accel; ship.boostMult = d.boost;
+  ship.turnSpeed = d.turn; ship.grip = d.grip;
+  vacuumR = Math.round(SHOP[0].vals[upLvl[0]] * d.beamMul);
+  ship.hullMax = Math.round(SHOP[1].vals[upLvl[1]] * d.hullMul);
+  spillFraction = SHOP[2].vals[upLvl[2]] * d.spillMul;
+}
 // load-time apply: a fresh session starts with everything you paid for,
 // hull charged to its (possibly plated) max
-vacuumR = SHOP[0].vals[upLvl[0]];
-ship.hullMax = SHOP[1].vals[upLvl[1]];
+applyShipStats();
 ship.hull = ship.hullMax;
-spillFraction = SHOP[2].vals[upLvl[2]];
 
 const shopEl = document.getElementById("shop");
 const shopRows = Array.from(shopEl.querySelectorAll(".shopRow"));
@@ -2308,11 +2462,9 @@ function buyUpgrade(i) {
   if (banked < u.costs[l]) { shopDenySound(); return; }  // can't afford
   banked -= u.costs[l];
   upLvl[i] = l + 1;
-  if (i === 0) vacuumR = u.vals[l + 1];
-  else if (i === 1) {
-    ship.hull += u.vals[l + 1] - ship.hullMax;           // the plating arrives charged
-    ship.hullMax = u.vals[l + 1];
-  } else spillFraction = u.vals[l + 1];
+  const wasMax = ship.hullMax;
+  applyShipStats();                       // re-derive through the ship's multipliers
+  if (i === 1) ship.hull += ship.hullMax - wasMax;   // the plating arrives charged
   bankEl.textContent = banked;
   saveBank(); saveUpgrades();
   shopBuySound();
@@ -2586,11 +2738,12 @@ const ALLY_FEE = 150;            // the recruit fee — bank sink between platin
 const ALLY_CAP = 2;              // two wingmen, a vic — Tanner's call from the brainstorm
 const ALLY_SPD = 300, ALLY_CATCHUP_SPD = 460;   // formation cruise / burn-to-rejoin
 const BEACON_HOSTILE = 0xff3020, BEACON_NEUTRAL = 0xffb020, BEACON_ALLY = 0x30e0c8;
-const HAIL_LINES = [             // junker chatter — the name goes in front
-  "EASY, FLYER. GUNS COLD, SALVAGE WARM.",
-  "THIS YOUR PATCH? DIDN'T SEE A FLAG ON IT.",
+const HAIL_LINES = [             // junker chatter — the raider's name goes in
+  "EASY, FLYER. GUNS COLD, SALVAGE WARM.",       // front; {P} is the pilot's
+  "THIS YOUR PATCH? DIDN'T SEE A FLAG ON IT.",   // callsign (FLYER if blank)
   "NOT LOOKING FOR TROUBLE. LOOKING FOR SCRAP.",
-  "YOU HAULING OR HUNTING?",
+  "YOU HAULING OR HUNTING, {P}?",
+  "WORD'S OUT ON YOU, {P}. GOOD WORD, MOSTLY.",
 ];
 let hailTarget = null;           // nearest in-range neutral this frame — the [E] target
 // pirate-owned scratch — NEVER junkTmp*/scrapTmp*: a lethal ram below runs
@@ -3657,6 +3810,9 @@ applyView();   // seed the initial (cockpit) view state
 /* ============ 11. INPUT ============ */
 const keys = {};
 addEventListener("keydown", e => {
+  // typing a callsign (or any future menu field) — the cockpit stays quiet:
+  // no view/music toggles, and Space must type a space, not preventDefault
+  if (e.target && e.target.tagName === "INPUT") return;
   if (e.code === "KeyV" && !keys["KeyV"]) toggleView(); // fire once per press
   if (e.code === "KeyH" && !keys["KeyH"]) ctrlMenu.classList.toggle("open"); // controls menu
   if (e.code === "KeyE" && !keys["KeyE"]) tryRecruit(); // answer a hail — hire the wingman (v47)
@@ -4121,7 +4277,7 @@ function drawNavHud(dt) {
     c.textAlign = "center"; c.shadowBlur = 6;
     c.fillStyle = NAV_AMBER; c.shadowColor = NAV_AMBER;
     c.font = "12px " + navFont;
-    c.fillText(hp.name + ": “" + HAIL_LINES[hp.hailLine] + "”", cx, cy - r - 44);
+    c.fillText(hp.name + ": “" + HAIL_LINES[hp.hailLine].replace("{P}", pilotName || "FLYER") + "”", cx, cy - r - 44);
     const btn = padIndex !== null ? "[D-PAD ↑]" : "[E]";
     if (allies >= ALLY_CAP) {
       c.fillStyle = "rgba(255,176,102,.55)"; c.shadowBlur = 0;
@@ -4149,9 +4305,88 @@ document.getElementById("ctrlToggle").addEventListener("click", e => {
   e.stopPropagation(); ctrlMenu.classList.toggle("open");
 });
 
+/* ---- START SCREEN (v53): the game's front door ------------------------
+   Flight is held until the player presses START. `gameStarted` gates the
+   whole game loop (the early return below); until then each frame renders a
+   slow turntable of the ship over the live starfield. The overlay markup is
+   a centered column so NAME / SHIP SELECT / SETTINGS can slot in later. */
+let gameStarted = false, menuTime = 0;
+const startScreenEl = document.getElementById("startscreen");
+
+/* the callsign (v53, step 2): typed on the front door, worn on the HUD,
+   and worked into the junker chatter. Lives in its own localStorage key —
+   #reset wipes money and upgrades, never who you are. */
+const pilotEl = document.getElementById("pilotname");
+let pilotName = "";
+try { pilotName = (localStorage.getItem("spacesuck.name") || "").trim(); } catch (e) {}
+pilotEl.value = pilotName;
+
+function startGame() {
+  if (gameStarted) return;
+  gameStarted = true;
+  pilotName = pilotEl.value.trim().toUpperCase().slice(0, 12);
+  try { pilotName ? localStorage.setItem("spacesuck.name", pilotName)
+                  : localStorage.removeItem("spacesuck.name"); } catch (e) {}
+  if (pilotName) {
+    document.getElementById("pilot").textContent = pilotName;
+    document.getElementById("pilotrow").style.display = "";
+    // the tow-home sting names the pilot it's stinging
+    breachEl.textContent = "◆ HULL BREACH — " + pilotName + " TOWED TO EARTH ◆";
+  }
+  document.body.classList.remove("menu");   // reveal the flight HUD
+  startScreenEl.style.display = "none";
+}
+document.getElementById("btnStart").addEventListener("click", startGame);
+// ENTER in the callsign field flies too — type your name, hit enter, go
+pilotEl.addEventListener("keydown", e => { if (e.key === "Enter") startGame(); });
+
+/* the hangar picker (v53): ‹ › walks the SHIPS array. The pick swaps the
+   turntable model live, re-derives the stats (upgrades carry over), and
+   persists — like the callsign, your garage survives a #reset. */
+const shipNameEl  = document.getElementById("shipName");
+const shipBlurbEl = document.getElementById("shipBlurb");
+const shipPipsEl  = document.getElementById("shipPips");
+function renderShipCard() {
+  const d = SHIPS[shipSel];
+  shipNameEl.textContent  = d.name;
+  shipBlurbEl.textContent = d.blurb;
+  shipPipsEl.innerHTML = Object.entries(d.pips).map(([k, v]) =>
+    '<div class="pipRow"><span class="dim">' + k + '</span><span class="p">' +
+    "▮".repeat(v) + '<span class="off">' + "▮".repeat(5 - v) + "</span></span></div>").join("");
+}
+function pickShip(dir) {
+  shipSel = (shipSel + dir + SHIPS.length) % SHIPS.length;
+  try { localStorage.setItem("spacesuck.ship", shipSel); } catch (e) {}
+  renderShipCard();
+  loadPlayerShip(SHIPS[shipSel]);   // the turntable swaps hulls in place
+  applyShipStats();
+  ship.hull = ship.hullMax;         // fresh hull, fresh plating
+}
+document.getElementById("shipPrev").addEventListener("click", () => pickShip(-1));
+document.getElementById("shipNext").addEventListener("click", () => pickShip(1));
+renderShipCard();
+
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
+
+  /* Start screen held: run a lightweight "menu frame" — a slow turntable
+     around the ship, the starfield still shimmering — then bail before any
+     flight, physics, spawn or AI code runs. One return keeps the loop pristine. */
+  if (!gameStarted) {
+    menuTime += dt;
+    twinkleStars.material.uniforms.uTime.value = clock.elapsedTime;   // keep the starfield alive
+    const orbR = 16, orbYaw = menuTime * 0.16;
+    camera.position.set(
+      shipObj.position.x + Math.sin(orbYaw) * orbR,
+      shipObj.position.y + 3.2,
+      shipObj.position.z + Math.cos(orbYaw) * orbR
+    );
+    // aim above the hull so the ship rides in the lower third, clear of the menu text
+    camera.lookAt(shipObj.position.x, shipObj.position.y + 7, shipObj.position.z);
+    renderer.render(scene, camera);
+    return;
+  }
 
   /* ---- gamepad: polled every frame ---- */
   let padLX = 0, padYaw = 0, padThrust = 0, padReverse = 0, padStop = false, padBoost = false, padFire = false, padLookBack = false;
@@ -4826,6 +5061,16 @@ setTimeout(() => {
     shipObj.lookAt(shipObj.position.clone().multiplyScalar(2).sub(c));
   }
   document.getElementById("loading").style.display = "none";
+
+  // Front door (v53): a plain launch opens the START menu; a dev doorstep
+  // hash (#earth, #rubicon, …) skips it and flies straight in for testing.
+  if (doorstep) {
+    startGame();
+  } else {
+    document.body.classList.add("menu");         // hide the flight HUD
+    startScreenEl.style.display = "flex";
+  }
+
   animate();
 }, 60);
 
