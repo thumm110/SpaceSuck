@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Adaptive Space Music — Radar Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#060912; --panel:#0b1220; --panel-edge:#16233a;
+    --grid:#123039; --hud:#5fd6e2; --hud-bright:#a6f0f6; --hud-dim:#2f6570;
+    --text:#c7d6e0; --text-dim:#6f8494;
+    --danger:#ff5c3c; --danger-bright:#ff8a5c; --amber:#ffb347;
+    --mono:'Space Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+    --sans:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(1200px 600px at 70% -10%, rgba(95,214,226,.06), transparent 60%),
+      var(--bg);
+    color:var(--text); font-family:var(--sans);
+    min-height:100vh; padding:28px 20px 40px;
+    display:flex; flex-direction:column; align-items:center;
+  }
+  .frame{width:100%; max-width:940px}
+  header{display:flex; align-items:baseline; gap:14px; margin-bottom:4px; flex-wrap:wrap}
+  h1{font-family:var(--mono); font-weight:700; font-size:20px; letter-spacing:.14em;
+     text-transform:uppercase; margin:0; color:var(--hud-bright)}
+  .sub{font-family:var(--mono); font-size:11px; letter-spacing:.16em; color:var(--text-dim);
+       text-transform:uppercase}
+  .grid{display:grid; grid-template-columns:1.05fr .95fr; gap:16px; margin-top:18px}
+  @media(max-width:720px){.grid{grid-template-columns:1fr}}
+  .card{background:linear-gradient(180deg, rgba(255,255,255,.015), transparent), var(--panel);
+        border:1px solid var(--panel-edge); border-radius:14px; padding:16px}
+  .card h2{font-family:var(--mono); font-size:11px; letter-spacing:.18em; text-transform:uppercase;
+           color:var(--text-dim); margin:0 0 12px; display:flex; justify-content:space-between}
+  .card h2 .val{color:var(--hud)}
+
+  /* radar */
+  .scope-wrap{display:flex; justify-content:center}
+  canvas#radar{width:280px; height:280px; touch-action:none}
+  .contacts{font-family:var(--mono); font-size:11px; color:var(--text-dim);
+            text-align:center; margin-top:8px; letter-spacing:.08em}
+  .contacts b{color:var(--amber)}
+
+  /* mixer meters */
+  .meters{display:flex; gap:18px; align-items:flex-end; height:180px; padding:0 6px}
+  .meter{flex:1; display:flex; flex-direction:column; align-items:center; height:100%}
+  .bar{width:100%; flex:1; background:rgba(255,255,255,.03); border:1px solid var(--panel-edge);
+       border-radius:8px; position:relative; overflow:hidden; display:flex; align-items:flex-end}
+  .fill{width:100%; height:0%; transition:height .08s linear; border-radius:0 0 7px 7px}
+  .fill.ambient{background:linear-gradient(180deg, var(--hud-bright), var(--hud-dim))}
+  .fill.threat{background:linear-gradient(180deg, var(--danger-bright), #7a1e12)}
+  .meter .lbl{font-family:var(--mono); font-size:9px; letter-spacing:.12em; text-transform:uppercase;
+              color:var(--text-dim); margin-top:8px; text-align:center; line-height:1.3}
+  .meter .pct{font-family:var(--mono); font-size:11px; color:var(--text); margin-top:2px}
+  .state{font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+         padding:5px 10px; border-radius:6px; border:1px solid var(--panel-edge); color:var(--hud);
+         display:inline-block; transition:.3s}
+  .state.hot{color:var(--danger-bright); border-color:rgba(255,92,60,.5);
+             background:rgba(255,92,60,.08)}
+
+  /* transport */
+  .transport{margin-top:16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap}
+  button{font-family:var(--mono); font-size:12px; letter-spacing:.06em; cursor:pointer;
+         border-radius:9px; padding:11px 16px; border:1px solid var(--panel-edge);
+         background:var(--panel); color:var(--text); transition:.15s}
+  button:hover{border-color:var(--hud-dim); color:var(--hud-bright)}
+  button:focus-visible{outline:2px solid var(--hud); outline-offset:2px}
+  button.primary{background:linear-gradient(180deg, rgba(95,214,226,.16), rgba(95,214,226,.05));
+                 border-color:var(--hud-dim); color:var(--hud-bright)}
+  button.danger:hover{border-color:rgba(255,92,60,.6); color:var(--danger-bright)}
+  button:disabled{opacity:.4; cursor:not-allowed}
+  .vol{display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:10px;
+       letter-spacing:.1em; color:var(--text-dim); margin-left:auto}
+  input[type=range]{accent-color:var(--hud); width:120px}
+  .note{font-family:var(--mono); font-size:11px; color:var(--text-dim); margin-top:18px;
+        line-height:1.7; letter-spacing:.02em}
+  .note code{color:var(--hud); background:rgba(95,214,226,.08); padding:1px 5px; border-radius:4px}
+</style>
+</head>
+<body>
+<div class="frame">
+  <header>
+    <h1>Adaptive Music Console</h1>
+    <span class="sub">// layer-based · reacts to radar</span>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Sector Radar <span class="val" id="bearing">—</span></h2>
+      <div class="scope-wrap"><canvas id="radar" width="560" height="560"></canvas></div>
+      <div class="contacts">Hostile contacts: <b id="contactCount">0</b></div>
+    </div>
+
+    <div class="card">
+      <h2>Audio Layers <span class="val" id="stateWrap"><span class="state" id="stateLbl">standby</span></span></h2>
+      <div class="meters">
+        <div class="meter">
+          <div class="bar"><div class="fill ambient" id="ambFill"></div></div>
+          <div class="lbl">Ambient<br>bed</div><div class="pct" id="ambPct">0%</div>
+        </div>
+        <div class="meter">
+          <div class="bar"><div class="fill threat" id="thrFill"></div></div>
+          <div class="lbl">Threat<br>layer</div><div class="pct" id="thrPct">0%</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <button class="primary" id="startBtn">▶ Start audio</button>
+    <button id="addBtn" disabled>+ Add hostile contact</button>
+    <button class="danger" id="clearBtn" disabled>Clear contacts</button>
+    <label class="vol">MASTER
+      <input type="range" id="vol" min="0" max="100" value="55" disabled>
+    </label>
+  </div>
+
+  <p class="note">
+    The threat layer runs constantly but stays silent at <code>gain 0</code>. When a contact appears
+    it ramps to full and the ambient bed ducks slightly — a smooth crossfade, no hard cut. In your
+    game this is one line: <code>music.setDanger(pirates.length > 0)</code>. The full
+    <code>SpaceMusic</code> class is in this file's source, marked for copy-paste.
+  </p>
+</div>
+
+<script>
+"use strict";
+
+/* =========================================================================
+   SpaceMusic — copy THIS class into your Three.js game.
+   Usage:
+     const music = new SpaceMusic();          // or new SpaceMusic(yourExistingAudioContext)
+     await music.start();                     // call once, from a click/keypress
+     music.setDanger(pirateCount > 0);        // call whenever radar state changes
+     music.setMasterVolume(0.6);              // 0..1
+   It shares your game's AudioContext if you pass one in, so it lives happily
+   next to your engine-audio graph.
+   ========================================================================= */
+class SpaceMusic {
+  constructor(existingCtx = null){
+    this.ctx = existingCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = this.ctx;
+
+    // ---- master chain: [everything] -> limiter -> masterGain -> speakers
+    this.master = ctx.createGain();
+    this.master.gain.value = 0.55;
+    const limiter = ctx.createDynamicsCompressor();  // safety net so stacked layers never clip
+    limiter.threshold.value = -6; limiter.ratio.value = 12;
+    limiter.attack.value = 0.003; limiter.release.value = 0.25;
+    this.master.connect(limiter).connect(ctx.destination);
+
+    // ---- a shared reverb "send" gives everything that big-empty-space tail
+    this.reverb = ctx.createConvolver();
+    this.reverb.buffer = this._makeReverbIR(3.2);
+    this.reverbSend = ctx.createGain(); this.reverbSend.gain.value = 0.9;
+    this.reverbSend.connect(this.reverb).connect(this.master);
+
+    // ---- two buses. Ambient is always up; danger fades in on setDanger(true).
+    this.ambientBus = ctx.createGain(); this.ambientBus.gain.value = 0.0; // raised in start()
+    this.dangerBus  = ctx.createGain(); this.dangerBus.gain.value  = 0.0; // raised on danger
+    this.ambientBus.connect(this.master); this.ambientBus.connect(this.reverbSend);
+    this.dangerBus.connect(this.master);  this.dangerBus.connect(this.reverbSend);
+
+    // A minor palette (open + a touch wistful). Danger adds a tritone (Eb) for menace.
+    this.NOTES = { A2:110.00, C3:130.81, E3:164.81, A3:220.00, C4:261.63,
+                   Eb4:311.13, E4:329.63, A4:440.00, C5:523.25, E5:659.25, A5:880.00 };
+    this._started = false;
+    this._timers = [];
+    this._danger = false;
+  }
+
+  /* ----- persistent drone made of detuned oscillators through one filter ----- */
+  _drone(freqs, {type='sawtooth', cutoff=520, gain=0.07, bus, detune=6, lfoRate=0.05, lfoDepth=180}={}){
+    const ctx=this.ctx;
+    const filter=ctx.createBiquadFilter(); filter.type='lowpass'; filter.frequency.value=cutoff;
+    const g=ctx.createGain(); g.gain.value=gain;
+    filter.connect(g).connect(bus);
+    // slow filter sweep = the sound "breathes"
+    const lfo=ctx.createOscillator(); const lfoG=ctx.createGain();
+    lfo.frequency.value=lfoRate; lfoG.gain.value=lfoDepth;
+    lfo.connect(lfoG).connect(filter.frequency); lfo.start();
+    const oscs=[];
+    freqs.forEach(f=>{
+      [-detune, detune].forEach(dt=>{
+        const o=ctx.createOscillator(); o.type=type; o.frequency.value=f; o.detune.value=dt;
+        o.connect(filter); o.start(); oscs.push(o);
+      });
+    });
+    return {filter,g,lfo,oscs};
+  }
+
+  /* ----- a soft "bell" ping for the ambient starfield twinkle ----- */
+  _bell(freq){
+    const ctx=this.ctx, now=ctx.currentTime;
+    const o=ctx.createOscillator(); o.type='sine'; o.frequency.value=freq;
+    const g=ctx.createGain(); g.gain.value=0;
+    const pan=ctx.createStereoPanner(); pan.pan.value=(Math.random()*1.6)-0.8;
+    o.connect(g).connect(pan);
+    pan.connect(this.reverbSend);                 // mostly wet = distant, floaty
+    const dry=ctx.createGain(); dry.gain.value=0.25; pan.connect(dry).connect(this.ambientBus);
+    g.gain.setValueAtTime(0, now);
+    g.gain.linearRampToValueAtTime(0.13, now+0.04);
+    g.gain.exponentialRampToValueAtTime(0.0001, now+3.6);
+    o.start(now); o.stop(now+3.8);
+  }
+
+  /* ----- short plucky note for the danger arpeggio ----- */
+  _pluck(freq){
+    const ctx=this.ctx, now=ctx.currentTime;
+    const o=ctx.createOscillator(); o.type='triangle'; o.frequency.value=freq;
+    const f=ctx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=1600;
+    const g=ctx.createGain(); g.gain.value=0;
+    o.connect(f).connect(g).connect(this.dangerBus);
+    const wet=ctx.createGain(); wet.gain.value=0.35; g.connect(wet).connect(this.reverbSend);
+    g.gain.setValueAtTime(0, now);
+    g.gain.linearRampToValueAtTime(0.09, now+0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, now+0.22);
+    o.start(now); o.stop(now+0.3);
+  }
+
+  /* ----- low driving pulse = "combat heartbeat" ----- */
+  _thud(){
+    const ctx=this.ctx, now=ctx.currentTime;
+    const o=ctx.createOscillator(); o.type='sine';
+    o.frequency.setValueAtTime(75, now); o.frequency.exponentialRampToValueAtTime(42, now+0.12);
+    const g=ctx.createGain(); g.gain.value=0;
+    o.connect(g).connect(this.dangerBus);
+    g.gain.setValueAtTime(0, now);
+    g.gain.linearRampToValueAtTime(0.28, now+0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, now+0.28);
+    o.start(now); o.stop(now+0.32);
+  }
+
+  _makeReverbIR(seconds){
+    const ctx=this.ctx, rate=ctx.sampleRate, len=Math.floor(rate*seconds);
+    const buf=ctx.createBuffer(2, len, rate);
+    for(let ch=0; ch<2; ch++){
+      const d=buf.getChannelData(ch);
+      for(let i=0;i<len;i++){ d[i]=(Math.random()*2-1)*Math.pow(1-i/len, 2.6); }
+    }
+    return buf;
+  }
+
+  async start(){
+    if(this._started) return;
+    this._started=true;
+    if(this.ctx.state==='suspended') await this.ctx.resume();
+    const N=this.NOTES, ctx=this.ctx, now=ctx.currentTime;
+
+    // fade the ambient bed up gently on boot
+    this.ambientBus.gain.setValueAtTime(0, now);
+    this.ambientBus.gain.linearRampToValueAtTime(1.0, now+3);
+
+    // --- AMBIENT (always playing) ---
+    this._drone([N.A2, N.A3, N.E3, N.C4, N.A4],
+      {type:'sawtooth', cutoff:520, gain:0.055, bus:this.ambientBus, lfoRate:0.045, lfoDepth:200});
+    this._drone([N.A2],
+      {type:'triangle', cutoff:300, gain:0.10, bus:this.ambientBus, detune:0, lfoRate:0.03, lfoDepth:60}); // sub
+
+    // twinkle scheduler
+    const pent=[N.A4,N.C5,N.E5,N.A5,N.E4];
+    const twinkle=()=>{
+      this._bell(pent[(Math.random()*pent.length)|0]);
+      this._timers.push(setTimeout(twinkle, 2600+Math.random()*4200));
+    };
+    this._timers.push(setTimeout(twinkle, 1200));
+
+    // --- DANGER (always playing, but muted until setDanger(true)) ---
+    this._drone([N.A2, N.Eb4],  // root + tritone = unease
+      {type:'sawtooth', cutoff:330, gain:0.07, bus:this.dangerBus, lfoRate:0.9, lfoDepth:120});
+    this._drone([N.A5],         // tense high shimmer
+      {type:'sawtooth', cutoff:2200, gain:0.02, bus:this.dangerBus, detune:12, lfoRate:5.5, lfoDepth:400});
+
+    // driving pulse + arpeggio (they only *sound* when dangerBus is up)
+    const BPM=112, beat=60/BPM;
+    const arp=[N.A3, N.C4, N.Eb4, N.E4]; let step=0;
+    const pulse=()=>{
+      this._thud();
+      this._pluck(arp[step%arp.length]); step++;
+      this._pluck(arp[step%arp.length]); step++; // eighth-note feel
+      this._timers.push(setTimeout(pulse, beat*1000));
+    };
+    this._timers.push(setTimeout(pulse, 300));
+  }
+
+  /* THE reactive call. Ramp danger in/out, duck the ambient a little under threat. */
+  setDanger(on, fade=2.2){
+    if(on===this._danger) return;
+    this._danger=on;
+    const t=this.ctx.currentTime, end=t+fade;
+    this.dangerBus.gain.cancelScheduledValues(t);
+    this.dangerBus.gain.setValueAtTime(this.dangerBus.gain.value, t);
+    this.dangerBus.gain.linearRampToValueAtTime(on?1.0:0.0, end);
+    this.ambientBus.gain.cancelScheduledValues(t);
+    this.ambientBus.gain.setValueAtTime(this.ambientBus.gain.value, t);
+    this.ambientBus.gain.linearRampToValueAtTime(on?0.55:1.0, end);
+  }
+
+  setMasterVolume(v){ this.master.gain.setTargetAtTime(v, this.ctx.currentTime, 0.05); }
+  get danger(){ return this._danger; }
+  get ambientLevel(){ return this.ambientBus.gain.value; }
+  get dangerLevel(){ return this.dangerBus.gain.value; }
+}
+
+/* =========================================================================
+   DEMO UI below — radar scope, meters, buttons. Not needed in your game.
+   ========================================================================= */
+let music=null;
+const contacts=[];               // {bearing, dist, blink}
+const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const $=id=>document.getElementById(id);
+const startBtn=$('startBtn'), addBtn=$('addBtn'), clearBtn=$('clearBtn'), volSlider=$('vol');
+
+startBtn.addEventListener('click', async ()=>{
+  if(!music) music=new SpaceMusic();
+  await music.start();
+  startBtn.disabled=true; startBtn.textContent='● Audio live';
+  addBtn.disabled=false; clearBtn.disabled=false; volSlider.disabled=false;
+});
+addBtn.addEventListener('click', ()=>{
+  contacts.push({bearing:Math.random()*Math.PI*2, dist:0.35+Math.random()*0.5, blink:0});
+  syncDanger();
+});
+clearBtn.addEventListener('click', ()=>{ contacts.length=0; syncDanger(); });
+volSlider.addEventListener('input', e=>{ if(music) music.setMasterVolume(e.target.value/100); });
+
+function syncDanger(){
+  $('contactCount').textContent=contacts.length;
+  if(music) music.setDanger(contacts.length>0);   // <-- the one integration line
+}
+
+/* ---- radar canvas ---- */
+const cv=$('radar'), g=cv.getContext('2d');
+const R=cv.width/2, cx=R, cy=R;
+let sweep=0;
+function drawRadar(){
+  g.clearRect(0,0,cv.width,cv.height);
+  const hot=contacts.length>0;
+  // rings
+  g.strokeStyle=getCSS('--grid'); g.lineWidth=2;
+  for(let i=1;i<=4;i++){ g.beginPath(); g.arc(cx,cy,(R-14)*i/4,0,Math.PI*2); g.stroke(); }
+  // crosshair
+  g.beginPath(); g.moveTo(cx,14); g.lineTo(cx,cv.height-14);
+  g.moveTo(14,cy); g.lineTo(cv.width-14,cy); g.stroke();
+  // sweep wedge
+  g.save(); g.translate(cx,cy); g.rotate(sweep);
+  const wedge=g.createLinearGradient(0,0,R,0);
+  const c=hot?getCSS('--danger'):getCSS('--hud');
+  wedge.addColorStop(0, hexA(c,0.0)); wedge.addColorStop(1, hexA(c,0.28));
+  g.fillStyle=wedge; g.beginPath(); g.moveTo(0,0);
+  g.arc(0,0,R-14,-0.42,0); g.closePath(); g.fill();
+  g.strokeStyle=hexA(c,0.55); g.lineWidth=2; g.beginPath(); g.moveTo(0,0); g.lineTo(R-14,0); g.stroke();
+  g.restore();
+  // center ship
+  g.fillStyle=getCSS('--hud-bright'); g.beginPath(); g.arc(cx,cy,4,0,Math.PI*2); g.fill();
+  // contacts
+  let front=null;
+  contacts.forEach(ct=>{
+    ct.blink=(ct.blink+0.08)%(Math.PI*2);
+    const px=cx+Math.cos(ct.bearing)*(R-14)*ct.dist;
+    const py=cy+Math.sin(ct.bearing)*(R-14)*ct.dist;
+    const a=0.55+0.45*Math.sin(ct.blink);
+    g.fillStyle=hexA(getCSS('--danger-bright'), a);
+    g.save(); g.translate(px,py); g.rotate(Math.PI/4);
+    g.fillRect(-4,-4,8,8); g.restore();
+    if(!front) front=ct;
+  });
+  $('bearing').textContent = front ? ('BRG '+String(Math.round(front.bearing*180/Math.PI)).padStart(3,'0')+'°') : '—';
+  if(!reduced) sweep=(sweep+0.02)%(Math.PI*2);
+}
+
+/* ---- meters + state ---- */
+function drawMeters(){
+  const amb = music? music.ambientLevel : 0;
+  const thr = music? music.dangerLevel : 0;
+  $('ambFill').style.height=(amb*100).toFixed(0)+'%';
+  $('thrFill').style.height=(thr*100).toFixed(0)+'%';
+  $('ambPct').textContent=(amb*100).toFixed(0)+'%';
+  $('thrPct').textContent=(thr*100).toFixed(0)+'%';
+  const lbl=$('stateLbl');
+  if(!music){ lbl.textContent='standby'; lbl.classList.remove('hot'); }
+  else if(music.danger){ lbl.textContent='◉ threat detected'; lbl.classList.add('hot'); }
+  else { lbl.textContent='cruising'; lbl.classList.remove('hot'); }
+}
+
+function getCSS(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function hexA(hex,a){
+  hex=hex.replace('#',''); if(hex.length===3) hex=hex.split('').map(c=>c+c).join('');
+  const n=parseInt(hex,16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+}
+
+(function loop(){ drawRadar(); drawMeters(); requestAnimationFrame(loop); })();
+</script>
+</body>
+</html>
