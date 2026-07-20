@@ -101,6 +101,7 @@ PAL = {
 }
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)   # repo root — this builder lives in build/; assets live one level up
 
 # ---------------------------------------------------- NOISE (numpy, fast) --
 # Value noise: hash the 8 corners of the grid cell each point sits in, then
@@ -454,7 +455,7 @@ clouds.data.materials.append(cloud_mat)
 bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 
 # ------------------------------------------------------------ EXPORT GLB --
-glb_path = os.path.join(HERE, "earth.glb")
+glb_path = os.path.join(ROOT, "planets", "earth.glb")
 bpy.ops.object.select_all(action='SELECT')
 bpy.ops.export_scene.gltf(filepath=glb_path, export_format='GLB')
 print(f"wrote {glb_path}")
@@ -474,7 +475,7 @@ gm, _ = height_field(gdirs)
 lo, hi = float(gm.min()), float(gm.max())
 q = np.round((gm - lo) / (hi - lo) * 255).astype(np.uint8)
 
-with open(os.path.join(HERE, "earth_height.json"), "w") as f:
+with open(os.path.join(ROOT, "planets", "earth_height.json"), "w") as f:
     json.dump({"w": GW, "h": GH, "min": lo, "max": hi,
                "b64": base64.b64encode(q.tobytes()).decode()}, f)
 print("wrote earth_height.json")
@@ -521,7 +522,7 @@ SHOTS = [
 for fname, pos, target in SHOTS:
     cam.location = Vector(pos.tolist()) if not isinstance(pos, Vector) else pos
     aim(cam, target)
-    scene.render.filepath = os.path.join(HERE, fname)
+    scene.render.filepath = os.path.join(ROOT, "planets", "previews", fname)
     bpy.ops.render.render(write_still=True)
     print(f"wrote {fname}")
 

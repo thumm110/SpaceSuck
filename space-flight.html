@@ -310,7 +310,7 @@
 <!-- three.js lives NEXT TO this file now (no internet needed). If it's
      missing we fall back to the CDN; if both fail you get a real error
      message instead of an infinite loading screen. -->
-<script src="three.min.js"></script>
+<script src="lib/three.min.js"></script>
 <script>
   if (typeof THREE === "undefined") {
     document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>');
@@ -318,7 +318,7 @@
 </script>
 <!-- loads ship.glb (the Blender fighter); if this file is missing the
      game still flies with the built-in primitive placeholder -->
-<script src="GLTFLoader.js"></script>
+<script src="lib/GLTFLoader.js"></script>
 <script type="module">
   /* SpaceMusic (v48) is an ES module; the game is one classic script. This
      shim imports it — with the same cache-bust the .glbs ride — and hands
@@ -431,8 +431,8 @@ const BODIES = [
     spin: 0.002,                    // ~5min day; a parked ship RIDES the
                                     // rotation (see the landed branch)
     yaw: Math.PI,                   // initial turn so Charleston faces the sun
-    file: "earth.glb",              // built by build_earth.py (Blender)
-    heightFile: "earth_height.json",
+    file: "planets/earth.glb",      // built by build_earth.py (Blender)
+    heightFile: "planets/earth_height.json",
     landable: true,
     gravity: 1.0,                   // colony worlds keep landing-friendly pull
     // landing pads: lat/lon as baked in build_earth.py, footprint angular
@@ -473,8 +473,8 @@ const BODIES = [
     orbit: { radius: 62000, speed: 0.0025, angle: 3 * Math.PI / 2, y: -400 },
     spin: 0.0016,                   // a slightly longer day than Earth for a bigger world
     yaw: Math.PI,
-    file: "rubicon.glb",            // built by build_rubicon.py (Blender)
-    heightFile: "rubicon_height.json",
+    file: "planets/rubicon.glb",    // built by build_rubicon.py (Blender)
+    heightFile: "planets/rubicon_height.json",
     landable: true,
     gravity: 1.25,                  // beefier pull than Earth; still lands clean (keep ≤1.5)
     // NO pads on purpose: no bank/outfitter here, so Charleston keeps its
@@ -1495,7 +1495,7 @@ shipObj.add(shipMesh);
 let shipMixer = null;
 let gearHinges = [], gearDoors = [], gearT = 0;   // landing gear: 0 = stowed, 1 = deployed
 if (THREE.GLTFLoader) {
-  new THREE.GLTFLoader().load("ship.glb" + ASSET_V, gltf => {
+  new THREE.GLTFLoader().load("ship/ship.glb" + ASSET_V, gltf => {
     const model = gltf.scene;
 
     // scale to match the placeholder's presence (~10u nose to tail)
@@ -2703,7 +2703,7 @@ for (let i = 0; i < PIRATE_COUNT; i++) {
    the neutral LOITER state — the one state that sits still enough to show
    it. */
 if (THREE.GLTFLoader) {
-  new THREE.GLTFLoader().load("raider.glb" + ASSET_V, gltf => {
+  new THREE.GLTFLoader().load("enemies/raider.glb" + ASSET_V, gltf => {
     for (const p of pirates) {
       const model = gltf.scene.clone(true);
       model.traverse(o => { if (o.isMesh && o.material) o.material = o.material.clone(); });
@@ -2787,9 +2787,9 @@ const HAULER_RAM_HURT = 9;         // hull per 100 u/s closing — heavier than 
 
 const HAULER_DEFS = [
   //                                             hp: no guns, so durability IS the fight
-  { file: "hauler.glb",     name: "SS OVERTIME",        hp: 4, bits: 10, val: 6,   // 60 — the everyday truck
+  { file: "npc/hauler.glb",         name: "SS OVERTIME",        hp: 4, bits: 10, val: 6,   // 60 — the everyday truck
     first: 70,  firstRnd: 40,  rMin: 110, rMax: 220 },
-  { file: "hauler_max.glb", name: "SS DOUBLE OVERTIME", hp: 9, bits: 20, val: 8,   // 160 — the loot piñata,
+  { file: "npc/hauler_max.glb",     name: "SS DOUBLE OVERTIME", hp: 9, bits: 20, val: 8,   // 160 — the loot piñata,
     first: 300, firstRnd: 120, rMin: 420, rMax: 720 },                             // priced by its rarity
 ];
 

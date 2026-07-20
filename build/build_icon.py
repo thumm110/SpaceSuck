@@ -35,8 +35,9 @@ import numpy as np
 from mathutils import Quaternion, Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SHIP = os.path.join(HERE, "ship.glb")
-OUT = os.path.join(HERE, "icon")  # Blender appends .png
+ROOT = os.path.dirname(HERE)   # repo root — this builder lives in build/; assets live one level up
+SHIP = os.path.join(ROOT, "ship", "ship.glb")
+OUT = os.path.join(ROOT, "icon")  # Blender appends .png — icon.png stays at repo root (desktop launcher points here)
 
 SIZE = 512      # square: what GNOME wants for a desktop icon
 MARGIN = 0.04   # fraction of the frame left clear around the ship
