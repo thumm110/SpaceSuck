@@ -2761,8 +2761,9 @@ if (THREE.GLTFLoader) {
    hold: ramming one pays NOTHING — and the truck is the wall in that
    collision, you bounce. Self-contained on purpose: own slots, own scratch
    vectors, own update — three hooks total (bolt test, update call, radar). */
-const HAULER_LEN = 34;             // world-units nose→tail (fighter is ~13): a truck, visibly
-const HAULER_HIT_R = 17;           // one junk-style sphere over the container stack
+const HAULER_LEN = 52;             // world-units nose→tail — 4x the raider's 13 (Tanner's floor:
+                                   // "min 4x the fighters — it's a hauler, not a personal craft")
+const HAULER_HIT_R = 26;           // one junk-style sphere over the container stack (LEN/2, as before)
 const HAULER_SPD = 70;             // cruise — slower than everything, on purpose
 const HAULER_FLEE_SPD = 150;       // panic throttle. Still no match for you: piracy stays easy, that's the point
 const HAULER_ACCEL = 90, HAULER_GRIP = 1.2;
@@ -2794,13 +2795,13 @@ for (const def of HAULER_DEFS) {
   const engineGlow = new THREE.Sprite(new THREE.SpriteMaterial({
     map: boltGlowTex, color: 0x55aaff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   }));
-  engineGlow.scale.setScalar(6);
+  engineGlow.scale.setScalar(9);
   g.add(engineGlow);
   const beacon = new THREE.Sprite(new THREE.SpriteMaterial({
     map: boltGlowTex, color: BEACON_NEUTRAL, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   }));
-  beacon.position.set(0, 7, -9);   // over the cab — the nose is -Z after export
-  beacon.scale.setScalar(9);
+  beacon.position.set(0, 11, -14);   // over the cab — the nose is -Z after export
+  beacon.scale.setScalar(14);
   g.add(beacon);
   haulers.push({
     def, group: g, engineGlow, beacon,
@@ -2840,7 +2841,7 @@ if (THREE.GLTFLoader) for (const h of haulers) {
     const tC = model.getObjectByName("ThrusterC");
     if (tC) {
       h.engineGlow.position.copy(h.group.worldToLocal(tC.getWorldPosition(new THREE.Vector3())));
-      h.engineGlow.position.z += 1.5;
+      h.engineGlow.position.z += 2.3;
     }
     // the authored idle float — a loaded truck riding its suspension
     if (gltf.animations && gltf.animations.length) {
@@ -2902,8 +2903,8 @@ function haulerFlee(h) {
 // shot down — the payout. The whole manifest blows wide as live scrap.
 function haulerKill(h, dist) {
   haulerDespawn(h);
-  burstKill(h.group.position, 22, h.vel);
-  junkBoomSound(dist, 45);   // fake radius 45: a freighter dies with a real whump
+  burstKill(h.group.position, 34, h.vel);
+  junkBoomSound(dist, 70);   // fake radius 70: a 52u freighter dies with a real whump
   if (dist < 1100) padRumble(Math.min(0.7, 0.5 * (350 / Math.max(60, dist))), 110);
   killsEl.textContent = ++junkKills;
   for (let i = 0; i < h.def.bits; i++) {
@@ -3019,7 +3020,7 @@ function updateHaulers(dt) {
 
     // exhaust bloom rides the throttle; the running light tells the mood:
     // slow amber blink = a shift being worked, fast strobe = a truck in trouble
-    h.engineGlow.scale.setScalar(4 + 4 * h.vel.length() / HAULER_FLEE_SPD);
+    h.engineGlow.scale.setScalar(6 + 6 * h.vel.length() / HAULER_FLEE_SPD);
     h.beacon.material.opacity = h.state === "FLEE"
       ? (Math.sin(clock.elapsedTime * 8 + h.phase) > 0 ? 0.9 : 0.1)
       : (Math.sin(clock.elapsedTime * 1.6 + h.phase) > 0 ? 0.6 : 0.2);
