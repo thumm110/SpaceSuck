@@ -1706,6 +1706,7 @@ try { shipSel = Math.min(SHIPS.length - 1, Math.max(0, Math.floor(+localStorage.
    loop through an AnimationMixer: visual only, physics untouched.
    Re-callable: the start screen's ‹ › picker swaps hulls live. */
 let shipMixer = null;
+let shipIdleAction = null, idleFloatW = 1;  // v55: the float's blend weight — eased to 0 while parked
 let gearHinges = [], gearDoors = [], gearT = 0;   // landing gear: 0 = stowed, 1 = deployed
 let shipLoadSeq = 0;   // stale-load guard: a fast picker flip outruns a slow fetch
 function loadPlayerShip(def) {
@@ -1713,7 +1714,7 @@ function loadPlayerShip(def) {
   const seq = ++shipLoadSeq;
   new THREE.GLTFLoader().load(def.file + ASSET_V, gltf => {
     if (seq !== shipLoadSeq) return;   // a newer pick superseded this load
-    shipMixer = null; gearHinges = []; gearDoors = [];
+    shipMixer = null; shipIdleAction = null; gearHinges = []; gearDoors = [];
     const model = gltf.scene;
 
     // scale to the hangar row's presence (nose to tail, in units)
@@ -1770,10 +1771,12 @@ function loadPlayerShip(def) {
       retroGlows[1].position.x += 0.45;
     }
 
-    // the float
+    // the float — the action is kept so the main loop can ease its weight
+    // to 0 while parked (weight 0 = the mixer blends back to the bind pose)
     if (gltf.animations.length) {
       shipMixer = new THREE.AnimationMixer(model);
-      shipMixer.clipAction(gltf.animations[0]).play();
+      shipIdleAction = shipMixer.clipAction(gltf.animations[0]);
+      shipIdleAction.play();
     }
 
     // landing gear: grab the pivots the model exposes. Legs rest folded up
@@ -1911,6 +1914,7 @@ function shipBreach() {
   ship.velocity.set(0, 0, 0);
   ship.throttle = 0;
   landedOn = null;
+  liftoff = null;   // a tow-home mid-liftoff must not leave the autopilot pinning us to the old pad
   const e = liveBodies.find(b => b.cfg.name === "EARTH");
   if (e) {
     const r = e.cfg.radius;
@@ -3815,6 +3819,8 @@ const chaseDir = new THREE.Vector3();
 const chaseFwd = new THREE.Vector3();
 const chaseAxis = new THREE.Vector3();
 const chaseFixQ = new THREE.Quaternion();
+const CAM_GROUND_MARGIN = 2.5;             // v55: the lens keeps this much air under it
+const camGroundV = new THREE.Vector3();    // scratch for the ground clamp
 
 /* head-look (right stick): a view-angle offset from the nose — look
    around at space while the ship flies on. Springs back to forward. */
@@ -4068,6 +4074,9 @@ let prevNearestBody = null;
 
 /* landing state (v13) — see the landable branch in the collision loop */
 let landedOn = null;           // the body we're parked on, or null
+let liftoff = null;            // v55 auto-liftoff in progress: { b, t } — see the collision loop
+const LIFTOFF_ALT = 30;        // control comes back this far above the gear stop
+const LIFTOFF_DUR = 2.0;       // seconds, pad to altitude
 const GEAR_HEIGHT = 4;         // the ship rests this far above the terrain
 const SURFACE_G = 26;          // gravity at surface level, u/s²
 const landTagEl = document.getElementById("landtag");
@@ -4739,7 +4748,9 @@ function animate() {
          grip bleeds off the slide, and below walking pace you're parked.
          Throttle up to take off again. */
       tmpNormal.multiplyScalar(1 / dist);            // local "up"
-      if (dist < b.cfg.radius * 3 && landedOn !== b) {
+      // (the liftoff branch below pins position absolutely and rides the
+      // spin itself — the SOI carry and gravity tug would just fight it)
+      if (dist < b.cfg.radius * 3 && landedOn !== b && !(liftoff && liftoff.b === b)) {
         /* sphere of influence (v19, widened + spin-carry v35): the planet
            orbits the sun at ~170 u/s AND spins, so braking near it lets the
            pad slide out from under you — which reads as gravity shoving you
@@ -4785,7 +4796,38 @@ function animate() {
         const ground = groundRadius(b, tmpNormal) + GEAR_HEIGHT;
         shipObj.position.copy(b.group.position).addScaledVector(tmpNormal, ground);
         ship.velocity.set(0, 0, 0);
-        if (ship.throttle > 0.05) landedOn = null;   // takeoff
+        if (ship.throttle > 0.05) {                  // takeoff → the autopilot rises first
+          landedOn = null;
+          liftoff = { b, t: 0 };
+        }
+      } else if (liftoff && liftoff.b === b) {
+        /* ---- auto-liftoff (v55): throttle-up used to dump you into a flat
+           skid — nose parallel to the pad, thrust fighting ground grip and
+           the re-latch, until the pilot pitched off the horizon (dragging
+           the chase cam underground). Now the ship rises along the surface
+           normal like a VTOL (gear tucking on the way) and hands control
+           back at altitude, already climbing. Position is pinned absolutely
+           each frame — same trick as the parked branch, so the planet's
+           spin/orbit ride for free and thrust can't smear us mid-rise;
+           velocity stays zeroed until the handoff so nothing banks up. */
+        if (b.cfg.spin) {
+          const dSpin = b.cfg.spin * dt * 10;   // must match the surface animation
+          tmpNormal.applyAxisAngle(SPIN_AXIS, dSpin);
+          spinRideQ.setFromAxisAngle(SPIN_AXIS, dSpin);
+          shipObj.quaternion.premultiply(spinRideQ);
+        }
+        liftoff.t = Math.min(LIFTOFF_DUR, liftoff.t + dt);
+        const k = liftoff.t / LIFTOFF_DUR;
+        // k² climb: leaves the pad gently, exits at 2·ALT/DUR — which is
+        // exactly the velocity the handoff below puts on the ship
+        const ground = groundRadius(b, tmpNormal) + GEAR_HEIGHT;
+        shipObj.position.copy(b.group.position)
+               .addScaledVector(tmpNormal, ground + LIFTOFF_ALT * k * k);
+        ship.velocity.set(0, 0, 0);
+        if (liftoff.t >= LIFTOFF_DUR) {
+          ship.velocity.copy(tmpNormal).multiplyScalar(2 * LIFTOFF_ALT / LIFTOFF_DUR);
+          liftoff = null;
+        }
       } else {
         const ground = groundRadius(b, tmpNormal) + GEAR_HEIGHT;
         if (dist < ground) {
@@ -4949,13 +4991,29 @@ function animate() {
   }
   for (const belt of belts) belt.rotation.y += 0.02 * dt;
   for (const c of cloudLayers) c.mesh.rotation.y += c.speed * dt;
-  if (shipMixer) shipMixer.update(dt);   // the idle float, authored in Blender
+  if (shipMixer) {
+    /* the authored idle float only plays AIRBORNE (v55): parked (or mid
+       auto-liftoff) its weight eases to 0 and the mixer blends back to the
+       bind pose, so the ship sits dead-still on its gear instead of
+       breathing above the pad. Eases back in after the handoff. */
+    const idleTarget = (landedOn || liftoff) ? 0 : 1;
+    idleFloatW += (idleTarget - idleFloatW) * Math.min(1, dt * 3);
+    // snap when close: the exponential ease never actually ARRIVES, and a
+    // parked ship must sit dead-still, not micro-breathe forever
+    if (Math.abs(idleFloatW - idleTarget) < 0.01) idleFloatW = idleTarget;
+    if (shipIdleAction) shipIdleAction.setEffectiveWeight(idleFloatW);
+    shipMixer.update(dt);
+  }
 
   // landing gear: ease toward deployed while parked (landedOn set), stowed while
   // flying. Doors LEAD — they open over the first half of the throw, and the
   // legs only start dropping once the bays are ~open, so a leg never clips a
   // closed hatch. Both pivots ride in from ship.glb; no-op until the model loads.
-  gearT += ((landedOn ? 1 : 0) - gearT) * Math.min(1, dt * 3);   // ~1s full cycle
+  const gearTarget = landedOn ? 1 : 0;
+  gearT += (gearTarget - gearT) * Math.min(1, dt * 3);   // ~1s full cycle
+  // same snap as the idle float above: without it the legs micro-settle
+  // forever and the "parked" ship never actually holds still
+  if (Math.abs(gearT - gearTarget) < 0.005) gearT = gearTarget;
   if (gearHinges.length || gearDoors.length) {
     const clamp01 = x => x < 0 ? 0 : x > 1 ? 1 : x;
     const doorT = clamp01(gearT / 0.5);
@@ -5202,6 +5260,21 @@ function animate() {
     wispMat.opacity = 0;
     entryTagEl.style.visibility = "hidden";
     if (audio) audio.rumble.gain.value = 0;
+  }
+
+  /* ---- camera ground clamp (v55): whatever the view rigs decided — chase
+     easing, right-drag orbit, cinematic shots, entry shake — the lens never
+     ends a frame under the nearest world's terrain. Radial push-out against
+     the real height grid, so pitching on the pad can't sink the view. */
+  if (nearest && nearest.cfg.landable) {
+    camGroundV.subVectors(camera.position, nearest.group.position);
+    const cd = camGroundV.length();
+    if (cd > 1e-3 && cd < nearest.cfg.radius * 1.5) {
+      camGroundV.multiplyScalar(1 / cd);
+      const camFloor = groundRadius(nearest, camGroundV) + CAM_GROUND_MARGIN;
+      if (cd < camFloor)
+        camera.position.copy(nearest.group.position).addScaledVector(camGroundV, camFloor);
+    }
   }
 
   renderer.render(scene, camera);
