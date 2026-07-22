@@ -1961,6 +1961,7 @@ function shipBreach() {
   // they're 4700u+ behind after the teleport, and the ally rejoin branch
   // reels them onto your six within a few frames
   for (const p of pirates) if (p.alive && p.faction !== "ally") pirateDespawn(p);
+  for (const g of gunships) if (g.alive && g.hostile) gunshipDespawn(g);   // capitals included
   breachUntil = clock.elapsedTime + 4;
   breachEl.style.visibility = "visible";
 }
@@ -3458,6 +3459,525 @@ function updateHaulers(dt) {
 }
 /* ================= end 10f: FREIGHT TRAFFIC ================= */
 
+/* ================= 10i: GUNSHIPS (v57) =================
+   Capital warships — the gothic SS TIMECLOCK class (enemies/gunship.glb).
+   One hull, two jobs, four slots:
+     [0]    THE FOE — a rare roaming mini-boss. The pirate's three-state
+            brain in a heavy body: opens up at 900u with paired spinal
+            cannons that hit like a truck (14 hull a bolt), turns like a
+            cathedral, and CANNOT be rammed to death — freight's wall
+            rules, not the fighter's shatter. Top payout in the game.
+     [1-3]  THE ESCORTS — the SAME GLB loaded again and retinted at load:
+            the four red foe-tell mats (EngineGlow/MuzzleGlow/BurnGlow/
+            BurnCoreGlow) swap to ion blue; the amber cathedral windows
+            stay. They fly GUARD on SS DOUBLE OVERTIME (wired from 10f)
+            and flip hostile — glows going RED live — if the ward or the
+            escort itself takes a hit. Dormant until 10f spawns them.
+   Separate .load() per slot ON PURPOSE (the hauler pattern): each load
+   gets its own materials, so the escort retint can't leak into the foe.
+   Self-contained like freight: own slots, own scratch, own bolt pool,
+   own update — hooks: bolt test, update call, radar, danger music,
+   breach despawn, contact toast. */
+const GUNSHIP_LEN = 30;            // OLD scale: ~3x a fighter (fleet.json's 75 is the future spec)
+const GUNSHIP_HIT_R = 15;
+const GUNSHIP_HP = 16;             // a siege, not a scrap — pirates die in 3
+const GUNSHIP_MAX_SPD = 200;       // pirate is 280 — you can ALWAYS run
+const GUNSHIP_ACCEL = 140;
+const GUNSHIP_TURN = 0.45;         // rad/s in the fight — you orbit INSIDE its nose
+const GUNSHIP_TURN_CRUISE = 0.9;
+const GUNSHIP_GRIP = 1.4;
+const GUNSHIP_PASS_SPD = 170, GUNSHIP_EXTEND_SPD = 120;
+const GUNSHIP_ATTACK_R = 900;      // long spinal guns open up EARLY (pirate: 600)
+const GUNSHIP_REENGAGE_R = 1400;
+const GUNSHIP_BREAK_R = 300;       // a big hull and a slow nose need the room (pirate: 180)
+const GUNSHIP_ATTACK_T = 8, GUNSHIP_BREAK_T = 4.5;
+const GUNSHIP_FIRE_CONE = 0.85;    // wider than the pirate's 0.90 — the slow nose must be ALLOWED to shoot
+const GUNSHIP_BURST = 2, GUNSHIP_BURST_GAP = 0.45, GUNSHIP_BURST_COOL = 3.0;  // L-R: thud… thud. Not a rattle
+const GUNSHIP_AIM_ERR = 0.03, GUNSHIP_LEAD = 0.9;
+const GUNSHIP_BOLT_COUNT = 8, GUNSHIP_BOLT_SPEED = 700, GUNSHIP_BOLT_LIFE = 2.8, GUNSHIP_BOLT_DMG = 14;
+const GUNSHIP_RAM_HURT = 12;       // hull per 100 u/s closing — heavier than the truck's 9
+const GUNSHIP_CULL = 5200;
+const GUNSHIP_RESPAWN_MIN = 180, GUNSHIP_RESPAWN_MAX = 360;
+const GUNSHIP_FIRST = 300, GUNSHIP_FIRST_RND = 240;   // first contact is a mid-run event, not minute one
+const GUNSHIP_BITS = 22, GUNSHIP_VAL = 9;   // 198 — the new top of the economy (DOUBLE OVERTIME: 160)
+const ESCORT_BITS = 16, ESCORT_VAL = 9;     // 144 — rich, but it shoots back
+const ESCORT_GLOW = 0x55aaff;      // ion blue — the honest-traffic exhaust color: convoy security, not pirate
+const GUNSHIP_RED = 0xff1a00;      // the provoked flip — matches the authored foe-tell emissives
+const GUNSHIP_TELL_MATS = ["EngineGlow", "MuzzleGlow", "BurnGlow", "BurnCoreGlow"];
+const ESCORT_SLOT_OFFSETS = [      // GUARD stations in the ward's frame: abeam L/R, high-trail
+  new THREE.Vector3(90, 35, 70), new THREE.Vector3(-90, 35, 70), new THREE.Vector3(0, 55, -110),
+];
+
+// own scratch — NEVER pirTmp*/haulTmp*/junkTmp* (breach re-entrancy, see 10g's warning)
+const gunTmpA = new THREE.Vector3(), gunTmpB = new THREE.Vector3(), gunTmpC = new THREE.Vector3();
+const gunSeg = new THREE.Vector3(), gunToC = new THREE.Vector3(), gunNearPt = new THREE.Vector3();
+const gunAimObj = new THREE.Object3D();
+let gunshipFlash = 0;              // "CAPITAL SHIP CONTACT" toast timer (the jobFlash pattern)
+
+const GUNSHIP_NAMES = ["SS TIMECLOCK", "SS LOSS PREVENTION", "SS SEVERANCE", "SS HALL MONITOR"];
+const gunships = [];
+for (let i = 0; i < 4; i++) {
+  const role = i === 0 ? "foe" : "escort";
+  const g = new THREE.Group();
+  g.visible = false;
+  scene.add(g);
+  // capital-sized running lights, the hauler recipe: exhaust bloom + beacon
+  const engineGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: boltGlowTex, color: role === "foe" ? 0xff4030 : ESCORT_GLOW,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  engineGlow.scale.setScalar(8);
+  g.add(engineGlow);
+  const beacon = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: boltGlowTex, color: role === "foe" ? BEACON_HOSTILE : BEACON_NEUTRAL,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  beacon.position.set(0, 9, -6);   // over the cathedral tower — nose is -Z
+  beacon.scale.setScalar(12);
+  g.add(beacon);
+  gunships.push({
+    role, name: GUNSHIP_NAMES[i], slotOff: ESCORT_SLOT_OFFSETS[Math.max(0, i - 1)],
+    group: g, engineGlow, beacon, phase: Math.random() * 6.28,
+    model: null, mixer: null, mats: [], tellMats: [],   // no model → no spawns (hauler rule)
+    muzzles: null,
+    vel: new THREE.Vector3(), wanderPt: new THREE.Vector3(),
+    jinkDir: new THREE.Vector3(), aimErr: new THREE.Vector3(),
+    hp: GUNSHIP_HP, flash: 0, alive: false,
+    respawnIn: role === "foe" ? GUNSHIP_FIRST + Math.random() * GUNSHIP_FIRST_RND : Infinity,
+    hostile: role === "foe",   // the foe is born angry; an escort earns it
+    ward: null, convoyId: 0,   // escort duty (10f wires these)
+    state: "HUNT", stateT: 0,  // "HUNT" | "ATTACK" | "BREAK" | "GUARD"
+    burstLeft: 0, fireT: 1.5, formCap: 0,
+  });
+}
+
+// one .load() per slot — independent materials per instance is the whole trick
+if (THREE.GLTFLoader) for (const g of gunships) {
+  new THREE.GLTFLoader().load("enemies/gunship.glb" + ASSET_V, gltf => {
+    const model = gltf.scene;
+    // the raider's material pass: authored glows boosted, near-black gothic
+    // hull gets the raider's brighter self-lit floor so it reads at range
+    model.traverse(o => {
+      if (!o.isMesh || !o.material) return;
+      if (o.material.name.endsWith("Glow")) {
+        if (o.material.emissive.getHex() === 0) o.material.emissive.copy(o.material.color);
+        o.material.emissiveIntensity = 1.5;
+      } else if (o.material.emissive) {
+        o.material.emissive.copy(o.material.color);
+        o.material.emissiveIntensity = 0.5;
+      }
+    });
+    // the escort retint: swap the four red foe-tells to ion blue. EMISSIVE,
+    // never color — pure-emission mats export a BLACK base color; the visible
+    // color lives in emissiveFactor. Refs kept for the live red-flip.
+    if (g.role === "escort") {
+      const seen = new Set();
+      model.traverse(o => {
+        if (!o.isMesh || !o.material || seen.has(o.material)) return;
+        if (GUNSHIP_TELL_MATS.includes(o.material.name)) {
+          o.material.emissive.setHex(ESCORT_GLOW);
+          seen.add(o.material);
+          g.tellMats.push(o.material);
+        }
+      });
+    }
+    const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+    model.scale.setScalar(GUNSHIP_LEN / size.z);
+    // an NPC never lands — pin the gear legs to their stowed angle if the
+    // hinges carry one (the doors export closed already)
+    for (const nm of ["GearHingeNose", "GearHingeMainL", "GearHingeMainR"]) {
+      const hinge = model.getObjectByName(nm);
+      if (hinge && hinge.userData.stow != null) hinge.rotation.x = hinge.userData.stow;
+    }
+    g.group.add(model);
+    g.model = model;
+    g.muzzles = [model.getObjectByName("GunTipL"), model.getObjectByName("GunTipR")].filter(Boolean);
+    if (!g.muzzles.length) g.muzzles = null;
+    // exhaust bloom at the center of the four engine cores (ThrusterE0..E3 —
+    // this hull has no ThrusterL/R): average their seats, nudge aft
+    g.group.updateMatrixWorld(true);
+    const cores = ["ThrusterE0", "ThrusterE1", "ThrusterE2", "ThrusterE3"]
+      .map(nm => model.getObjectByName(nm)).filter(Boolean);
+    if (cores.length) {
+      gunTmpA.set(0, 0, 0);
+      for (const c of cores) gunTmpA.add(c.getWorldPosition(new THREE.Vector3()));
+      g.engineGlow.position.copy(g.group.worldToLocal(gunTmpA.divideScalar(cores.length)));
+      g.engineGlow.position.z += 1.5;
+    }
+    // the authored 5s heavy bob — runs EVERY frame (a capital ship rides its
+    // own mass even mid-fight; only fighters fly too hard to float)
+    if (gltf.animations && gltf.animations.length) {
+      g.mixer = new THREE.AnimationMixer(model);
+      g.mixer.clipAction(gltf.animations[0]).play();
+    }
+    g.mats = junkCollectMats(g.group);   // LAST — after the retint, so the
+                                         // hit-flash restores the FRIENDLY base color
+  }, undefined, err => console.warn("gunship.glb didn't load — no " + g.name, err));
+}
+
+function gunshipSpawnFoe(g) {
+  if (landedOn || pirateInHarbor()) { g.respawnIn = 20; return; }   // capitals don't jump the harbor either
+  let placed = false;
+  for (let tries = 0; tries < 5 && !placed; tries++) {
+    randUnit(gunTmpA);
+    gunTmpB.copy(shipObj.position)
+           .addScaledVector(gunTmpA, PIRATE_SPAWN_NEAR + Math.random() * (PIRATE_SPAWN_FAR - PIRATE_SPAWN_NEAR));
+    if (!junkPointBlocked(gunTmpB)) { g.group.position.copy(gunTmpB); placed = true; }
+  }
+  if (!placed) { g.respawnIn = 20; return; }
+  g.alive = true;
+  g.group.visible = true;
+  g.hp = GUNSHIP_HP;
+  g.flash = 0;
+  for (const m of g.mats) m.emissive.copy(m.userData.baseEmissive);
+  g.hostile = true; g.ward = null;
+  g.state = "HUNT"; g.stateT = 0;
+  g.burstLeft = 0; g.fireT = 1.5;
+  gunTmpA.subVectors(shipObj.position, g.group.position).normalize();
+  g.vel.copy(gunTmpA).multiplyScalar(40);   // capitals arrive at a stately closure
+  g.beacon.material.color.setHex(BEACON_HOSTILE);
+  pirateWarnSound();
+  gunshipFlash = 3;   // the HUD banner: fair warning that this one is DIFFERENT
+}
+
+// the escort reports for duty already ON STATION — no warn ping, no banner:
+// an amber blip riding a gold one is honest traffic, not a threat
+function gunshipSpawnEscort(h) {
+  const g = gunships.find(q => q.role === "escort" && q.model && !q.alive);
+  if (!g) return null;
+  g.alive = true;
+  g.group.visible = true;
+  g.hp = GUNSHIP_HP;
+  g.flash = 0;
+  g.hostile = false;
+  g.ward = h; g.convoyId = 0;
+  g.state = "GUARD"; g.stateT = 0;
+  g.burstLeft = 0; g.fireT = 1.5;
+  // a fresh shift must not inherit last life's rage: glows back to ion blue —
+  // BOTH the live emissive and the flash-lerp's base color
+  for (const m of g.tellMats) {
+    m.userData.baseEmissive.setHex(ESCORT_GLOW);
+    m.emissive.copy(m.userData.baseEmissive);
+  }
+  for (const m of g.mats) m.emissive.copy(m.userData.baseEmissive);
+  g.beacon.material.color.setHex(BEACON_NEUTRAL);
+  gunTmpA.copy(g.slotOff).applyQuaternion(h.group.quaternion);
+  g.group.position.copy(h.group.position).add(gunTmpA);
+  g.group.quaternion.copy(h.group.quaternion);
+  g.vel.copy(h.vel);
+  return g;
+}
+
+function gunshipDespawn(g) {
+  g.alive = false;
+  g.group.visible = false;
+  if (g.role === "foe") g.respawnIn = GUNSHIP_RESPAWN_MIN + Math.random() * (GUNSHIP_RESPAWN_MAX - GUNSHIP_RESPAWN_MIN);
+  else { g.respawnIn = Infinity; g.ward = null; g.convoyId = 0; }   // escorts only live when 10f hires them
+}
+
+// the bang without the pay — only ever reached through gunshipKill:
+// rams don't destroy a capital, and there's no cull-with-fireworks
+function gunshipDestroy(g, dist) {
+  gunshipDespawn(g);
+  burstKill(g.group.position, 40, g.vel);
+  junkBoomSound(dist, 80);   // fake radius 80: a cathedral dies LOUD
+  if (dist < 1200) padRumble(Math.min(0.8, 0.55 * (400 / Math.max(60, dist))), 130);
+}
+
+function gunshipKill(g, dist) {
+  const bits = g.role === "foe" ? GUNSHIP_BITS : ESCORT_BITS;
+  const val = g.role === "foe" ? GUNSHIP_VAL : ESCORT_VAL;
+  const pos = gunTmpC.copy(g.group.position);   // capture BEFORE despawn hides the group
+  gunshipDestroy(g, dist);
+  killsEl.textContent = ++junkKills;
+  for (let i = 0; i < bits; i++) {
+    randUnit(gunTmpA);
+    gunTmpA.multiplyScalar(12 + Math.random() * 28).add(g.vel);
+    emitScrap(pos, gunTmpA, val);
+  }
+}
+
+// the live red-flip: ion blue means asleep, red means the guns are HOT.
+// Both emissive AND baseEmissive — the hit-flash lerps from baseEmissive,
+// so flipping only the live color would get undone by the next flash frame.
+function gunshipProvoke(g) {
+  if (g.hostile || !g.alive) return;
+  g.hostile = true;
+  g.state = "HUNT"; g.stateT = 0;
+  for (const m of g.tellMats) {
+    m.userData.baseEmissive.setHex(GUNSHIP_RED);
+    m.emissive.setHex(GUNSHIP_RED);
+  }
+  g.beacon.material.color.setHex(BEACON_HOSTILE);
+  pirateWarnSound();
+  gunshipFlash = 3;
+}
+
+function gunshipDamage(g, at, boltVel) {
+  const dist = shipObj.position.distanceTo(g.group.position);
+  if (!g.hostile) gunshipProvoke(g);   // shooting the sleeping guard dog wakes the guard dog
+  if (--g.hp > 0) {
+    // the freight flavor, not the pirate flinch: sparks, a shrug of a shove,
+    // and NO forced BREAK — a capital does not flinch. That's the boss feel.
+    g.flash = 1;
+    burstSparks(at, g.vel, 12);
+    junkTinkSound(dist);
+    g.vel.addScaledVector(gunTmpA.copy(boltVel).normalize(), 3);
+    return;
+  }
+  gunshipKill(g, dist);
+}
+
+/* Player bolts vs gunships — fourth sibling in the fire loop's one
+   short-circuit expression, with its own scratch. */
+function gunshipTestBolt(p0, p1, boltVel) {
+  gunSeg.subVectors(p1, p0);
+  const segLen2 = gunSeg.lengthSq();
+  for (const g of gunships) {
+    if (!g.alive) continue;
+    gunToC.subVectors(g.group.position, p0);
+    const t = segLen2 > 0 ? THREE.MathUtils.clamp(gunToC.dot(gunSeg) / segLen2, 0, 1) : 0;
+    gunNearPt.copy(p0).addScaledVector(gunSeg, t);
+    if (gunNearPt.distanceToSquared(g.group.position) <= GUNSHIP_HIT_R * GUNSHIP_HIT_R) {
+      gunshipDamage(g, gunNearPt, boltVel);
+      return true;
+    }
+  }
+  return false;
+}
+
+// 10f calls these: ward provocation + ward lifecycle (wired in the escort pass)
+function gunshipWardHit(h) {
+  for (const g of gunships) {
+    if (!g.alive || g.role !== "escort" || g.hostile) continue;
+    if (g.ward === h || (g.convoyId && h.convoyId === g.convoyId)) gunshipProvoke(g);
+  }
+}
+function gunshipWardGone(h) {
+  for (const g of gunships) {
+    if (!g.alive || g.role !== "escort" || g.ward !== h) continue;
+    if (g.hostile) { g.ward = null; continue; }   // already in the fight — it finishes the fight
+    gunshipDespawn(g);                            // shift's over, nothing to guard
+  }
+}
+
+/* heavy bolts: half the pirate pool, twice the presence — chunkier cylinder,
+   fatter glow. Red = duck, the established language. */
+const gunshipBolts = [];
+for (let i = 0; i < GUNSHIP_BOLT_COUNT; i++) {
+  const mat = new THREE.MeshBasicMaterial({ color: RED_BOLT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const mesh = new THREE.Mesh(boltGeo, mat);
+  mesh.scale.setScalar(2.2);
+  const glowMat = new THREE.SpriteMaterial({ map: boltGlowTex, color: RED_BOLT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const glow = new THREE.Sprite(glowMat); glow.scale.setScalar(10.0);
+  mesh.add(glow);
+  mesh.visible = false;
+  scene.add(mesh);
+  gunshipBolts.push({ mesh, vel: new THREE.Vector3(), life: 0 });
+}
+let gunshipBoltCursor = 0;
+function spawnGunshipBolt(pos, dir, srcVel) {
+  const b = gunshipBolts[gunshipBoltCursor];
+  gunshipBoltCursor = (gunshipBoltCursor + 1) % GUNSHIP_BOLT_COUNT;
+  b.mesh.position.copy(pos);
+  b.mesh.quaternion.setFromUnitVectors(BOLT_AXIS, dir);
+  b.vel.copy(srcVel).addScaledVector(dir, GUNSHIP_BOLT_SPEED);
+  b.life = GUNSHIP_BOLT_LIFE;
+  b.mesh.visible = true;
+  emitEmber(pos, srcVel, 14, 0.16, true);   // a spinal cannon's muzzle flash is a small sunrise
+}
+
+function updateGunships(dt) {
+  const harbor = pirateInHarbor();
+  for (const g of gunships) {
+    if (!g.alive) {
+      if (g.role !== "foe") continue;              // escorts wait for 10f, not a timer
+      g.respawnIn -= dt;
+      if (g.respawnIn <= 0) {
+        if (!g.model) { g.respawnIn = 15; continue; }   // GLB never landed — wait, don't crash
+        gunshipSpawnFoe(g);
+      }
+      continue;
+    }
+    if (g.flash > 0) {
+      g.flash = Math.max(0, g.flash - dt * 4);
+      for (const m of g.mats) m.emissive.copy(m.userData.baseEmissive).lerp(FLASH_WHITE, g.flash);
+    }
+
+    gunTmpA.subVectors(shipObj.position, g.group.position);
+    const dist = gunTmpA.length();
+    if (dist > GUNSHIP_CULL) { gunshipDespawn(g); continue; }   // outran it / convoy moved on
+    gunTmpA.divideScalar(dist || 1);   // unit gunship→ship, holds this iteration
+
+    // an unprovoked escort with no ward has nothing to guard (belt-and-
+    // suspenders — gunshipWardGone should have caught it already)
+    if (g.role === "escort" && !g.hostile && (!g.ward || !g.ward.alive)) { gunshipDespawn(g); continue; }
+
+    // harbor: same shelter rule as the raiders — a hostile breaks off,
+    // runs for open space, and despawns over the horizon
+    if (harbor && g.hostile) {
+      if (dist > PIRATE_HARBOR_GONE) { gunshipDespawn(g); continue; }
+      if (g.state !== "BREAK") { g.state = "BREAK"; g.jinkDir.copy(gunTmpA).negate(); }
+      g.stateT = 0;
+    }
+
+    /* ---- the brain: GUARD holds the convoy station; hostile flies the
+       pirate's three-state pass rhythm in a much heavier airframe ---- */
+    g.stateT += dt;
+    if (!g.hostile) {
+      // GUARD — the wingman FORM math, retargeted from the player to the
+      // ward: hold the station in the WARD's frame, settle instead of orbit
+      gunTmpC.copy(g.slotOff).applyQuaternion(g.ward.group.quaternion);
+      g.wanderPt.copy(g.ward.group.position).add(gunTmpC);
+      const slotDist = g.group.position.distanceTo(g.wanderPt);
+      g.formCap = Math.min(slotDist > 500 ? GUNSHIP_MAX_SPD : HAULER_FLEE_SPD,
+                           Math.max(30, g.ward.vel.length() + slotDist * 0.8));
+      g.state = "GUARD";
+    } else if (g.state === "HUNT") {
+      if (dist < GUNSHIP_ATTACK_R) {
+        g.state = "ATTACK"; g.stateT = 0;
+        g.burstLeft = GUNSHIP_BURST; g.fireT = 0.8;
+        randUnit(g.aimErr).multiplyScalar(Math.random() * dist * GUNSHIP_AIM_ERR);
+      }
+    } else if (g.state === "ATTACK") {
+      if (dist < GUNSHIP_BREAK_R || g.stateT > GUNSHIP_ATTACK_T) {
+        g.state = "BREAK"; g.stateT = 0;
+        if (g.vel.lengthSq() > 1) g.jinkDir.copy(g.vel).normalize();
+        else g.jinkDir.copy(gunTmpA).negate();
+        // the raider's head-on bend, kept ON PURPOSE: a lawn-darting
+        // capital ship is a one-shot ram — bend the overshoot off target
+        const into = g.jinkDir.dot(gunTmpA);
+        if (into > 0.5) {
+          g.jinkDir.addScaledVector(gunTmpA, -into);
+          if (g.jinkDir.lengthSq() < 0.05) {
+            randUnit(gunTmpC);
+            gunTmpC.addScaledVector(gunTmpA, -gunTmpC.dot(gunTmpA));
+            g.jinkDir.copy(gunTmpC);
+          }
+          g.jinkDir.normalize();
+        }
+      } else if (dist > GUNSHIP_REENGAGE_R) {
+        g.state = "HUNT"; g.stateT = 0;
+      }
+    } else if (g.stateT > GUNSHIP_BREAK_T) {   // BREAK is just a timer
+      g.state = "HUNT"; g.stateT = 0;
+    }
+
+    // one target point per state, then the shared jet physics in a heavy hull
+    if (g.state === "HUNT") {
+      gunTmpB.copy(shipObj.position).addScaledVector(ship.velocity, 0.8);
+    } else if (g.state === "ATTACK") {
+      gunTmpB.copy(shipObj.position)
+             .addScaledVector(ship.velocity, (dist / GUNSHIP_BOLT_SPEED) * GUNSHIP_LEAD)
+             .add(g.aimErr);
+    } else if (g.state === "BREAK") {
+      gunTmpB.copy(g.group.position).addScaledVector(g.jinkDir, 800);
+    } else {
+      gunTmpB.copy(g.wanderPt);   // GUARD: the brain already picked the station
+    }
+    // mirror-lookAt (nose is -Z), slerp clamped to the capital's slow neck
+    gunAimObj.position.copy(g.group.position);
+    gunAimObj.lookAt(gunTmpC.copy(g.group.position).multiplyScalar(2).sub(gunTmpB));
+    const turnCap = g.state === "ATTACK" ? GUNSHIP_TURN : GUNSHIP_TURN_CRUISE;
+    const ang = g.group.quaternion.angleTo(gunAimObj.quaternion);
+    if (ang > 1e-4) g.group.quaternion.slerp(gunAimObj.quaternion, Math.min(1, turnCap * dt / ang));
+    g.group.getWorldDirection(gunTmpC).negate();
+    g.vel.addScaledVector(gunTmpC, GUNSHIP_ACCEL * dt);
+    const spd = g.vel.length();
+    if (spd > 1) {
+      gunTmpC.multiplyScalar(spd);
+      g.vel.lerp(gunTmpC, 1 - Math.exp(-GUNSHIP_GRIP * dt));
+    }
+    g.vel.multiplyScalar(Math.pow(0.995, dt * 60));
+    const maxSpd = g.state === "ATTACK" ? GUNSHIP_PASS_SPD
+                 : g.state === "BREAK"  ? GUNSHIP_EXTEND_SPD
+                 : g.state === "GUARD"  ? g.formCap : GUNSHIP_MAX_SPD;
+    if (g.vel.length() > maxSpd) g.vel.setLength(maxSpd);
+    g.group.position.addScaledVector(g.vel, dt);
+
+    /* ---- fire: paired spinal cannons, L then R, once the nose comes around ---- */
+    if (g.state === "ATTACK" && !landedOn) {
+      g.fireT -= dt;
+      if (g.fireT <= 0) {
+        if (g.burstLeft > 0) {
+          gunTmpC.subVectors(gunTmpB, g.group.position).normalize();  // the shot it WANTS
+          g.group.getWorldDirection(gunTmpA).negate();                // the nose it HAS
+          if (gunTmpA.dot(gunTmpC) > GUNSHIP_FIRE_CONE) {
+            if (g.muzzles) g.muzzles[g.burstLeft % g.muzzles.length].getWorldPosition(gunTmpB);
+            else gunTmpB.copy(g.group.position).addScaledVector(gunTmpA, 20);
+            // cancel the sideways drift out of the shot line (the v41 fix)
+            gunTmpA.copy(g.vel).addScaledVector(gunTmpC, -g.vel.dot(gunTmpC));
+            gunTmpC.multiplyScalar(GUNSHIP_BOLT_SPEED).sub(gunTmpA).normalize();
+            spawnGunshipBolt(gunTmpB, gunTmpC, g.vel);
+            pirateShotSound(dist);
+            g.fireT = GUNSHIP_BURST_GAP;
+            g.burstLeft--;
+          } else {
+            g.fireT = 0.1;   // nose not on yet — retry, don't waste the pair
+          }
+        } else {
+          g.burstLeft = GUNSHIP_BURST;
+          g.fireT = GUNSHIP_BURST_COOL + Math.random();
+          randUnit(gunTmpC);
+          g.aimErr.copy(gunTmpC).multiplyScalar(Math.random() * dist * GUNSHIP_AIM_ERR);
+        }
+      }
+    }
+
+    /* ---- ram: freight's wall, not the fighter's shatter — a mini-boss is
+       never rammed to death. You bounce, you bleed, it rolls on. A ram on a
+       sleeping escort is a provocation. Damage LAST (breach re-entrancy). ---- */
+    const rr = GUNSHIP_HIT_R + SHIP_HIT_R;
+    if (!landedOn && shipObj.position.distanceToSquared(g.group.position) < rr * rr) {
+      gunTmpB.subVectors(shipObj.position, g.group.position).normalize();
+      gunTmpC.subVectors(ship.velocity, g.vel);
+      const relSpd = gunTmpC.length();
+      const into = gunTmpC.dot(gunTmpB);
+      if (into < 0) ship.velocity.addScaledVector(gunTmpB, -1.5 * into);
+      shipObj.position.copy(g.group.position).addScaledVector(gunTmpB, rr + 1);
+      const dmg = Math.min(RAM_DMG_CAP, (Math.max(0, relSpd - RAM_FREE_SPD) / 100) * GUNSHIP_RAM_HURT);
+      thump(Math.min(360, 150 + relSpd * 0.5));
+      gunshipProvoke(g);
+      if (dmg > 0) {
+        spillCargo(dmg);   // knock loose cargo BEFORE shipDamage — same reason as every other ram
+        shipDamage(dmg);
+      }
+      continue;
+    }
+
+    if (g.mixer) g.mixer.update(dt);   // the heavy bob — mass never stops moving
+
+    g.engineGlow.scale.setScalar(5 + 6 * g.vel.length() / GUNSHIP_MAX_SPD);
+    g.beacon.material.opacity = g.hostile
+      ? (Math.sin(clock.elapsedTime * 7 + g.phase) > 0 ? 0.9 : 0.15)    // fast and angry
+      : (Math.sin(clock.elapsedTime * 1.6 + g.phase) > 0 ? 0.6 : 0.2);  // the working blink
+  }
+
+  /* ---- heavy bolts: advance, swept-test the one target they have ---- */
+  for (const b of gunshipBolts) {
+    if (b.life <= 0) continue;
+    b.life -= dt;
+    if (b.life <= 0) { b.mesh.visible = false; continue; }
+    gunTmpA.copy(b.mesh.position);
+    b.mesh.position.addScaledVector(b.vel, dt);
+    if (landedOn) continue;                  // parked ships don't get shelled
+    gunSeg.subVectors(b.mesh.position, gunTmpA);
+    const segLen2 = gunSeg.lengthSq();
+    gunToC.subVectors(shipObj.position, gunTmpA);
+    const t = segLen2 > 0 ? THREE.MathUtils.clamp(gunToC.dot(gunSeg) / segLen2, 0, 1) : 0;
+    gunNearPt.copy(gunTmpA).addScaledVector(gunSeg, t);
+    if (gunNearPt.distanceToSquared(shipObj.position) <= SHIP_HIT_R * SHIP_HIT_R) {
+      b.life = 0; b.mesh.visible = false;
+      thump(190);
+      padRumble(0.6, 90);
+      shipDamage(GUNSHIP_BOLT_DMG);   // no spillCargo — spilling stays ram-only (10g's rule)
+    }
+  }
+  // gunship bolts skip junk for the same reason pirate bolts do:
+  // routing them through junkTestBolt would farm scrap FOR the player
+}
+/* ================= end 10i: GUNSHIPS ================= */
+
 // same lazy find as the HOME chevron (homeBody is shared with the nav HUD)
 function pirateInHarbor() {
   if (!homeBody) homeBody = liveBodies.find(b => b.pads) || null;
@@ -3970,7 +4490,8 @@ function updateEnemies(dt) {
   // v48: the score reacts — the danger layer rides while any BANDIT is up.
   // Neutrals about their business and your own wing don't scare the band.
   // setDanger ignores redundant calls, so per-frame is fine.
-  if (music) music.setDanger(pirates.some(p => p.alive && p.faction === "hostile"));
+  if (music) music.setDanger(pirates.some(p => p.alive && p.faction === "hostile")
+                          || gunships.some(g => g.alive && g.hostile));   // a hot capital scares the band too
 
   /* ---- hostile bolts: advance, swept-test the one target they have ---- */
   for (const b of pirateBolts) {
@@ -4714,6 +5235,8 @@ function drawNavHud(dt) {
               p.faction === "hostile" ? "#ff5544" : p.faction === "neutral" ? NAV_AMBER : NAV_TEAL, 3);
   // freight: a fat gold blip — the scrap/HOME gold on purpose: loot on the hoof
   for (const h of haulers) if (h.alive) navBlipAt(h.group.position, cx, cy, r, NAV_GOLD, 3.5);
+  // capitals: the biggest blip on the scope — red when hot, amber on guard duty
+  for (const g of gunships) if (g.alive) navBlipAt(g.group.position, cx, cy, r, g.hostile ? "#ff5544" : NAV_AMBER, 4.5);
   c.fillStyle = "rgba(110,231,216,.6)"; c.font = "10px " + navFont; c.textAlign = "center";
   c.fillText("RADAR", cx, cy + r + 14);
   c.restore();
@@ -4758,6 +5281,17 @@ function drawNavHud(dt) {
     c.fillStyle = NAV_CONTRACT; c.shadowColor = NAV_CONTRACT; c.shadowBlur = 8;
     c.font = "16px " + navFont;
     c.fillText("◆ CONTRACT COMPLETE ◆", W / 2, H * 0.30);
+    c.restore();
+  }
+  // --- G: capital contact — a red flash when a gunship shows up hot (v57).
+  // Stacked below the contract banner so a busy day never overprints itself.
+  if (gunshipFlash > 0) {
+    gunshipFlash = Math.max(0, gunshipFlash - dt);
+    c.save();
+    c.textAlign = "center"; c.globalAlpha = Math.min(1, gunshipFlash);
+    c.fillStyle = "#ff5544"; c.shadowColor = "#ff5544"; c.shadowBlur = 8;
+    c.font = "16px " + navFont;
+    c.fillText("⚠ CAPITAL SHIP CONTACT ⚠", W / 2, H * 0.34);
     c.restore();
   }
 }
@@ -5399,6 +5933,7 @@ function animate() {
   updateScrap(dt);    // reel in salvage from kills (may be created by the bolts below, next frame)
   updateEnemies(dt);  // pirates move before the bolt tests below, same reason as the junk
   updateHaulers(dt);  // freight too — same ordering rule
+  updateGunships(dt); // capitals last — they read hauler state (GUARD wards)
 
   /* ---- blasters: fire from both cannons, advance live bolts ---- */
   fireCooldown -= dt;
@@ -5426,10 +5961,11 @@ function animate() {
     b.mesh.position.addScaledVector(b.vel, dt);
     // test the whole segment it crossed this frame, not just where it landed
     // short-circuit: one bolt hits one thing, and junk can shield a pirate.
-    // safe in one expression — the three tests own disjoint scratch vectors.
+    // safe in one expression — the four tests own disjoint scratch vectors.
     if (junkTestBolt(boltPrev, b.mesh.position, b.vel) ||
         enemyTestBolt(boltPrev, b.mesh.position, b.vel) ||
-        haulerTestBolt(boltPrev, b.mesh.position, b.vel)) { b.life = 0; b.mesh.visible = false; }
+        haulerTestBolt(boltPrev, b.mesh.position, b.vel) ||
+        gunshipTestBolt(boltPrev, b.mesh.position, b.vel)) { b.life = 0; b.mesh.visible = false; }
   }
   for (const s of muzzleFlashes)     // fast fade after each shot
     if (s.scale.x > 0.002) s.scale.setScalar(Math.max(0.001, s.scale.x * Math.pow(0.00004, dt)));
