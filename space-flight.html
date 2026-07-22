@@ -418,6 +418,7 @@
     <div class="volrow"><span>ENGINE</span><input id="volEngine" type="range" min="0" max="100" step="5"><span class="vpct" id="volEnginePct"></span></div>
     <button id="settingsCtrlsToggle" type="button">CONTROLS ▾</button>
     <div id="settingsCtrls"></div>
+    <button id="btnFleetPause" type="button" class="ss-btn sub">FLEET</button>
     <button id="btnResume" type="button" class="ss-btn sub">CLOSE</button>
   </div>
 </div>
@@ -5565,6 +5566,7 @@ function openFleet() {
 }
 function closeFleet() { fleetEl.style.display = "none"; }
 document.getElementById("btnFleet").addEventListener("click", openFleet);
+document.getElementById("btnFleetPause").addEventListener("click", openFleet);   // v58: same panel, reachable mid-flight from PAUSE (layers over it at z40)
 document.getElementById("btnFleetClose").addEventListener("click", closeFleet);
 // ESC closes the registry first — capture-phase so it runs before the pause
 // toggle, and stopImmediate (both listeners live on window) so one ESC only
