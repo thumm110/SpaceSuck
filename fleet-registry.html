@@ -5,9 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <title>SpaceSuck — Fleet Registry</title>
-<!-- Standalone ship-hierarchy reference for SpaceSuck. Self-contained:
-     all CSS/JS inline, no external assets, no fetch() — opens from file://
-     or over http://. Generated from space-flight.html (v57). -->
+<!-- Standalone ship-hierarchy reference for SpaceSuck. The tree + stats are
+     self-contained (inline CSS/JS); the optional 3D ship viewer additionally
+     loads lib/three.min.js + the .glb models, which needs http:// (the game's
+     FLEET button, ./play.sh, or Pages). Generated from space-flight.html (v58). -->
 <style>html,body{background:#05090f;margin:0}</style>
 </head>
 <body>
@@ -216,6 +217,49 @@
     details[open] > .kids,details[open] > .ships{animation:none}
     .caret{transition:none}
   }
+
+  /* ---- the ◉ 3D button on each ship card ---- */
+  .view3d{margin-left:auto;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
+    color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent);
+    border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);border-radius:3px;
+    padding:4px 9px;cursor:pointer;transition:.14s;white-space:nowrap}
+  .view3d:hover{background:color-mix(in srgb,var(--accent) 22%,transparent);border-color:var(--accent);
+    box-shadow:0 0 10px color-mix(in srgb,var(--accent) 40%,transparent)}
+  .view3d:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .ship-head .model{margin-left:0}   /* the button now owns the right edge */
+
+  /* ---- the 3D viewer modal ---- */
+  #viewer{position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;
+    padding:20px;background:rgba(2,5,9,.82)}
+  #viewerPanel{display:flex;flex-direction:column;width:min(1080px,96vw);max-height:94vh;overflow:hidden;
+    background:var(--panel);border:1px solid var(--line2);border-radius:8px;
+    box-shadow:0 24px 90px rgba(0,0,0,.65)}
+  #viewerBar{display:flex;align-items:center;gap:12px;padding:12px 14px;
+    border-bottom:1px solid var(--line);font-family:var(--mono)}
+  #viewerName{font-weight:700;letter-spacing:.07em;font-size:15px;color:var(--ink)}
+  #viewerModel{font-size:11px;color:var(--dimmer);letter-spacing:.03em}
+  #viewerClose{margin-left:auto;width:30px;height:30px;flex:0 0 auto;border-radius:4px;cursor:pointer;
+    background:var(--void);color:var(--dim);border:1px solid var(--line2);font-size:14px;line-height:1;
+    transition:.14s}
+  #viewerClose:hover{color:var(--hostile);border-color:var(--hostile)}
+  #viewerBody{display:flex;flex-wrap:wrap;overflow:hidden}
+  #viewerStage{position:relative;flex:2 1 340px;height:64vh;min-height:320px;
+    background:radial-gradient(120% 120% at 50% 28%,#0c1725,#05090f 76%)}
+  #viewerCanvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+  #viewerCanvas:active{cursor:grabbing}
+  #viewerHint{position:absolute;left:0;right:0;bottom:9px;text-align:center;font-family:var(--mono);
+    font-size:10px;letter-spacing:.12em;color:var(--dimmer);text-transform:uppercase;pointer-events:none}
+  #viewerMsg{position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;
+    padding:26px;font-family:var(--mono);font-size:13px;line-height:1.75;color:var(--dim)}
+  #viewerMsg b{color:var(--ink)}
+  #viewerSpec{flex:1 1 270px;min-width:0;height:64vh;overflow-y:auto;padding:16px 18px;
+    border-left:1px solid var(--line)}
+  #viewerSpec .blurb{margin-top:0}
+  @media (max-width:640px){
+    #viewerBody{overflow-y:auto;max-height:calc(94vh - 56px)}
+    #viewerStage{flex-basis:100%;height:44vh}
+    #viewerSpec{flex-basis:100%;height:auto;border-left:0;border-top:1px solid var(--line)}
+  }
 </style>
 
 <div class="wrap">
@@ -228,9 +272,9 @@
       <div class="sub">FLEET REGISTRY &nbsp;·&nbsp; ALLEGIANCE <span class="arrow">▸</span> CLASS <span class="arrow">▸</span> HULL</div>
       <div class="chips">
         <span class="chip"><b>4</b> classes</span>
-        <span class="chip"><b>7</b> GLB models</span>
+        <span class="chip"><b>8</b> GLB models</span>
         <span class="chip"><b>2</b> allegiances</span>
-        <span class="chip">v57</span>
+        <span class="chip">v58</span>
       </div>
     </div>
     <div class="spacer"></div>
@@ -279,7 +323,7 @@
                 <span class="beacon b-ally"></span>
                 <h4>USS THUMM</h4>
                 <span class="tag">FACTORY FIGHTER</span>
-                <span class="model">ship/ussthumm.glb</span>
+                <span class="model">ship/uss-thumm.glb</span>
               </div>
               <p class="blurb">Quick on the stick — the stock hull. Teal &amp; orange with aqua engines. The baseline every upgrade stacks on.</p>
               <div class="pipwrap">
@@ -299,7 +343,7 @@
                 <span class="beacon b-ally"></span>
                 <h4>USS BOO</h4>
                 <span class="tag">QUAD-ENGINE HEAVY</span>
-                <span class="model">ship/ussboo.glb</span>
+                <span class="model">ship/uss-boo.glb</span>
               </div>
               <p class="blurb">Takes a hit, turns like a truck. Aluminum hull, pink livery (the daughter's favorite). Still out-turns a raider — barely.</p>
               <div class="pipwrap">
@@ -398,7 +442,7 @@
                 <span class="beacon b-neutral"></span>
                 <h4>SS PACKRAT</h4>
                 <span class="tag">SALVAGE COLLECTOR</span>
-                <span class="model">npc/collector.glb</span>
+                <span class="model">npc/ss-packrat.glb</span>
               </div>
               <p class="blurb">Mid-size (≈2× a fighter) neutral scavenger that actively salvages the junk field — amber blink, ion-blue exhaust, honest traffic. Never shoots; raiding it is a career choice, same as any neutral.</p>
               <dl class="stats">
@@ -419,8 +463,8 @@
           <span class="caret"></span>
           <span class="hullcode">GUN</span>
           <span class="cls-name">Gunship</span>
-          <span class="cls-desc">capital warships — one hull, foe + escorts</span>
-          <span class="cls-count">4 names</span>
+          <span class="cls-desc">capital warships — two foes + escorts</span>
+          <span class="cls-count">5 names · 2 hulls</span>
         </summary>
         <div class="ships">
 
@@ -431,15 +475,35 @@
                 <span class="beacon b-hostile"></span>
                 <h4>SS TIMECLOCK</h4>
                 <span class="tag">FOE · MINI-BOSS</span>
-                <span class="model">enemies/gunship.glb</span>
+                <span class="model">enemies/ss-timeclock.glb</span>
               </div>
-              <p class="blurb">Rare roaming capital mini-boss — the pirate's three-state brain in a heavy body. Paired spinal cannons open up early at 900u and hit like a truck. Turns like a cathedral, and <b>cannot be rammed to death</b> (freight's wall rules). Top payout in the game.</p>
+              <p class="blurb">Rare roaming capital mini-boss — the pirate's three-state brain in a heavy body. Paired spinal cannons open up early at 900u and hit like a truck. Turns like a cathedral, and <b>cannot be rammed to death</b> (freight's wall rules). A rich kill — though its heavier sister <b>SS SHRINKAGE</b> now tops the economy.</p>
               <dl class="stats">
                 <div class="stat"><dt>Hull</dt><dd>16 <small>hits</small></dd></div>
                 <div class="stat"><dt>Top speed</dt><dd>200</dd></div>
                 <div class="stat"><dt>Turn</dt><dd>0.45 <small>fight</small></dd></div>
                 <div class="stat dmg"><dt>Bolt dmg</dt><dd>14</dd></div>
                 <div class="stat pay"><dt>Payout</dt><dd>198 <small>22×9</small></dd></div>
+              </dl>
+            </div>
+          </article>
+
+          <article class="ship f-hostile">
+            <div class="stripe"></div>
+            <div class="ship-body">
+              <div class="ship-head">
+                <span class="beacon b-hostile"></span>
+                <h4>SS SHRINKAGE</h4>
+                <span class="tag">FOE · HEAVY DREADNOUGHT</span>
+                <span class="model">enemies/ss-shrinkage.glb</span>
+              </div>
+              <p class="blurb">The second capital foe — a rarer, heavier, all-red dreadnought. Same cathedral-slow brain as TIMECLOCK in a wider hull, with <b>four forward lance cannons</b> and six engine cores. Born angry, never honest traffic, <b>cannot be rammed to death</b> — and the richest kill in the game.</p>
+              <dl class="stats">
+                <div class="stat"><dt>Hull</dt><dd>24 <small>hits</small></dd></div>
+                <div class="stat"><dt>Top speed</dt><dd>200</dd></div>
+                <div class="stat"><dt>Turn</dt><dd>0.45 <small>fight</small></dd></div>
+                <div class="stat dmg"><dt>Bolt dmg</dt><dd>14</dd></div>
+                <div class="stat pay"><dt>Payout</dt><dd>300 <small>30×10</small></dd></div>
               </dl>
             </div>
           </article>
@@ -451,7 +515,7 @@
                 <span class="beacon b-ion"></span>
                 <h4>SS LOSS PREVENTION</h4>
                 <span class="tag">ESCORT</span>
-                <span class="model">enemies/gunship.glb</span>
+                <span class="model">enemies/ss-timeclock.glb</span>
               </div>
               <p class="blurb">The same capital hull, retinted ion-blue at load. Flies GUARD on SS DOUBLE OVERTIME. Holds fire until provoked — but its glows flip <b style="color:var(--hostile)">red</b> and it turns hostile the instant the ward (or the escort itself) takes a hit.</p>
               <dl class="stats">
@@ -461,7 +525,7 @@
                 <div class="stat pay"><dt>Payout</dt><dd>144 <small>16×9</small></dd></div>
               </dl>
               <div class="aka">SISTER ESCORTS <span>—</span> SS SEVERANCE · SS HALL MONITOR</div>
-              <p class="note"><b>One GLB, four names.</b> Slot [0] is the hostile foe (SS TIMECLOCK); slots [1–3] load the same model again and retint to ion-blue as escorts. 75% of DOUBLE OVERTIME spawns hire security; convoy events add more.</p>
+              <p class="note"><b>Two capital hulls.</b> TIMECLOCK's hull serves four names — the foe plus three escorts that reload the same model retinted ion-blue; <b>SS SHRINKAGE</b> flies its own hull, always red. 75% of DOUBLE OVERTIME spawns hire security; convoy events add more.</p>
             </div>
           </article>
 
@@ -486,7 +550,7 @@
                 <span class="beacon b-neutral"></span>
                 <h4>SS OVERTIME</h4>
                 <span class="tag">THE EVERYDAY TRUCK</span>
-                <span class="model">npc/hauler.glb</span>
+                <span class="model">npc/ss-overtime.glb</span>
               </div>
               <p class="blurb">Working freight on a delivery leg that happens to pass near you. Never shoots — shoot it down and the whole manifest blows out as scrap.</p>
               <dl class="stats">
@@ -503,7 +567,7 @@
                 <span class="beacon b-neutral"></span>
                 <h4>SS DOUBLE OVERTIME</h4>
                 <span class="tag">LOOT PIÑATA</span>
-                <span class="model">npc/hauler_max.glb</span>
+                <span class="model">npc/ss-double-overtime.glb</span>
               </div>
               <p class="blurb">The bigger, double-loot sister. Rare, richly loaded — and most shifts she hires a gunship escort, so the payout is priced by its protection: unguarded runs the cheap load, the guarded solo is the 160 baseline, convoy freight pays premium.</p>
               <dl class="stats">
@@ -522,12 +586,38 @@
   </details>
 
   <footer>
-    Generated from <b>space-flight.html</b> — factions, stats &amp; payouts read straight from the code · SpaceSuck <b>v57</b><br>
+    Generated from <b>space-flight.html</b> — factions, stats &amp; payouts read straight from the code · SpaceSuck <b>v58</b><br>
     beacon colors are canon: teal 0x30e0c8 · amber 0xffb020 · red 0xff3020 · ion 0x55aaff
   </footer>
 
 </div>
 </div>
+
+<!-- ===================== 3D SHIP VIEWER ===================== -->
+<div id="viewer">
+  <div id="viewerPanel">
+    <div id="viewerBar">
+      <span id="viewerBeacon" class="beacon b-ally"></span>
+      <span id="viewerName">SHIP</span>
+      <span id="viewerModel"></span>
+      <button id="viewerClose" type="button" title="Close (Esc)">✕</button>
+    </div>
+    <div id="viewerBody">
+      <div id="viewerStage">
+        <canvas id="viewerCanvas"></canvas>
+        <div id="viewerMsg"></div>
+        <div id="viewerHint">drag to rotate · scroll to zoom</div>
+      </div>
+      <div id="viewerSpec"></div>
+    </div>
+  </div>
+</div>
+
+<!-- three.js r128 + GLTFLoader, vendored (same build the game uses). The
+     <script> tags load fine from file://; only the .glb fetch needs http://,
+     which the viewer detects and explains. -->
+<script src="lib/three.min.js"></script>
+<script src="lib/GLTFLoader.js"></script>
 
 <script>
   // Expand / collapse every disclosure node in the tree.
@@ -536,6 +626,203 @@
     () => all().forEach(d => d.open = true));
   document.getElementById('collapseAll').addEventListener('click',
     () => all().forEach(d => d.open = false));
+
+  /* ---- 3D SHIP VIEWER (v58): one shared WebGL turntable for the whole page.
+     Each ship card's ◉ 3D button loads that hull's .glb, auto-frames it, spins
+     it, and lets you drag / scroll to inspect. The model path is read from the
+     card's own .model span, so renames never desync. GLB loading needs http://
+     (browsers block fetch on file://) — on file:// or a load error the viewer
+     shows a note and the stats still stand. One renderer, created lazily and
+     paused on close, keeps it light beside the game's own WebGL context. ---- */
+  (function () {
+    const THREE = window.THREE;
+    const viewer  = document.getElementById('viewer');
+    const panel   = document.getElementById('viewerPanel');
+    const canvas  = document.getElementById('viewerCanvas');
+    const stage   = document.getElementById('viewerStage');
+    const nameEl  = document.getElementById('viewerName');
+    const modelEl = document.getElementById('viewerModel');
+    const beacon  = document.getElementById('viewerBeacon');
+    const msgEl   = document.getElementById('viewerMsg');
+    const hintEl  = document.getElementById('viewerHint');
+    const specEl  = document.getElementById('viewerSpec');
+
+    // faction stripe class → beacon class (matches the card's colour + blink)
+    const FAC = { 'f-ally':'b-ally', 'f-player':'b-ally', 'f-neutral':'b-neutral',
+                  'f-hostile':'b-hostile', 'f-ion':'b-ion' };
+
+    // inject a ◉ 3D button into every ship card, reading its GLB path in-place
+    document.querySelectorAll('.ship').forEach(function (card) {
+      const modelSpan = card.querySelector('.model');
+      const nameH = card.querySelector('h4');
+      if (!modelSpan || !nameH) return;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'view3d';
+      btn.textContent = '◉ 3D';
+      btn.addEventListener('click', function () {
+        open(card, nameH.textContent.trim(), modelSpan.textContent.trim());
+      });
+      modelSpan.parentNode.insertBefore(btn, modelSpan);
+    });
+
+    const ok3d = !!(THREE && THREE.WebGLRenderer && THREE.GLTFLoader);
+    const spinOK = !window.matchMedia || !matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    let renderer, scene, camera, holder, loader, raf = 0;
+    let curModel = null, loadSeq = 0, isOpen = false;
+    let camMin = 0, camMax = Infinity;
+    let dragging = false, px = 0, py = 0;
+
+    function initGL() {
+      if (renderer) return true;
+      try {
+        renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+        renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+      } catch (e) { return false; }
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(38, 1, 0.1, 8000);
+      holder = new THREE.Group(); scene.add(holder);
+      scene.add(new THREE.HemisphereLight(0xbfe4ff, 0x0a0f18, 0.95));
+      const key = new THREE.DirectionalLight(0xffffff, 1.15); key.position.set(3, 5, 4); scene.add(key);
+      const fill = new THREE.DirectionalLight(0x88bbff, 0.5); fill.position.set(-4, 1, -2); scene.add(fill);
+      const rim = new THREE.DirectionalLight(0x50ffe0, 0.55); rim.position.set(0, -3, -5); scene.add(rim);
+      loader = new THREE.GLTFLoader();
+      return true;
+    }
+
+    function disposeModel() {
+      if (!curModel) return;
+      holder.remove(curModel);
+      curModel.traverse(function (o) {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          mats.forEach(function (m) {
+            for (const k in m) { const v = m[k]; if (v && v.isTexture) v.dispose(); }
+            m.dispose();
+          });
+        }
+      });
+      curModel = null;
+    }
+
+    function frameModel(obj) {
+      const box = new THREE.Box3().setFromObject(obj);
+      const sph = box.getBoundingSphere(new THREE.Sphere());
+      obj.position.sub(sph.center);                 // recenter on the origin
+      const r = sph.radius || 1;
+      const dist = (r / Math.sin((camera.fov * Math.PI / 180) / 2)) * 1.22;
+      camera.position.set(dist * 0.6, dist * 0.32, dist * 0.72);
+      camera.near = Math.max(0.01, dist / 100); camera.far = dist * 40;
+      camera.updateProjectionMatrix();
+      camera.lookAt(0, 0, 0);
+      camMin = dist * 0.45; camMax = dist * 3.2;
+    }
+
+    function resize() {
+      if (!renderer) return;
+      const w = stage.clientWidth, h = stage.clientHeight;
+      if (!w || !h) return;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h; camera.updateProjectionMatrix();
+    }
+
+    function loop() {
+      raf = requestAnimationFrame(loop);
+      if (spinOK && !dragging) holder.rotation.y += 0.006;
+      renderer.render(scene, camera);
+    }
+
+    function showMsg(html) { msgEl.innerHTML = html; msgEl.style.display = 'flex';
+      canvas.style.visibility = 'hidden'; hintEl.style.display = 'none'; }
+    function hideMsg() { msgEl.style.display = 'none'; canvas.style.visibility = ''; hintEl.style.display = ''; }
+
+    function buildSpec(card) {
+      specEl.innerHTML = '';
+      ['.blurb', '.stats', '.pipwrap', '.flight', '.aka'].forEach(function (sel) {
+        const el = card.querySelector(sel);
+        if (el) specEl.appendChild(el.cloneNode(true));
+      });
+    }
+
+    function open(card, name, model) {
+      nameEl.textContent = name;
+      modelEl.textContent = model;
+      const facClass = Array.prototype.find.call(card.classList, function (c) { return FAC[c]; });
+      beacon.className = 'beacon ' + (FAC[facClass] || 'b-ally');
+      buildSpec(card);
+      viewer.style.display = 'flex';
+      isOpen = true;
+      document.body.style.overflow = 'hidden';
+
+      if (!ok3d) { viewer.dataset.state = 'nogl';
+        return showMsg('WebGL / three.js unavailable here.<br>The stats are the full spec.'); }
+      if (location.protocol === 'file:') { viewer.dataset.state = 'nofetch';
+        return showMsg('▸ 3D preview needs the page served over <b>http://</b>.<br>' +
+          'Run <b>./play.sh</b> and open it from the in-game <b>FLEET</b> button (or host it).<br>' +
+          'The stats are the full spec either way.'); }
+      if (!initGL()) { viewer.dataset.state = 'nogl';
+        return showMsg('Could not start WebGL in this browser.'); }
+
+      resize();
+      if (!raf) loop();
+      disposeModel();
+      holder.rotation.set(0, 0, 0);
+      showMsg('LOADING ' + name + '…');
+      viewer.dataset.state = 'loading';
+      const seq = ++loadSeq;
+      loader.load(model + location.search, function (gltf) {
+        if (seq !== loadSeq) return;              // a newer open() won the race
+        hideMsg();
+        curModel = gltf.scene;
+        holder.add(curModel);
+        frameModel(curModel);
+        viewer.dataset.state = 'loaded';
+      }, undefined, function () {
+        if (seq !== loadSeq) return;
+        viewer.dataset.state = 'error';
+        showMsg('Could not load <b>' + model + '</b>.<br>Check the file exists and you’re on http://.');
+      });
+    }
+
+    function close() {
+      viewer.style.display = 'none';
+      isOpen = false;
+      document.body.style.overflow = '';
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }   // stop rendering — free the GPU
+    }
+
+    // controls: drag to rotate, scroll to zoom
+    canvas.addEventListener('pointerdown', function (e) {
+      dragging = true; px = e.clientX; py = e.clientY;
+      try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+    canvas.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      holder.rotation.y += (e.clientX - px) * 0.01;
+      holder.rotation.x = Math.max(-1.2, Math.min(1.2, holder.rotation.x + (e.clientY - py) * 0.01));
+      px = e.clientX; py = e.clientY;
+    });
+    function endDrag(e) { dragging = false; try { canvas.releasePointerCapture(e.pointerId); } catch (_) {} }
+    canvas.addEventListener('pointerup', endDrag);
+    canvas.addEventListener('pointercancel', endDrag);
+    canvas.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      camera.position.multiplyScalar(Math.exp(e.deltaY * 0.0012));
+      const d = camera.position.length();
+      if (d < camMin) camera.position.setLength(camMin);
+      else if (d > camMax) camera.position.setLength(camMax);
+    }, { passive: false });
+
+    // close: button, backdrop click, Esc
+    document.getElementById('viewerClose').addEventListener('click', close);
+    viewer.addEventListener('pointerdown', function (e) { if (e.target === viewer) close(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && isOpen) { close(); e.stopPropagation(); }
+    });
+    window.addEventListener('resize', function () { if (isOpen) resize(); });
+  })();
 </script>
 </body>
 </html>
