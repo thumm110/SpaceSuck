@@ -144,7 +144,7 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   a dissonant arpeggio — then melts away when the sky is clear. Neutrals
   and your own wingmen don't scare the band. **M** mutes the music; the
   engine and effects stay up
-- **Ship + camera rig** — a Blender-designed fighter (`ship.glb`) with an
+- **Ship + camera rig** — a Blender-designed fighter (`ussthumm.glb`) with an
   authored idle-float animation, cockpit view, and a chase cam with easing
   lag so you see the ship bank through turns. `build_icon.py` renders that
   same model into `icon.png` for the desktop launcher — same deal as the
@@ -198,7 +198,7 @@ python3 -m http.server 8123
 then open <http://localhost:8123/space-flight.html>.
 
 **Serving it over http isn't optional.** Double-clicking `space-flight.html`
-still flies, but browsers block `fetch()` on `file://` — so `ship.glb` and
+still flies, but browsers block `fetch()` on `file://` — so `ussthumm.glb` and
 `earth.glb` never load, and the game quietly falls back to the primitive
 placeholder ship and a procedural Earth. If the fighter looks like programmer
 art, that's why: check the URL, not the model.

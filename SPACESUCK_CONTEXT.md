@@ -86,13 +86,13 @@ SpaceSuck/
 ├── GLTFLoader.js          ← vendored three.js model loader
 │
 │   ── 3D models (Blender output, .glb = binary glTF) ──
-├── ship.glb               ← the player's fighter ("USS THUMM"): teal/orange, aqua engines
+├── ussthumm.glb               ← the player's fighter ("USS THUMM"): teal/orange, aqua engines
 ├── raider.glb             ← enemy/neutral pirate fighter: black dagger, red trim/engines
 ├── hauler.glb             ← NPC freight ship "SS OVERTIME"
 ├── hauler_max.glb         ← bigger freight ship "SS DOUBLE OVERTIME" (double loot)
 ├── earth.glb              ← EARTH, a landable world (built by build_earth.py)
 ├── rubicon.glb            ← RUBICON, the red desert world (built by build_rubicon.py)
-├── icon.png               ← desktop-launcher icon (rendered from ship.glb)
+├── icon.png               ← desktop-launcher icon (rendered from ussthumm.glb)
 │
 │   ── baked terrain data (so landing works without heavy raycasting) ──
 ├── earth_height.json      ← 512×256 lat/lon height grid for EARTH (base64 uint8)
@@ -101,7 +101,7 @@ SpaceSuck/
 │   ── Blender "factory" scripts (Python; edit numbers, re-run, get fresh assets) ──
 ├── build_earth.py         ← generates earth.glb + earth_height.json + preview PNGs
 ├── build_rubicon.py       ← generates rubicon.glb + rubicon_height.json + preview PNGs
-├── build_icon.py          ← renders icon.png (a hero shot of ship.glb)
+├── build_icon.py          ← renders icon.png (a hero shot of ussthumm.glb)
 │
 │   ── preview renders (eyeball the planets without opening Blender) ──
 ├── earth_preview_*.png    ← city / east / pad / west renders of EARTH
@@ -135,12 +135,12 @@ map (line numbers approximate, from v51):
 | `3. PLANET TEXTURE GENERATORS` | Turns noise into color/bump/roughness maps on the fly. |
 | `4. ATMOSPHERE SHADER` | The glowing atmosphere halo around planets. |
 | `5. SCENE SETUP` | three.js scene, camera, lights, **twinkling stars**, **distant galaxies**. |
-| `6. THE SHIP (primitives)` | Fallback ship welded from basic shapes (used if `ship.glb` can't load). |
+| `6. THE SHIP (primitives)` | Fallback ship welded from basic shapes (used if `ussthumm.glb` can't load). |
 | `6b. TERRAIN HEIGHT GRID` | Loads the baked `*_height.json` so the game knows ground height under the ship. |
 | `7. BODY BUILDER` | Constructs each planet/star/moon from the config. |
 | `8 / 8b. SPACE DUST / ATMOSPHERE WISPS` | Motion cues and atmospheric-entry visuals. |
 | `9. ENGINE AUDIO` | Web Audio engine hum that tracks the throttle. |
-| `10. SHIP OBJECT + CAMERA RIG` | Real ship (`ship.glb`), cockpit + chase cameras. |
+| `10. SHIP OBJECT + CAMERA RIG` | Real ship (`ussthumm.glb`), cockpit + chase cameras. |
 | `10b. BLASTERS` | Twin nose cannons (aqua + orange). |
 | `10c. SPACE JUNK` | Shootable asteroids / satellites / debris — the mining targets. |
 | `10d. SCRAP + TRACTOR BEAM` | The "suck": scrap drops and the always-on beam that reels it in. |
@@ -341,7 +341,7 @@ python3 -m http.server 8123
 ### ⚠️ The single most important gotcha: it MUST be served over http://
 
 Double-clicking `space-flight.html` opens it as a `file://` page, and browsers
-**block `fetch()` on `file://`**. That means the `.glb` models (`ship.glb`,
+**block `fetch()` on `file://`**. That means the `.glb` models (`ussthumm.glb`,
 `earth.glb`, `rubicon.glb`, etc.) and the `*_height.json` grids never load, and
 the game silently falls back to a primitive placeholder ship and a procedural
 Earth. If the fighter looks like blocky programmer art, **the cause is almost
@@ -371,7 +371,7 @@ headless:
 ```bash
 blender -b -P build_earth.py      # regenerates earth.glb + earth_height.json + previews
 blender -b -P build_rubicon.py    # regenerates rubicon.glb + rubicon_height.json + previews
-blender -b -P build_icon.py       # re-renders icon.png (a hero shot of ship.glb)
+blender -b -P build_icon.py       # re-renders icon.png (a hero shot of ussthumm.glb)
 blender --background --python raider/build_raider.py   # regenerates raider.glb
 ```
 
@@ -446,7 +446,7 @@ frame in the game loop.
   can read friend from foe by silhouette and color alone. Faction lights: hostile
   = fast red strobe, neutral = amber slow-blink, ally/wingman flies your wing.
 
-- **The player ship's Blender source is NOT in this repo.** `ship.glb` is
+- **The player ship's Blender source is NOT in this repo.** `ussthumm.glb` is
   committed, but its build script lives outside the folder at
   `~/Blender/spaceship/build_ship.py` (referenced in `build_icon.py`). So you can
   regenerate the planets, icon, and raider from this folder, but *not* the player

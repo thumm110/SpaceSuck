@@ -8,7 +8,7 @@ build_earth.py): edit the numbers, re-run headless, get a fresh icon. The
     blender -b -P build_icon.py
 
 Outputs (written next to this script):
-    icon.png   — 512x512 RGBA hero render of ship.glb on a transparent
+    icon.png   — 512x512 RGBA hero render of ussthumm.glb on a transparent
                  background. SpaceSuck.desktop points at it, so re-run this
                  after rebuilding the ship in ~/Blender/spaceship/build_ship.py
                  and the desktop launcher picks the new one up for free.
@@ -17,7 +17,7 @@ Two things here are less obvious than they look:
 
   * The lights are SUNs, not area lights. Sun strength is irradiance, so it
     doesn't fall off with distance — exposure holds no matter what scale
-    ship.glb happens to be exported at, and nothing needs re-tuning when the
+    ussthumm.glb happens to be exported at, and nothing needs re-tuning when the
     ship changes size.
 
   * The camera fit is exact: it projects every mesh vertex and binary-searches

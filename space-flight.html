@@ -499,7 +499,7 @@
     document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>');
   }
 </script>
-<!-- loads ship.glb (the Blender fighter); if this file is missing the
+<!-- loads ussthumm.glb (the Blender fighter); if this file is missing the
      game still flies with the built-in primitive placeholder -->
 <script src="lib/GLTFLoader.js"></script>
 <script type="module">
@@ -544,7 +544,7 @@
        spawn on Earth's doorstep.
 
    v12: right-click showcase orbit. v11: the ship is the Blender fighter
-   (ship.glb) — named parts anchor the engine/retro glows, ShipRootAction
+   (ussthumm.glb) — named parts anchor the engine/retro glows, ShipRootAction
    is the idle float. v10: atmospheric entry effects. Controls (v8):
    W thrust / S reverse / X full stop, A/D roll, arrows turn & pitch
    (flight-stick), mouse freelook, SHIFT boost, V view.
@@ -558,7 +558,7 @@ if (typeof THREE === "undefined") {
 
 /* ============ 1. CONFIG — YOUR SOLAR SYSTEM ============ */
 /* Asset cache-bust (v46): play.sh launches the page with ?v=<timestamp> to
-   dodge Chrome's cache — but the models fetched bare (ship.glb, planets,
+   dodge Chrome's cache — but the models fetched bare (ussthumm.glb, planets,
    height grids) were still heuristically cached for HOURS, so a rebuilt
    ship kept flying its old hull. Ride the page's own query onto every
    asset URL: fresh launch → fresh models; loaded without a query (Pages)
@@ -1435,7 +1435,7 @@ function buildBody(cfg) {
       /* Blender planet — built by build_earth.py. The GLB *is* the
          terrain: flat-shaded low-poly land, cloud banks, landing pad.
          Modeled at radius 100, scaled to cfg.radius here. Loads async
-         like ship.glb; if the file can't load (file:// with no local
+         like ussthumm.glb; if the file can't load (file:// with no local
          server, say) the procedural sphere fills in so the game never
          breaks — you just get the old beach ball instead of terrain. */
       const holder = new THREE.Group();
@@ -2972,7 +2972,7 @@ for (let i = 0; i < PIRATE_COUNT; i++) {
 }
 
 /* ---- the REAL raider: Tanner's Blender fighter (raider.glb) ----
-   Same async swap as the player's ship.glb: the primitives fly until it
+   Same async swap as the player's ussthumm.glb: the primitives fly until it
    arrives and stay as the fallback. One file, CLONED per slot — and the
    materials cloned per clone, because the hit-flash mutates emissive and
    shared mats would flash both pirates when you clip one (the junk rule
@@ -5244,7 +5244,7 @@ function animate() {
   // landing gear: ease toward deployed while parked (landedOn set), stowed while
   // flying. Doors LEAD — they open over the first half of the throw, and the
   // legs only start dropping once the bays are ~open, so a leg never clips a
-  // closed hatch. Both pivots ride in from ship.glb; no-op until the model loads.
+  // closed hatch. Both pivots ride in from ussthumm.glb; no-op until the model loads.
   const gearTarget = landedOn ? 1 : 0;
   gearT += (gearTarget - gearT) * Math.min(1, dt * 3);   // ~1s full cycle
   // same snap as the idle float above: without it the legs micro-settle
