@@ -1318,15 +1318,21 @@ function buildShipMesh() {
     ship.add(eng);
   }
 
-  // engine glow sprites (teal, rear) — scaled by throttle each frame
+  // engine glow sprites — white blobs tinted per-ship (def.glow), scaled by
+  // throttle each frame. A pool of 6 so a multi-burner hull (SAMSAM's center
+  // quad + two nacelles) can light every nozzle; a hull lights only as many as
+  // it has Thruster* nodes — loadPlayerShip() seats + retints them, hides the rest.
   const engineGlows = [];
-  for (const side of [-1, 1]) {
+  const engineBlob = softBlobTexture("rgba(255,255,255,0.95)");
+  for (let i = 0; i < 6; i++) {
     const glow = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: softBlobTexture("rgba(110,231,216,0.95)"),
+      map: engineBlob, color: 0x6ee7d8,   // default teal; per-ship retint on load
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     }));
-    glow.position.set(side * 1.05, -0.05, 4.5);
+    glow.position.set((i % 2 ? 1 : -1) * 1.05, -0.05, 4.5);
     glow.scale.setScalar(0.001);
+    glow.visible = i < 2;                  // placeholder ship shows 2; rest set on load
+    glow.userData.gscale = 1;              // per-nozzle size factor (loadPlayerShip sets it)
     ship.add(glow);
     engineGlows.push(glow);
   }
@@ -1782,6 +1788,9 @@ const SHIPS = [
     accel: 240, boost: 2.2, turn: 1.2, grip: 2.0,
     hullMul: 1.7, beamMul: 0.7, spillMul: 1.0,
     muzzles: ["GunTipL", "GunTipR"],   // twin boom gatlings — the heavy forward gun bank
+    glow: 0xff7420,                    // orange burners, not the default teal
+    thrusters: ["ThrusterL", "ThrusterR", "ThrusterQ0", "ThrusterQ1", "ThrusterQ2", "ThrusterQ3"],
+    glowScales: [1.0, 1.0, 0.5, 0.5, 0.5, 0.5],   // big nacelles + the smaller center quad
     pips: { AGILITY: 2, THRUST: 3, HULL: 5, BEAM: 1 } },
 ];
 let shipSel = 0;   // which hangar row flies — picked on the start screen
@@ -1848,8 +1857,20 @@ function loadPlayerShip(def) {
       glow.position.z += back;   // nudge clear of the nozzle
       return true;
     };
-    anchor("ThrusterL", engineGlows[0],  0.8);
-    anchor("ThrusterR", engineGlows[1],  0.8);
+    // engine glows: retint to the hull's burner colour and seat one on each
+    // Thruster* node it exposes. SAMSAM lights all 6 (nacelles + center quad);
+    // most hulls light 2. The universal pair (0,1) always shows — keeping its
+    // default seat if a hull lacks the node, matching the old behaviour — while
+    // extra glows only appear when their thruster node actually exists.
+    const glowHex = def.glow ?? 0x6ee7d8;
+    const thrusterNames = def.thrusters ?? ["ThrusterL", "ThrusterR"];
+    const glowScales = def.glowScales ?? [];
+    engineGlows.forEach((g, i) => {
+      g.material.color.setHex(glowHex);
+      g.userData.gscale = glowScales[i] ?? 1;
+      const name = thrusterNames[i];
+      g.visible = name ? (i < 2 ? (anchor(name, g, 0.8), true) : anchor(name, g, 0.8)) : false;
+    });
     // muzzles: bolts fire from the retro glows' world positions, so seating
     // the glows on the hangar row's muzzle nodes IS the armament wiring. A
     // single-cannon ship names the same node twice — spread the pair a
@@ -6136,7 +6157,7 @@ function animate() {
   const fwdBurn = Math.max(0, ship.throttle) * (boost > 1 ? 1.5 : 1);
   const revBurn = Math.max(0, -ship.throttle) * 2;
   const flicker = 0.9 + Math.random() * 0.2;   // a little instability reads as fire
-  for (const g of engineGlows) g.scale.setScalar(Math.max(0.001, fwdBurn * 2.4 * flicker));
+  for (const g of engineGlows) g.scale.setScalar(Math.max(0.001, fwdBurn * 2.4 * (g.userData.gscale || 1) * flicker));
   for (const g of retroGlows)  g.scale.setScalar(Math.max(0.001, revBurn * 1.4 * flicker));
 
   /* ---- animate bodies ---- */
