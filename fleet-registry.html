@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>SpaceSuck — Fleet Registry</title>
+<!-- Standalone ship-hierarchy reference for SpaceSuck. Self-contained:
+     all CSS/JS inline, no external assets, no fetch() — opens from file://
+     or over http://. Generated from space-flight.html (v57). -->
+<style>html,body{background:#05090f;margin:0}</style>
+</head>
+<body>
+<style>
+  /* ============================================================
+     SPACESUCK — FLEET REGISTRY
+     A shipboard database styled like the game's own HUD.
+     Committed dark cockpit theme (single-world, deliberate).
+     Faction colors are canon — the actual in-game beacon hexes.
+     ============================================================ */
+  :root{
+    --void:#05090f;
+    --panel:#0b131d;
+    --panel2:#0f1a28;
+    --raised:#12212f;
+    --line:#1b2c3e;
+    --line2:#233a51;
+    --ink:#d6e6f1;
+    --dim:#7690a7;
+    --dimmer:#48607a;
+    /* semantic faction beacons — separate from the teal UI accent */
+    --ally:#33e6cd;       /* 0x30e0c8  player / hired wingman   */
+    --hostile:#ff4a37;    /* 0xff3020  fast red strobe          */
+    --neutral:#ffb020;    /* 0xffb020  amber slow-blink         */
+    --ion:#59acff;        /* 0x55aaff  escort ion-blue          */
+    --orange:#ff8f42;     /* player thruster / user-side accent */
+    --accent:var(--ally); /* UI chrome accent = the tractor teal */
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0}
+
+  .wrap{
+    min-height:100vh;
+    background:
+      radial-gradient(1100px 600px at 78% -8%, rgba(51,230,205,.08), transparent 60%),
+      radial-gradient(900px 500px at 8% 108%, rgba(89,172,255,.06), transparent 60%),
+      var(--void);
+    color:var(--ink);
+    font-family:var(--sans);
+    padding:clamp(16px,3vw,40px);
+    /* faint scanline texture — a cockpit glass tell */
+    background-attachment:fixed;
+  }
+  .shell{max-width:1000px;margin:0 auto}
+
+  /* ---------- header ---------- */
+  .topbar{
+    display:flex;flex-wrap:wrap;align-items:flex-end;gap:18px 26px;
+    padding-bottom:18px;border-bottom:1px solid var(--line);
+  }
+  .wordmark{font-family:var(--mono);font-weight:700;letter-spacing:.14em;
+    font-size:clamp(26px,4.6vw,42px);line-height:1;margin:0;color:var(--ink)}
+  .wordmark b{color:var(--accent);font-weight:700}
+  .sub{font-family:var(--mono);color:var(--dim);font-size:12.5px;letter-spacing:.18em;
+    margin-top:10px;text-transform:uppercase}
+  .sub .arrow{color:var(--accent)}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .chip{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--dim);
+    border:1px solid var(--line2);border-radius:2px;padding:4px 9px;text-transform:uppercase}
+  .chip b{color:var(--ink);font-weight:700}
+  .spacer{flex:1 1 40px}
+  .controls{display:flex;gap:8px}
+  .btn{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--dim);background:var(--panel);border:1px solid var(--line2);border-radius:2px;
+    padding:8px 12px;cursor:pointer;transition:.15s}
+  .btn:hover{color:var(--accent);border-color:var(--accent);box-shadow:0 0 0 1px rgba(51,230,205,.25)}
+  .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  /* ---------- beacon legend ---------- */
+  .legend{display:flex;flex-wrap:wrap;gap:8px 22px;margin:18px 0 26px;
+    padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:4px}
+  .legend .lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;color:var(--dimmer);
+    text-transform:uppercase;align-self:center;margin-right:2px}
+  .key{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:11.5px;
+    letter-spacing:.06em;color:var(--dim);text-transform:uppercase}
+  .key b{color:var(--ink);font-weight:600}
+
+  /* ---------- beacon dot + blink rhythms (canon) ---------- */
+  .beacon{width:11px;height:11px;border-radius:50%;flex:0 0 auto;position:relative}
+  .beacon::after{content:"";position:absolute;inset:-5px;border-radius:50%;
+    background:radial-gradient(circle,currentColor,transparent 68%);opacity:.5}
+  .b-ally{color:var(--ally);background:var(--ally);animation:steady 2.6s ease-in-out infinite}
+  .b-neutral{color:var(--neutral);background:var(--neutral);animation:blink 1.6s ease-in-out infinite}
+  .b-hostile{color:var(--hostile);background:var(--hostile);animation:strobe .62s steps(1,end) infinite}
+  .b-ion{color:var(--ion);background:var(--ion);animation:steady 3s ease-in-out infinite}
+  @keyframes strobe{0%,55%{opacity:1}56%,100%{opacity:.16}}
+  @keyframes blink{0%,100%{opacity:.28}50%{opacity:1}}
+  @keyframes steady{0%,100%{opacity:.7}50%{opacity:1}}
+
+  /* ---------- tree nodes ---------- */
+  details{border-radius:4px}
+  details summary{list-style:none;cursor:pointer}
+  details summary::-webkit-details-marker{display:none}
+  .caret{width:12px;height:12px;flex:0 0 auto;position:relative;transition:transform .18s ease}
+  .caret::before{content:"";position:absolute;left:2px;top:0;
+    border-left:5px solid var(--dim);border-top:4px solid transparent;border-bottom:4px solid transparent}
+  details[open] > summary .caret{transform:rotate(90deg)}
+
+  /* allegiance level */
+  .alleg{margin-bottom:18px;border:1px solid var(--line);background:var(--panel);
+    border-left:3px solid var(--edge,var(--line2))}
+  .alleg.user{--edge:var(--ally)}
+  .alleg.npc{--edge:var(--hostile)}
+  .alleg > summary{display:flex;align-items:center;gap:14px;padding:16px 18px}
+  .alleg > summary:hover{background:var(--panel2)}
+  .alleg .a-title{font-family:var(--mono);font-weight:700;letter-spacing:.14em;
+    font-size:15px;text-transform:uppercase}
+  .alleg.user .a-title{color:var(--ally)}
+  .alleg.npc .a-title{color:var(--hostile)}
+  .a-note{font-family:var(--sans);font-size:12px;color:var(--dim);letter-spacing:0;
+    text-transform:none;font-weight:400}
+  .a-count{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--dimmer);
+    letter-spacing:.1em}
+  .kids{padding:4px 14px 14px}
+
+  /* class level */
+  .cls{margin:8px 0;border:1px solid var(--line);background:var(--panel2);border-radius:4px}
+  .cls > summary{display:flex;align-items:center;gap:12px;padding:12px 14px}
+  .cls > summary:hover{background:var(--raised)}
+  .hullcode{font-family:var(--mono);font-weight:700;font-size:11px;letter-spacing:.08em;
+    color:var(--ink);background:var(--void);border:1px solid var(--line2);border-radius:2px;
+    padding:4px 7px;min-width:42px;text-align:center}
+  .cls-name{font-family:var(--mono);font-weight:600;letter-spacing:.12em;font-size:13px;
+    text-transform:uppercase;color:var(--ink)}
+  .cls-desc{font-size:12px;color:var(--dim)}
+  .cls-count{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--dimmer)}
+
+  /* empty (future) class slots on the user side */
+  .cls-empty{display:flex;align-items:center;gap:12px;padding:12px 14px;margin:8px 0;
+    border:1px dashed var(--line);border-radius:4px;opacity:.5}
+  .cls-empty .hullcode{color:var(--dimmer);border-color:var(--line)}
+  .cls-empty .cls-name{color:var(--dimmer)}
+  .future{margin-left:auto;font-family:var(--mono);font-size:10px;letter-spacing:.16em;
+    color:var(--dimmer);border:1px solid var(--line);border-radius:2px;padding:3px 7px}
+
+  .ships{padding:4px 12px 12px;display:grid;gap:12px}
+
+  /* ---------- ship card ---------- */
+  .ship{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:4px;
+    overflow:hidden}
+  .ship .stripe{width:4px;flex:0 0 auto;background:var(--fac,var(--line2))}
+  .ship.f-ally{--fac:var(--ally)}
+  .ship.f-neutral{--fac:var(--neutral)}
+  .ship.f-hostile{--fac:var(--hostile)}
+  .ship.f-ion{--fac:var(--ion)}
+  .ship.f-player{--fac:var(--orange)}
+  .ship-body{padding:14px 16px;flex:1 1 auto;min-width:0}
+  .ship-head{display:flex;align-items:center;gap:11px;flex-wrap:wrap}
+  .ship-head h4{margin:0;font-family:var(--mono);font-weight:700;letter-spacing:.06em;
+    font-size:15px;color:var(--ink)}
+  .tag{font-family:var(--mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;
+    padding:3px 7px;border-radius:2px;border:1px solid var(--fac);color:var(--fac);
+    background:color-mix(in srgb,var(--fac) 12%,transparent)}
+  .model{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--dimmer);
+    letter-spacing:.04em}
+  .blurb{margin:9px 0 0;font-size:13px;color:var(--dim);line-height:1.5;max-width:64ch}
+
+  /* stat grid (NPC ships) */
+  .stats{display:flex;flex-wrap:wrap;gap:6px 10px;margin:12px 0 0;padding:0;
+    font-family:var(--mono)}
+  .stat{display:flex;flex-direction:column;gap:2px;border:1px solid var(--line);
+    border-radius:2px;padding:6px 10px;background:var(--void);min-width:74px}
+  .stat dt{font-size:9.5px;letter-spacing:.12em;color:var(--dimmer);text-transform:uppercase}
+  .stat dd{margin:0;font-size:14px;color:var(--ink);font-variant-numeric:tabular-nums}
+  .stat dd small{font-size:10px;color:var(--dim);font-weight:400}
+  .stat.pay dd{color:var(--neutral)}
+  .stat.dmg dd{color:var(--hostile)}
+
+  /* pip meters (player ships — mirrors the hangar start screen) */
+  .pipwrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:8px 18px;margin:12px 0 0}
+  .pip{display:flex;align-items:center;gap:10px}
+  .pip .plabel{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--dim);
+    text-transform:uppercase;width:58px}
+  .bars{display:flex;gap:3px}
+  .bars i{width:16px;height:8px;border-radius:1px;background:var(--void);
+    border:1px solid var(--line2)}
+  .bars i.on{background:var(--orange);border-color:var(--orange);
+    box-shadow:0 0 6px rgba(255,143,66,.5)}
+  .flight{margin:12px 0 0;font-family:var(--mono);font-size:11px;color:var(--dim);
+    letter-spacing:.03em;line-height:1.7}
+  .flight b{color:var(--ink);font-weight:600}
+  .flight .sep{color:var(--dimmer);margin:0 6px}
+
+  .note{margin:11px 0 0;font-size:12px;color:var(--dim);line-height:1.5;
+    border-top:1px solid var(--line);padding-top:9px}
+  .note b{color:var(--ink);font-weight:600}
+  .aka{margin:9px 0 0;font-family:var(--mono);font-size:11px;color:var(--neutral);
+    letter-spacing:.04em}
+  .aka span{color:var(--dimmer)}
+
+  /* reveal animation on open */
+  details[open] > .kids,
+  details[open] > .ships{animation:reveal .2s ease}
+  @keyframes reveal{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+
+  footer{margin:34px 0 6px;font-family:var(--mono);font-size:11px;color:var(--dimmer);
+    letter-spacing:.06em;text-align:center;line-height:1.7}
+  footer b{color:var(--dim)}
+
+  @media (prefers-reduced-motion:reduce){
+    .beacon,.beacon *{animation:none!important;opacity:.9!important}
+    details[open] > .kids,details[open] > .ships{animation:none}
+    .caret{transition:none}
+  }
+</style>
+
+<div class="wrap">
+<div class="shell">
+
+  <!-- ===================== HEADER ===================== -->
+  <header class="topbar">
+    <div>
+      <h1 class="wordmark">SPACE<b>SUCK</b></h1>
+      <div class="sub">FLEET REGISTRY &nbsp;·&nbsp; ALLEGIANCE <span class="arrow">▸</span> CLASS <span class="arrow">▸</span> HULL</div>
+      <div class="chips">
+        <span class="chip"><b>4</b> classes</span>
+        <span class="chip"><b>7</b> GLB models</span>
+        <span class="chip"><b>2</b> allegiances</span>
+        <span class="chip">v57</span>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <div class="controls">
+      <button class="btn" id="expandAll" type="button">Expand all</button>
+      <button class="btn" id="collapseAll" type="button">Collapse all</button>
+    </div>
+  </header>
+
+  <!-- ===================== BEACON KEY ===================== -->
+  <div class="legend">
+    <span class="lbl">Beacon key</span>
+    <span class="key"><span class="beacon b-ally"></span><b>Player / Ally</b> steady teal</span>
+    <span class="key"><span class="beacon b-neutral"></span><b>Neutral</b> amber slow-blink</span>
+    <span class="key"><span class="beacon b-hostile"></span><b>Hostile</b> fast red strobe</span>
+    <span class="key"><span class="beacon b-ion"></span><b>Escort</b> ion-blue</span>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- ===================== USER CLASS =========================== -->
+  <!-- ============================================================ -->
+  <details class="alleg user" open>
+    <summary>
+      <span class="caret"></span>
+      <span class="a-title">USER CLASS</span>
+      <span class="a-note">the hulls you fly — picked in the hangar</span>
+      <span class="a-count">1 / 4 classes crewed</span>
+    </summary>
+    <div class="kids">
+
+      <!-- FIGHTER (the only class the player flies) -->
+      <details class="cls" open>
+        <summary>
+          <span class="caret"></span>
+          <span class="hullcode">FTR</span>
+          <span class="cls-name">Fighter</span>
+          <span class="cls-desc">small, fast, twin nose cannons</span>
+          <span class="cls-count">2 hulls</span>
+        </summary>
+        <div class="ships">
+
+          <article class="ship f-player">
+            <div class="stripe"></div>
+            <div class="ship-body">
+              <div class="ship-head">
+                <span class="beacon b-ally"></span>
+                <h4>USS THUMM</h4>
+                <span class="tag">FACTORY FIGHTER</span>
+                <span class="model">ship/ussthumm.glb</span>
+              </div>
+              <p class="blurb">Quick on the stick — the stock hull. Teal &amp; orange with aqua engines. The baseline every upgrade stacks on.</p>
+              <div class="pipwrap">
+                <div class="pip"><span class="plabel">Agility</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span></div>
+                <div class="pip"><span class="plabel">Thrust</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span></div>
+                <div class="pip"><span class="plabel">Hull</span><span class="bars"><i class="on"></i><i class="on"></i><i></i><i></i></span></div>
+                <div class="pip"><span class="plabel">Beam</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span></div>
+              </div>
+              <p class="flight">accel <b>220</b><span class="sep">·</span>boost <b>×2.5</b><span class="sep">·</span>turn <b>1.6</b><span class="sep">·</span>grip <b>2.5</b><span class="sep">·</span>hull <b>×1.0</b><span class="sep">·</span>beam <b>×1.0</b><span class="sep">·</span>spill <b>×1.0</b></p>
+            </div>
+          </article>
+
+          <article class="ship f-player">
+            <div class="stripe"></div>
+            <div class="ship-body">
+              <div class="ship-head">
+                <span class="beacon b-ally"></span>
+                <h4>USS BOO</h4>
+                <span class="tag">QUAD-ENGINE HEAVY</span>
+                <span class="model">ship/ussboo.glb</span>
+              </div>
+              <p class="blurb">Takes a hit, turns like a truck. Aluminum hull, pink livery (the daughter's favorite). Still out-turns a raider — barely.</p>
+              <div class="pipwrap">
+                <div class="pip"><span class="plabel">Agility</span><span class="bars"><i class="on"></i><i class="on"></i><i></i><i></i></span></div>
+                <div class="pip"><span class="plabel">Thrust</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span></div>
+                <div class="pip"><span class="plabel">Hull</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span></div>
+                <div class="pip"><span class="plabel">Beam</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span></div>
+              </div>
+              <p class="flight">accel <b>260</b><span class="sep">·</span>boost <b>×2.2</b><span class="sep">·</span>turn <b>1.25</b><span class="sep">·</span>grip <b>2.0</b><span class="sep">·</span>hull <b>×1.5</b><span class="sep">·</span>beam <b>×1.15</b><span class="sep">·</span>spill <b>×0.8</b></p>
+            </div>
+          </article>
+
+        </div>
+      </details>
+
+      <!-- the three classes the player has no hull for (yet) -->
+      <div class="cls-empty">
+        <span class="hullcode">COL</span><span class="cls-name">Collector</span>
+        <span class="cls-desc">— no flyable hull</span><span class="future">FUTURE?</span>
+      </div>
+      <div class="cls-empty">
+        <span class="hullcode">GUN</span><span class="cls-name">Gunship</span>
+        <span class="cls-desc">— no flyable hull</span><span class="future">FUTURE?</span>
+      </div>
+      <div class="cls-empty">
+        <span class="hullcode">HLR</span><span class="cls-name">Hauler</span>
+        <span class="cls-desc">— no flyable hull</span><span class="future">FUTURE?</span>
+      </div>
+
+    </div>
+  </details>
+
+  <!-- ============================================================ -->
+  <!-- ===================== ENEMY / NPC CLASS ==================== -->
+  <!-- ============================================================ -->
+  <details class="alleg npc" open>
+    <summary>
+      <span class="caret"></span>
+      <span class="a-title">ENEMY / NPC CLASS</span>
+      <span class="a-note">the field — not all hostile; neutrals mind their own business</span>
+      <span class="a-count">4 / 4 classes active</span>
+    </summary>
+    <div class="kids">
+
+      <!-- FIGHTER: the Raider -->
+      <details class="cls" open>
+        <summary>
+          <span class="caret"></span>
+          <span class="hullcode">FTR</span>
+          <span class="cls-name">Fighter</span>
+          <span class="cls-desc">the raider — one hull, three factions</span>
+          <span class="cls-count">1 hull</span>
+        </summary>
+        <div class="ships">
+
+          <article class="ship f-hostile">
+            <div class="stripe"></div>
+            <div class="ship-body">
+              <div class="ship-head">
+                <span class="beacon b-hostile"></span>
+                <h4>RAIDER</h4>
+                <span class="tag">PIRATE FIGHTER</span>
+                <span class="model">enemies/raider.glb</span>
+              </div>
+              <p class="blurb">Flat-black forward-swept dagger, blood-red trim — built as your ship's opposite so you read friend from foe by silhouette. Nose-first attack passes: HUNT ▸ ATTACK ▸ BREAK. You out-turn and out-run it — running always works, it just pays nothing.</p>
+              <dl class="stats">
+                <div class="stat"><dt>Hull</dt><dd>3 <small>hits</small></dd></div>
+                <div class="stat"><dt>Top speed</dt><dd>280</dd></div>
+                <div class="stat"><dt>Turn</dt><dd>1.1 <small>fight</small></dd></div>
+                <div class="stat dmg"><dt>Bolt dmg</dt><dd>7</dd></div>
+                <div class="stat pay"><dt>Payout</dt><dd>40 <small>8×5</small></dd></div>
+              </dl>
+              <div class="aka">NEUTRAL CALLSIGNS <span>—</span> RUST VULTURE · SCRAPJACK · THE MAGPIE · KESSLER'S GHOST</div>
+              <p class="note"><b>50/50 faction roll on spawn.</b> <b style="color:var(--hostile)">Hostile</b> (fast red strobe) hunts you. <b style="color:var(--neutral)">Neutral</b> (amber blink) loiters and holds fire — fly close with guns cold and it hails you by name; pay <b>150</b> to hire it as an <b style="color:var(--ally)">Ally</b> wingman (2 max, formation only — doesn't fight yet). Shoot a neutral and it turns full bandit.</p>
+            </div>
+          </article>
+
+        </div>
+      </details>
+
+      <!-- COLLECTOR: SS PACKRAT -->
+      <details class="cls" open>
+        <summary>
+          <span class="caret"></span>
+          <span class="hullcode">COL</span>
+          <span class="cls-name">Collector</span>
+          <span class="cls-desc">its own class — works the junk field</span>
+          <span class="cls-count">1 hull</span>
+        </summary>
+        <div class="ships">
+
+          <article class="ship f-neutral">
+            <div class="stripe"></div>
+            <div class="ship-body">
+              <div class="ship-head">
+                <span class="beacon b-neutral"></span>
+                <h4>SS PACKRAT</h4>
+                <span class="tag">SALVAGE COLLECTOR</span>
+                <span class="model">npc/collector.glb</span>
+              </div>
+              <p class="blurb">Mid-size (≈2× a fighter) neutral scavenger that actively salvages the junk field — amber blink, ion-blue exhaust, honest traffic. Never shoots; raiding it is a career choice, same as any neutral.</p>
+              <dl class="stats">
+                <div class="stat"><dt>Hull</dt><dd>6 <small>hits</small></dd></div>
+                <div class="stat"><dt>Length</dt><dd>22 <small>u</small></dd></div>
+                <div class="stat"><dt>Role</dt><dd><small>SALVAGE</small></dd></div>
+                <div class="stat pay"><dt>Payout</dt><dd>~98 <small>14×7</small></dd></div>
+              </dl>
+            </div>
+          </article>
+
+        </div>
+      </details>
+
+      <!-- GUNSHIP: SS TIMECLOCK class -->
+      <details class="cls" open>
+        <summary>
+          <span class="caret"></span>
+          <span class="hullcode">GUN</span>
+          <span class="cls-name">Gunship</span>
+          <span class="cls-desc">capital warships — one hull, foe + escorts</span>
+          <span class="cls-count">4 names</span>
+        </summary>
+        <div class="ships">
+
+          <article class="ship f-hostile">
+            <div class="stripe"></div>
+            <div class="ship-body">
+              <div class="ship-head">
+                <span class="beacon b-hostile"></span>
+                <h4>SS TIMECLOCK</h4>
+                <span class="tag">FOE · MINI-BOSS</span>
+                <span class="model">enemies/gunship.glb</span>
+              </div>
+              <p class="blurb">Rare roaming capital mini-boss — the pirate's three-state brain in a heavy body. Paired spinal cannons open up early at 900u and hit like a truck. Turns like a cathedral, and <b>cannot be rammed to death</b> (freight's wall rules). Top payout in the game.</p>
+              <dl class="stats">
+                <div class="stat"><dt>Hull</dt><dd>16 <small>hits</small></dd></div>
+                <div class="stat"><dt>Top speed</dt><dd>200</dd></div>
+                <div class="stat"><dt>Turn</dt><dd>0.45 <small>fight</small></dd></div>
+                <div class="stat dmg"><dt>Bolt dmg</dt><dd>14</dd></div>
+                <div class="stat pay"><dt>Payout</dt><dd>198 <small>22×9</small></dd></div>
+              </dl>
+            </div>
+          </article>
+
+          <article class="ship f-ion">
+            <div class="stripe"></div>
+            <div class="ship-body">
+              <div class="ship-head">
+                <span class="beacon b-ion"></span>
+                <h4>SS LOSS PREVENTION</h4>
+                <span class="tag">ESCORT</span>
+                <span class="model">enemies/gunship.glb</span>
+              </div>
+              <p class="blurb">The same capital hull, retinted ion-blue at load. Flies GUARD on SS DOUBLE OVERTIME. Holds fire until provoked — but its glows flip <b style="color:var(--hostile)">red</b> and it turns hostile the instant the ward (or the escort itself) takes a hit.</p>
+              <dl class="stats">
+                <div class="stat"><dt>Hull</dt><dd>16 <small>hits</small></dd></div>
+                <div class="stat"><dt>Top speed</dt><dd>200</dd></div>
+                <div class="stat dmg"><dt>Bolt dmg</dt><dd>14</dd></div>
+                <div class="stat pay"><dt>Payout</dt><dd>144 <small>16×9</small></dd></div>
+              </dl>
+              <div class="aka">SISTER ESCORTS <span>—</span> SS SEVERANCE · SS HALL MONITOR</div>
+              <p class="note"><b>One GLB, four names.</b> Slot [0] is the hostile foe (SS TIMECLOCK); slots [1–3] load the same model again and retint to ion-blue as escorts. 75% of DOUBLE OVERTIME spawns hire security; convoy events add more.</p>
+            </div>
+          </article>
+
+        </div>
+      </details>
+
+      <!-- HAULER: freight -->
+      <details class="cls" open>
+        <summary>
+          <span class="caret"></span>
+          <span class="hullcode">HLR</span>
+          <span class="cls-name">Hauler</span>
+          <span class="cls-desc">freight — never shoots, durability is the fight</span>
+          <span class="cls-count">2 hulls</span>
+        </summary>
+        <div class="ships">
+
+          <article class="ship f-neutral">
+            <div class="stripe"></div>
+            <div class="ship-body">
+              <div class="ship-head">
+                <span class="beacon b-neutral"></span>
+                <h4>SS OVERTIME</h4>
+                <span class="tag">THE EVERYDAY TRUCK</span>
+                <span class="model">npc/hauler.glb</span>
+              </div>
+              <p class="blurb">Working freight on a delivery leg that happens to pass near you. Never shoots — shoot it down and the whole manifest blows out as scrap.</p>
+              <dl class="stats">
+                <div class="stat"><dt>Hull</dt><dd>4 <small>hits</small></dd></div>
+                <div class="stat pay"><dt>Payout</dt><dd>60 <small>10×6</small></dd></div>
+              </dl>
+            </div>
+          </article>
+
+          <article class="ship f-neutral">
+            <div class="stripe"></div>
+            <div class="ship-body">
+              <div class="ship-head">
+                <span class="beacon b-neutral"></span>
+                <h4>SS DOUBLE OVERTIME</h4>
+                <span class="tag">LOOT PIÑATA</span>
+                <span class="model">npc/hauler_max.glb</span>
+              </div>
+              <p class="blurb">The bigger, double-loot sister. Rare, richly loaded — and most shifts she hires a gunship escort, so the payout is priced by its protection: unguarded runs the cheap load, the guarded solo is the 160 baseline, convoy freight pays premium.</p>
+              <dl class="stats">
+                <div class="stat"><dt>Hull</dt><dd>9 <small>hits</small></dd></div>
+                <div class="stat pay"><dt>Payout</dt><dd>160 <small>base</small></dd></div>
+                <div class="stat"><dt>Escort odds</dt><dd>75<small>%</small></dd></div>
+              </dl>
+              <p class="note">Guarded by <b>SS LOSS PREVENTION</b> &amp; sisters. Convoy events (12%) spawn extra freight that pays a premium — 2–3 capital guns are the cover charge.</p>
+            </div>
+          </article>
+
+        </div>
+      </details>
+
+    </div>
+  </details>
+
+  <footer>
+    Generated from <b>space-flight.html</b> — factions, stats &amp; payouts read straight from the code · SpaceSuck <b>v57</b><br>
+    beacon colors are canon: teal 0x30e0c8 · amber 0xffb020 · red 0xff3020 · ion 0x55aaff
+  </footer>
+
+</div>
+</div>
+
+<script>
+  // Expand / collapse every disclosure node in the tree.
+  const all = () => document.querySelectorAll('details');
+  document.getElementById('expandAll').addEventListener('click',
+    () => all().forEach(d => d.open = true));
+  document.getElementById('collapseAll').addEventListener('click',
+    () => all().forEach(d => d.open = false));
+</script>
+</body>
+</html>
