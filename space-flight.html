@@ -3062,6 +3062,22 @@ const HAULER_CULL = 5200;          // fell off your radar → made its delivery
 const HAULER_FLEE_T = 14;          // seconds of panic per provocation
 const HAULER_RAM_HURT = 9;         // hull per 100 u/s closing — heavier than a fighter's 6
 
+/* ---- PACKRAT active salvage (v57): the collector actually collects.
+   It scans for junk near ITSELF (not the player), trucks over, and vacuums
+   the piece down — a visible suction beam, the piece shrinking into the
+   intake. Eating is the SILENT removal: no junkKills, no scrap, no boom —
+   the collector keeps what it eats, and the normal respawn cycle restocks
+   the field a few seconds later. ---- */
+const SALV_RANGE = 1600;       // scan radius around the PACKRAT
+const SALV_SCAN_T = 0.75;      // seconds between lookouts — no per-frame 44-slot scans
+const SALV_MAX_R = 30;         // won't try to swallow a boulder bigger than itself
+const SALV_EAT_R = 60;         // gap beyond the piece's radius that counts as "in the throat"
+const SALV_EAT_T = 2.75;       // seconds to consume a piece
+const SALV_HOLD_SPD = 12;      // creep speed while feeding
+const SALV_JUMP = 100;         // target moved this far in one tick → it teleported, drop it
+const SALV_BEAM_N = 5;         // suction blobs marching junk → intake
+const SALV_BEAM_COLOR = 0x7dd8ff;  // pale tractor blue — utility, not weapon
+
 const HAULER_DEFS = [
   //                                             hp: no guns, so durability IS the fight
   { file: "npc/hauler.glb",         name: "SS OVERTIME",        hp: 4, bits: 10, val: 6,   // 60 — the everyday truck
@@ -3069,7 +3085,8 @@ const HAULER_DEFS = [
   { file: "npc/hauler_max.glb",     name: "SS DOUBLE OVERTIME", hp: 9, bits: 20, val: 8,   // 160 — the loot piñata,
     first: 300, firstRnd: 120, rMin: 420, rMax: 720 },                             // priced by its rarity
   { file: "npc/collector.glb",      name: "SS PACKRAT",         hp: 6, bits: 14, val: 7,   // ~100 — the salvage collector,
-    first: 150, firstRnd: 90,  rMin: 200, rMax: 420, len: 22, thruster: "ThrusterL" },     // mid-size (2x a fighter), its own class
+    first: 150, firstRnd: 90,  rMin: 200, rMax: 420, len: 22, thruster: "ThrusterL",       // mid-size (2x a fighter), its own class
+    role: "salvage" },                                                                     // and it WORKS the field (v57)
 ];
 
 const haulTmpA = new THREE.Vector3(), haulTmpB = new THREE.Vector3(), haulTmpC = new THREE.Vector3();
@@ -3103,9 +3120,28 @@ for (const def of HAULER_DEFS) {
     vel: new THREE.Vector3(), wanderPt: new THREE.Vector3(),
     hp: def.hp, flash: 0, alive: false,
     respawnIn: def.first + Math.random() * def.firstRnd,
-    state: "CRUISE", fleeT: 0, legT: 0,   // "CRUISE" | "FLEE" — that's the whole brain
+    state: "CRUISE", fleeT: 0, legT: 0,   // "CRUISE" | "FLEE" (+ "SALVAGE" for the PACKRAT, v57)
     phase: Math.random() * 6.28,
+    // v57 salvage fields — only the PACKRAT ever touches them
+    target: null, targetPos: new THREE.Vector3(), scanT: 0, eatT: 0, eatScale0: 1, beam: null,
   });
+  // the PACKRAT's suction beam: soft blobs marching junk → intake. WORLD-space
+  // sprites (scene, not the group) so the line stays straight while she banks;
+  // hidden until a meal starts, and salvageDrop hides them on every exit path
+  if (def.role === "salvage") {
+    const h = haulers[haulers.length - 1];
+    h.beam = [];
+    for (let i = 0; i < SALV_BEAM_N; i++) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: boltGlowTex, color: SALV_BEAM_COLOR, transparent: true, opacity: 0,
+        depthWrite: false, blending: THREE.AdditiveBlending,
+      }));
+      s.scale.setScalar(3);
+      s.visible = false;
+      scene.add(s);
+      h.beam.push(s);
+    }
+  }
 }
 
 // one file per slot, loaded straight in — no cloning, no primitives fallback:
@@ -3157,6 +3193,99 @@ function haulerPickLeg(h) {
   h.legT = 45 + Math.random() * 30;
 }
 
+/* ---- the PACKRAT working (v57). Junk slots can teleport ANY frame — the
+   fragment borrow yanks alive slots, the cull recycles them ahead of the
+   player, a breach respawns all 44 — so the target is re-validated every
+   frame and every exit path funnels through salvageDrop, which also puts a
+   half-eaten piece back the way it was. ---- */
+function salvageDrop(h) {
+  const t = h.target;
+  if (t && h.eatT > 0) {             // mid-bite → regurgitate: full size, honest radius
+    t.group.scale.setScalar(h.eatScale0);
+    t.radius = t.baseR * h.eatScale0;
+  }
+  if (h.beam) for (const s of h.beam) s.visible = false;
+  h.target = null; h.eatT = 0;
+  if (h.state === "SALVAGE") { h.state = "CRUISE"; haulerPickLeg(h); }
+}
+
+function updateSalvage(h, dt) {
+  if (h.state === "CRUISE") {
+    // normal trucking, plus a slow lookout for the next meal
+    if (h.legT <= 0 || h.group.position.distanceToSquared(h.wanderPt) < 400 * 400) haulerPickLeg(h);
+    h.scanT -= dt;
+    if (h.scanT > 0) return;
+    h.scanT = SALV_SCAN_T;
+    let best = null, bestD2 = SALV_RANGE * SALV_RANGE;
+    for (const j of junk) {
+      if (!j.alive || j.radius > SALV_MAX_R) continue;
+      const d2 = j.group.position.distanceToSquared(h.group.position);
+      if (d2 < bestD2) { best = j; bestD2 = d2; }
+    }
+    if (best) {
+      h.target = best;
+      h.targetPos.copy(best.group.position);
+      h.state = "SALVAGE";
+      h.eatT = 0;
+    }
+    return;
+  }
+
+  // SALVAGE — validate first, every frame: dead, teleported, or drifted out
+  // of reach → drop the fork, back to trucking
+  const t = h.target;
+  if (!t || !t.alive
+      || t.group.position.distanceToSquared(h.targetPos) > SALV_JUMP * SALV_JUMP
+      || t.group.position.distanceToSquared(h.group.position) > SALV_RANGE * 1.4 * SALV_RANGE * 1.4) {
+    salvageDrop(h);
+    return;
+  }
+  h.targetPos.copy(t.group.position);
+  h.wanderPt.copy(t.group.position);   // the shared truck steering below flies us there
+
+  const gap = h.hitR + t.radius + SALV_EAT_R;
+  if (t.group.position.distanceToSquared(h.group.position) > gap * gap) {
+    if (h.eatT > 0) {   // the piece slipped back out of the throat — regurgitate, keep chasing
+      t.group.scale.setScalar(h.eatScale0);
+      t.radius = t.baseR * h.eatScale0;
+      h.eatT = 0;
+      for (const s of h.beam) s.visible = false;
+    }
+    return;
+  }
+
+  // feeding — shrink DIRECTLY, never via junkSetScale (it resets hp, which
+  // would make a piece being eaten unkillable by the player mid-meal)
+  if (h.eatT === 0) h.eatScale0 = t.group.scale.x;
+  h.eatT += dt;
+  const k = Math.min(1, h.eatT / SALV_EAT_T);
+  t.group.scale.setScalar(Math.max(0.05, h.eatScale0 * (1 - k)));
+  t.radius = t.baseR * t.group.scale.x;
+  t.vel.lerp(h.vel, 1 - Math.exp(-2 * dt));   // tractor grip: the piece rides along, drift can't break the meal
+
+  // the suction made visible: blobs march piece → intake, swallowed small
+  for (let i = 0; i < h.beam.length; i++) {
+    const s = h.beam[i];
+    const m = (clock.elapsedTime * 0.9 + i / h.beam.length) % 1;
+    s.position.lerpVectors(t.group.position, h.group.position, m);
+    s.scale.setScalar(1.2 + 3 * (1 - m));
+    s.material.opacity = 0.15 + 0.75 * (1 - m);
+    s.visible = true;
+  }
+
+  if (h.eatT >= SALV_EAT_T) {
+    // down the hatch — the SILENT removal: the slot respawns on the normal
+    // junkDestroy cadence, minus the bang. No junkKills, no scrap, no pay.
+    t.alive = false;
+    t.group.visible = false;
+    t.respawnIn = 2 + Math.random() * 5;
+    t.group.scale.setScalar(h.eatScale0); t.radius = t.baseR * h.eatScale0;  // hygiene; respawn re-derives anyway
+    burstSparks(t.group.position, t.vel, 6);    // a swallow, not a kill
+    junkTinkSound(shipObj.position.distanceTo(t.group.position));
+    salvageDrop(h);
+  }
+}
+
 function haulerSpawn(h) {
   if (landedOn) { h.respawnIn = 10; return; }   // nobody materializes over a parked ship
   let placed = false;
@@ -3184,12 +3313,14 @@ function haulerSpawn(h) {
 
 // quiet exit — culls only. No bang, no pay, just a delivery completed elsewhere.
 function haulerDespawn(h) {
+  if (h.def.role === "salvage") salvageDrop(h);   // never leave the beam hanging in empty space
   h.alive = false;
   h.group.visible = false;
   h.respawnIn = h.def.rMin + Math.random() * (h.def.rMax - h.def.rMin);
 }
 
 function haulerFlee(h) {
+  if (h.def.role === "salvage") salvageDrop(h);   // a shot interrupts the meal
   h.state = "FLEE";
   h.fleeT = HAULER_FLEE_T;
 }
@@ -3259,11 +3390,14 @@ function updateHaulers(dt) {
     if (dist > HAULER_CULL) { haulerDespawn(h); continue; }   // made its delivery, off the books
     haulTmpA.divideScalar(dist || 1);   // unit hauler→ship; FLEE reads it below
 
-    // the whole brain: fly the delivery line, or run from the shooter
+    // the whole brain: fly the delivery line, run from the shooter — or, if
+    // this is the PACKRAT, actually work the junk field (v57)
     h.legT -= dt;
     if (h.state === "FLEE") {
       h.fleeT -= dt;
       if (h.fleeT <= 0) { h.state = "CRUISE"; haulerPickLeg(h); }   // back to the schedule
+    } else if (h.def.role === "salvage") {
+      updateSalvage(h, dt);
     } else if (h.legT <= 0 || h.group.position.distanceToSquared(h.wanderPt) < 400 * 400) {
       haulerPickLeg(h);
     }
@@ -3285,7 +3419,9 @@ function updateHaulers(dt) {
       h.vel.lerp(haulTmpC, 1 - Math.exp(-HAULER_GRIP * dt));
     }
     h.vel.multiplyScalar(Math.pow(0.997, dt * 60));
-    const maxSpd = h.state === "FLEE" ? HAULER_FLEE_SPD : HAULER_SPD;
+    const maxSpd = h.state === "FLEE" ? HAULER_FLEE_SPD
+                 : h.state === "SALVAGE" && h.eatT > 0 ? SALV_HOLD_SPD   // creep while feeding
+                 : HAULER_SPD;
     if (h.vel.length() > maxSpd) h.vel.setLength(maxSpd);
     h.group.position.addScaledVector(h.vel, dt);
 
