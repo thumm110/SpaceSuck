@@ -3084,7 +3084,8 @@ const HAULER_DEFS = [
   { file: "npc/hauler.glb",         name: "SS OVERTIME",        hp: 4, bits: 10, val: 6,   // 60 — the everyday truck
     first: 70,  firstRnd: 40,  rMin: 110, rMax: 220 },
   { file: "npc/hauler_max.glb",     name: "SS DOUBLE OVERTIME", hp: 9, bits: 20, val: 8,   // 160 — the loot piñata,
-    first: 300, firstRnd: 120, rMin: 420, rMax: 720 },                             // priced by its rarity
+    first: 300, firstRnd: 120, rMin: 420, rMax: 720, escort: true },               // priced by its rarity — and
+                                                                                   // most shifts it hires security (v57, 10i)
   { file: "npc/collector.glb",      name: "SS PACKRAT",         hp: 6, bits: 14, val: 7,   // ~100 — the salvage collector,
     first: 150, firstRnd: 90,  rMin: 200, rMax: 420, len: 22, thruster: "ThrusterL",       // mid-size (2x a fighter), its own class
     role: "salvage" },                                                                     // and it WORKS the field (v57)
@@ -3310,11 +3311,16 @@ function haulerSpawn(h) {
   haulAimObj.position.copy(h.group.position);
   haulAimObj.lookAt(haulTmpB.copy(h.group.position).multiplyScalar(2).sub(h.wanderPt));
   h.group.quaternion.copy(haulAimObj.quaternion);
+  // v57: the loot piñata rolls for security — most shifts, LOSS PREVENTION
+  // rides along (10i). Rolled HERE so every respawn is a fresh read: is
+  // this one guarded? You have to get close enough to find out.
+  if (h.def.escort && Math.random() < ESCORT_ODDS) gunshipSpawnEscort(h);
 }
 
 // quiet exit — culls only. No bang, no pay, just a delivery completed elsewhere.
 function haulerDespawn(h) {
   if (h.def.role === "salvage") salvageDrop(h);   // never leave the beam hanging in empty space
+  gunshipWardGone(h);   // v57: security clocks out with the ward — unless it's mid-fight
   h.alive = false;
   h.group.visible = false;
   h.respawnIn = h.def.rMin + Math.random() * (h.def.rMax - h.def.rMin);
@@ -3341,6 +3347,9 @@ function haulerKill(h, dist) {
 }
 
 function haulerDamage(h, at, boltVel) {
+  // v57: provoke the ward's security BEFORE the hp decrement — on a killing
+  // bolt the escort must already be hostile when haulerKill despawns its ward
+  gunshipWardHit(h);
   const dist = shipObj.position.distanceTo(h.group.position);
   if (--h.hp > 0) {
     h.flash = 1;
@@ -3439,7 +3448,8 @@ function updateHaulers(dt) {
       shipObj.position.copy(h.group.position).addScaledVector(haulTmpB, rr + 1);  // shove clear — no sticky overlap
       const dmg = Math.min(RAM_DMG_CAP, (Math.max(0, relSpd - RAM_FREE_SPD) / 100) * HAULER_RAM_HURT);
       thump(Math.min(360, 140 + relSpd * 0.5));
-      haulerFlee(h);   // insured, not brave
+      haulerFlee(h);       // insured, not brave
+      gunshipWardHit(h);   // v57: but a ram is still a provocation — security disagrees
       if (dmg > 0) {
         spillCargo(dmg);   // knock loose cargo BEFORE shipDamage — same reason as the junk ram
         shipDamage(dmg);
@@ -3502,6 +3512,7 @@ const GUNSHIP_FIRST = 300, GUNSHIP_FIRST_RND = 240;   // first contact is a mid-
 const GUNSHIP_BITS = 22, GUNSHIP_VAL = 9;   // 198 — the new top of the economy (DOUBLE OVERTIME: 160)
 const ESCORT_BITS = 16, ESCORT_VAL = 9;     // 144 — rich, but it shoots back
 const ESCORT_GLOW = 0x55aaff;      // ion blue — the honest-traffic exhaust color: convoy security, not pirate
+const ESCORT_ODDS = 0.75;          // rolled at SS DOUBLE OVERTIME's spawn — most piñatas are guarded (Tanner's call)
 const GUNSHIP_RED = 0xff1a00;      // the provoked flip — matches the authored foe-tell emissives
 const GUNSHIP_TELL_MATS = ["EngineGlow", "MuzzleGlow", "BurnGlow", "BurnCoreGlow"];
 const ESCORT_SLOT_OFFSETS = [      // GUARD stations in the ward's frame: abeam L/R, high-trail
