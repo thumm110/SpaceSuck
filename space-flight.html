@@ -1763,6 +1763,16 @@ const SHIPS = [
     hullMul: 1.5, beamMul: 1.15, spillMul: 0.8,
     muzzles: ["GunTipC", "GunTipC"],   // one chin cannon — both bolts, small spread
     pips: { AGILITY: 2, THRUST: 4, HULL: 4, BEAM: 4 } },
+  { file: "ship/uss-char.glb", name: "USS CHAR", len: 11,
+    blurb: "OLIVE WARBIRD — ALL THROTTLE AND TEETH, SHORT ON REACH",
+    // fastest stick in the hangar (triple burners, double-wide center nozzle),
+    // still nimble — but turn 1.55 leaves THUMM the quickest turner, and the
+    // stubby tractor (beamMul 0.8) is the price: you salvage up close.
+    accel: 300, boost: 3.0, turn: 1.55, grip: 2.4,
+    hullMul: 1.2, beamMul: 0.8, spillMul: 1.0,
+    // twin chin gatlings — outer green muzzle tip of each barrel bundle
+    muzzles: ["ChinGunLMuz0", "ChinGunRMuz0"],
+    pips: { AGILITY: 4, THRUST: 5, HULL: 3, BEAM: 2 } },
 ];
 let shipSel = 0;   // which hangar row flies — picked on the start screen
 try { shipSel = Math.min(SHIPS.length - 1, Math.max(0, Math.floor(+localStorage.getItem("spacesuck.ship")) || 0)); } catch (e) {}
