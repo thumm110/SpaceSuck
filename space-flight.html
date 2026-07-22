@@ -537,7 +537,7 @@
     document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>');
   }
 </script>
-<!-- loads ussthumm.glb (the Blender fighter); if this file is missing the
+<!-- loads uss-thumm.glb (the Blender fighter); if this file is missing the
      game still flies with the built-in primitive placeholder -->
 <script src="lib/GLTFLoader.js"></script>
 <script type="module">
@@ -582,7 +582,7 @@
        spawn on Earth's doorstep.
 
    v12: right-click showcase orbit. v11: the ship is the Blender fighter
-   (ussthumm.glb) — named parts anchor the engine/retro glows, ShipRootAction
+   (uss-thumm.glb) — named parts anchor the engine/retro glows, ShipRootAction
    is the idle float. v10: atmospheric entry effects. Controls (v8):
    W thrust / S reverse / X full stop, A/D roll, arrows turn & pitch
    (flight-stick), mouse freelook, SHIFT boost, V view.
@@ -596,7 +596,7 @@ if (typeof THREE === "undefined") {
 
 /* ============ 1. CONFIG — YOUR SOLAR SYSTEM ============ */
 /* Asset cache-bust (v46): play.sh launches the page with ?v=<timestamp> to
-   dodge Chrome's cache — but the models fetched bare (ussthumm.glb, planets,
+   dodge Chrome's cache — but the models fetched bare (uss-thumm.glb, planets,
    height grids) were still heuristically cached for HOURS, so a rebuilt
    ship kept flying its old hull. Ride the page's own query onto every
    asset URL: fresh launch → fresh models; loaded without a query (Pages)
@@ -1473,7 +1473,7 @@ function buildBody(cfg) {
       /* Blender planet — built by build_earth.py. The GLB *is* the
          terrain: flat-shaded low-poly land, cloud banks, landing pad.
          Modeled at radius 100, scaled to cfg.radius here. Loads async
-         like ussthumm.glb; if the file can't load (file:// with no local
+         like uss-thumm.glb; if the file can't load (file:// with no local
          server, say) the procedural sphere fills in so the game never
          breaks — you just get the old beach ball instead of terrain. */
       const holder = new THREE.Group();
@@ -1750,13 +1750,13 @@ shipObj.add(shipMesh);
    A ship without Gear or ProngTip nodes simply skips those features —
    rig differences are character, not bugs. pips are the menu stat bars. */
 const SHIPS = [
-  { file: "ship/ussthumm.glb", name: "USS THUMM", len: 10,
+  { file: "ship/uss-thumm.glb", name: "USS THUMM", len: 10,
     blurb: "THE FACTORY FIGHTER — QUICK ON THE STICK",
     accel: 220, boost: 2.5, turn: 1.6, grip: 2.5,
     hullMul: 1.0, beamMul: 1.0, spillMul: 1.0,
     muzzles: ["ProngTipL", "ProngTipR"],
     pips: { AGILITY: 4, THRUST: 3, HULL: 2, BEAM: 3 } },
-  { file: "ship/ussboo.glb", name: "USS BOO", len: 11.5,
+  { file: "ship/uss-boo.glb", name: "USS BOO", len: 11.5,
     blurb: "QUAD-ENGINE HEAVY — TAKES A HIT, TURNS LIKE A TRUCK",
     // turn 1.25 stays above PIRATE_TURN (1.1): even the truck out-turns a raider
     accel: 260, boost: 2.2, turn: 1.25, grip: 2.0,
@@ -3011,7 +3011,7 @@ for (let i = 0; i < PIRATE_COUNT; i++) {
 }
 
 /* ---- the REAL raider: Tanner's Blender fighter (raider.glb) ----
-   Same async swap as the player's ussthumm.glb: the primitives fly until it
+   Same async swap as the player's uss-thumm.glb: the primitives fly until it
    arrives and stay as the fallback. One file, CLONED per slot — and the
    materials cloned per clone, because the hit-flash mutates emissive and
    shared mats would flash both pirates when you clip one (the junk rule
@@ -3080,8 +3080,8 @@ if (THREE.GLTFLoader) {
 
 /* ================= 10f: FREIGHT TRAFFIC (v50) =================
    Cargo haulers — the working stiffs of the junk field. Two Blender trucks
-   (SS OVERTIME, hauler.glb) and her max-cap sister (SS DOUBLE OVERTIME,
-   hauler_max.glb, double-stacked containers, rarer and richer) trundle
+   (SS OVERTIME, ss-overtime.glb) and her max-cap sister (SS DOUBLE OVERTIME,
+   ss-double-overtime.glb, double-stacked containers, rarer and richer) trundle
    delivery legs that happen to pass near you. They never shoot; shooting
    THEM is a career choice, same as provoking a neutral — except a freighter
    can't fight back, only run. The kill pays the biggest scrap burst in the
@@ -3134,12 +3134,12 @@ const PAY_CONVOY_BITS = 24;      // ×8 = 192 a truck — earned through the gun
 
 const HAULER_DEFS = [
   //                                             hp: no guns, so durability IS the fight
-  { file: "npc/hauler.glb",         name: "SS OVERTIME",        hp: 4, bits: 10, val: 6,   // 60 — the everyday truck
+  { file: "npc/ss-overtime.glb",         name: "SS OVERTIME",        hp: 4, bits: 10, val: 6,   // 60 — the everyday truck
     first: 70,  firstRnd: 40,  rMin: 110, rMax: 220 },
-  { file: "npc/hauler_max.glb",     name: "SS DOUBLE OVERTIME", hp: 9, bits: 20, val: 8,   // 160 — the loot piñata,
+  { file: "npc/ss-double-overtime.glb",     name: "SS DOUBLE OVERTIME", hp: 9, bits: 20, val: 8,   // 160 — the loot piñata,
     first: 300, firstRnd: 120, rMin: 420, rMax: 720, escort: true },               // priced by its rarity — and
                                                                                    // most shifts it hires security (v57, 10i)
-  { file: "npc/collector.glb",      name: "SS PACKRAT",         hp: 6, bits: 14, val: 7,   // ~100 — the salvage collector,
+  { file: "npc/ss-packrat.glb",      name: "SS PACKRAT",         hp: 6, bits: 14, val: 7,   // ~100 — the salvage collector,
     first: 150, firstRnd: 90,  rMin: 200, rMax: 420, len: 22, thruster: "ThrusterL",       // mid-size (2x a fighter), its own class
     role: "salvage" },                                                                     // and it WORKS the field (v57)
 ];
@@ -3607,7 +3607,7 @@ function updateHaulers(dt) {
 /* ================= end 10f: FREIGHT TRAFFIC ================= */
 
 /* ================= 10i: GUNSHIPS (v57) =================
-   Capital warships — the gothic SS TIMECLOCK class (enemies/gunship.glb).
+   Capital warships — the gothic SS TIMECLOCK class (enemies/ss-timeclock.glb).
    One hull, two jobs, four slots:
      [0]    THE FOE — a rare roaming mini-boss. The pirate's three-state
             brain in a heavy body: opens up at 900u with paired spinal
@@ -3656,11 +3656,24 @@ const ESCORT_SLOT_OFFSETS = [      // GUARD stations in the ward's frame: abeam 
   new THREE.Vector3(90, 35, 70), new THREE.Vector3(-90, 35, 70), new THREE.Vector3(0, 55, -110),
 ];
 
+// --- SS SHRINKAGE (v58): the HEAVIER second capital foe — a co-equal to
+//     TIMECLOCK, not a rare apex (the rarity tier is reserved for the bigger,
+//     badder ships coming later). Rides the exact gunship flight/combat
+//     envelope; differs only in these per-ship numbers. Own knobs so each new
+//     capital on the ladder tunes independently. ---
+const SHRINK_LEN = 36;             // bigger hull than TIMECLOCK's 30 (a wide dreadnought)
+const SHRINK_HIT_R = 18;           // scaled with the hull
+const SHRINK_HP = 24;              // a longer siege than TIMECLOCK's 16
+const SHRINK_BITS = 30, SHRINK_VAL = 10;                 // 300 — the top payout (TIMECLOCK: 198)
+const SHRINK_RESPAWN_MIN = 180, SHRINK_RESPAWN_MAX = 360; // SAME cadence as TIMECLOCK (spawns just as often)
+const SHRINK_FIRST = 300, SHRINK_FIRST_RND = 240;        // same first-contact window as TIMECLOCK
+
 // own scratch — NEVER pirTmp*/haulTmp*/junkTmp* (breach re-entrancy, see 10g's warning)
 const gunTmpA = new THREE.Vector3(), gunTmpB = new THREE.Vector3(), gunTmpC = new THREE.Vector3();
 const gunSeg = new THREE.Vector3(), gunToC = new THREE.Vector3(), gunNearPt = new THREE.Vector3();
 const gunAimObj = new THREE.Object3D();
 let gunshipFlash = 0;              // "CAPITAL SHIP CONTACT" toast timer (the jobFlash pattern)
+let gunshipFlashMsg = "⚠ CAPITAL SHIP CONTACT ⚠";   // per-spawn banner text (SHRINKAGE names itself)
 
 const GUNSHIP_NAMES = ["SS TIMECLOCK", "SS LOSS PREVENTION", "SS SEVERANCE", "SS HALL MONITOR"];
 const gunships = [];
@@ -3688,6 +3701,14 @@ for (let i = 0; i < 4; i++) {
     group: g, engineGlow, beacon, phase: Math.random() * 6.28,
     model: null, mixer: null, mats: [], tellMats: [],   // no model → no spawns (hauler rule)
     muzzles: null,
+    // per-ship spec — data-driven so a second capital rides the same brain (v58)
+    glb: "enemies/ss-timeclock.glb", len: GUNSHIP_LEN, hitR: GUNSHIP_HIT_R,
+    maxHp: GUNSHIP_HP, bits: role === "foe" ? GUNSHIP_BITS : ESCORT_BITS,
+    val: role === "foe" ? GUNSHIP_VAL : ESCORT_VAL,
+    respawnMin: GUNSHIP_RESPAWN_MIN, respawnMax: GUNSHIP_RESPAWN_MAX,
+    muzzleNames: ["GunTipL", "GunTipR"],
+    coreNames: ["ThrusterE0", "ThrusterE1", "ThrusterE2", "ThrusterE3"],
+    banner: "⚠ CAPITAL SHIP CONTACT ⚠",
     vel: new THREE.Vector3(), wanderPt: new THREE.Vector3(),
     jinkDir: new THREE.Vector3(), aimErr: new THREE.Vector3(),
     hp: GUNSHIP_HP, flash: 0, alive: false,
@@ -3699,9 +3720,55 @@ for (let i = 0; i < 4; i++) {
   });
 }
 
+/* SS SHRINKAGE (v58) — the SECOND capital foe: a rarer, heavier, all-red
+   dreadnought that rides the exact same brain as TIMECLOCK, differing only in
+   its per-ship spec (own glb, bigger hull, tankier, richest payout, its four
+   forward lance muzzles + six engine cores). Pushed as a lone extra FOE slot so
+   every gunships[] hook — update, radar, danger music, bolt test, breach
+   despawn, contact banner — includes it for FREE. No escort variant: it's a
+   pure red menace, never honest traffic, so it carries no tellMats/retint. */
+{
+  const g = new THREE.Group();
+  g.visible = false;
+  scene.add(g);
+  const engineGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: boltGlowTex, color: 0xff4030,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  engineGlow.scale.setScalar(8);
+  g.add(engineGlow);
+  const beacon = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: boltGlowTex, color: BEACON_HOSTILE,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  beacon.position.set(0, 6, -6);   // low command spine — this hull is flat, not a tower
+  beacon.scale.setScalar(13);
+  g.add(beacon);
+  gunships.push({
+    role: "foe", name: "SS SHRINKAGE", slotOff: ESCORT_SLOT_OFFSETS[0],  // slotOff unused by a foe
+    group: g, engineGlow, beacon, phase: Math.random() * 6.28,
+    model: null, mixer: null, mats: [], tellMats: [],
+    muzzles: null,
+    glb: "enemies/ss-shrinkage.glb", len: SHRINK_LEN, hitR: SHRINK_HIT_R,
+    maxHp: SHRINK_HP, bits: SHRINK_BITS, val: SHRINK_VAL,
+    respawnMin: SHRINK_RESPAWN_MIN, respawnMax: SHRINK_RESPAWN_MAX,
+    muzzleNames: ["GunTipLanceL0", "GunTipLanceL1", "GunTipLanceR0", "GunTipLanceR1"],
+    coreNames: ["ThrusterE0", "ThrusterE1", "ThrusterE2", "ThrusterE3", "ThrusterE4", "ThrusterE5"],
+    banner: "⚠ HEAVY CAPITAL — SS SHRINKAGE ⚠",
+    vel: new THREE.Vector3(), wanderPt: new THREE.Vector3(),
+    jinkDir: new THREE.Vector3(), aimErr: new THREE.Vector3(),
+    hp: SHRINK_HP, flash: 0, alive: false,
+    respawnIn: SHRINK_FIRST + Math.random() * SHRINK_FIRST_RND,
+    hostile: true,             // born angry, always red — never an escort
+    ward: null, convoyId: 0,
+    state: "HUNT", stateT: 0,
+    burstLeft: 0, fireT: 1.5, formCap: 0,
+  });
+}
+
 // one .load() per slot — independent materials per instance is the whole trick
 if (THREE.GLTFLoader) for (const g of gunships) {
-  new THREE.GLTFLoader().load("enemies/gunship.glb" + ASSET_V, gltf => {
+  new THREE.GLTFLoader().load(g.glb + ASSET_V, gltf => {
     const model = gltf.scene;
     // the raider's material pass: authored glows boosted, near-black gothic
     // hull gets the raider's brighter self-lit floor so it reads at range
@@ -3730,7 +3797,7 @@ if (THREE.GLTFLoader) for (const g of gunships) {
       });
     }
     const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
-    model.scale.setScalar(GUNSHIP_LEN / size.z);
+    model.scale.setScalar(g.len / size.z);
     // an NPC never lands — pin the gear legs to their stowed angle if the
     // hinges carry one (the doors export closed already)
     for (const nm of ["GearHingeNose", "GearHingeMainL", "GearHingeMainR"]) {
@@ -3739,12 +3806,12 @@ if (THREE.GLTFLoader) for (const g of gunships) {
     }
     g.group.add(model);
     g.model = model;
-    g.muzzles = [model.getObjectByName("GunTipL"), model.getObjectByName("GunTipR")].filter(Boolean);
+    g.muzzles = g.muzzleNames.map(nm => model.getObjectByName(nm)).filter(Boolean);
     if (!g.muzzles.length) g.muzzles = null;
-    // exhaust bloom at the center of the four engine cores (ThrusterE0..E3 —
-    // this hull has no ThrusterL/R): average their seats, nudge aft
+    // exhaust bloom at the center of the engine cores (coreNames per ship —
+    // these capitals have no ThrusterL/R): average their seats, nudge aft
     g.group.updateMatrixWorld(true);
-    const cores = ["ThrusterE0", "ThrusterE1", "ThrusterE2", "ThrusterE3"]
+    const cores = g.coreNames
       .map(nm => model.getObjectByName(nm)).filter(Boolean);
     if (cores.length) {
       gunTmpA.set(0, 0, 0);
@@ -3760,7 +3827,7 @@ if (THREE.GLTFLoader) for (const g of gunships) {
     }
     g.mats = junkCollectMats(g.group);   // LAST — after the retint, so the
                                          // hit-flash restores the FRIENDLY base color
-  }, undefined, err => console.warn("gunship.glb didn't load — no " + g.name, err));
+  }, undefined, err => console.warn(g.glb + " didn't load — no " + g.name, err));
 }
 
 function gunshipSpawnFoe(g) {
@@ -3775,7 +3842,7 @@ function gunshipSpawnFoe(g) {
   if (!placed) { g.respawnIn = 20; return; }
   g.alive = true;
   g.group.visible = true;
-  g.hp = GUNSHIP_HP;
+  g.hp = g.maxHp;
   g.flash = 0;
   for (const m of g.mats) m.emissive.copy(m.userData.baseEmissive);
   g.hostile = true; g.ward = null;
@@ -3785,7 +3852,7 @@ function gunshipSpawnFoe(g) {
   g.vel.copy(gunTmpA).multiplyScalar(40);   // capitals arrive at a stately closure
   g.beacon.material.color.setHex(BEACON_HOSTILE);
   pirateWarnSound();
-  gunshipFlash = 3;   // the HUD banner: fair warning that this one is DIFFERENT
+  gunshipFlash = 3; gunshipFlashMsg = g.banner;   // the HUD banner: fair warning that this one is DIFFERENT
 }
 
 // the escort reports for duty already ON STATION — no warn ping, no banner:
@@ -3795,7 +3862,7 @@ function gunshipSpawnEscort(h) {
   if (!g) return null;
   g.alive = true;
   g.group.visible = true;
-  g.hp = GUNSHIP_HP;
+  g.hp = g.maxHp;
   g.flash = 0;
   g.hostile = false;
   g.ward = h; g.convoyId = 0;
@@ -3819,7 +3886,7 @@ function gunshipSpawnEscort(h) {
 function gunshipDespawn(g) {
   g.alive = false;
   g.group.visible = false;
-  if (g.role === "foe") g.respawnIn = GUNSHIP_RESPAWN_MIN + Math.random() * (GUNSHIP_RESPAWN_MAX - GUNSHIP_RESPAWN_MIN);
+  if (g.role === "foe") g.respawnIn = g.respawnMin + Math.random() * (g.respawnMax - g.respawnMin);
   else { g.respawnIn = Infinity; g.ward = null; g.convoyId = 0; }   // escorts only live when 10f hires them
 }
 
@@ -3833,8 +3900,8 @@ function gunshipDestroy(g, dist) {
 }
 
 function gunshipKill(g, dist) {
-  const bits = g.role === "foe" ? GUNSHIP_BITS : ESCORT_BITS;
-  const val = g.role === "foe" ? GUNSHIP_VAL : ESCORT_VAL;
+  const bits = g.bits;
+  const val = g.val;
   const pos = gunTmpC.copy(g.group.position);   // capture BEFORE despawn hides the group
   gunshipDestroy(g, dist);
   killsEl.textContent = ++junkKills;
@@ -3858,7 +3925,7 @@ function gunshipProvoke(g) {
   }
   g.beacon.material.color.setHex(BEACON_HOSTILE);
   pirateWarnSound();
-  gunshipFlash = 3;
+  gunshipFlash = 3; gunshipFlashMsg = g.banner;
 }
 
 function gunshipDamage(g, at, boltVel) {
@@ -3886,7 +3953,7 @@ function gunshipTestBolt(p0, p1, boltVel) {
     gunToC.subVectors(g.group.position, p0);
     const t = segLen2 > 0 ? THREE.MathUtils.clamp(gunToC.dot(gunSeg) / segLen2, 0, 1) : 0;
     gunNearPt.copy(p0).addScaledVector(gunSeg, t);
-    if (gunNearPt.distanceToSquared(g.group.position) <= GUNSHIP_HIT_R * GUNSHIP_HIT_R) {
+    if (gunNearPt.distanceToSquared(g.group.position) <= g.hitR * g.hitR) {
       gunshipDamage(g, gunNearPt, boltVel);
       return true;
     }
@@ -4079,7 +4146,7 @@ function updateGunships(dt) {
     /* ---- ram: freight's wall, not the fighter's shatter — a mini-boss is
        never rammed to death. You bounce, you bleed, it rolls on. A ram on a
        sleeping escort is a provocation. Damage LAST (breach re-entrancy). ---- */
-    const rr = GUNSHIP_HIT_R + SHIP_HIT_R;
+    const rr = g.hitR + SHIP_HIT_R;
     if (!landedOn && shipObj.position.distanceToSquared(g.group.position) < rr * rr) {
       gunTmpB.subVectors(shipObj.position, g.group.position).normalize();
       gunTmpC.subVectors(ship.velocity, g.vel);
@@ -5443,7 +5510,7 @@ function drawNavHud(dt) {
     c.textAlign = "center"; c.globalAlpha = Math.min(1, gunshipFlash);
     c.fillStyle = "#ff5544"; c.shadowColor = "#ff5544"; c.shadowBlur = 8;
     c.font = "16px " + navFont;
-    c.fillText("⚠ CAPITAL SHIP CONTACT ⚠", W / 2, H * 0.34);
+    c.fillText(gunshipFlashMsg, W / 2, H * 0.34);
     c.restore();
   }
 }
@@ -6091,7 +6158,7 @@ function animate() {
   // landing gear: ease toward deployed while parked (landedOn set), stowed while
   // flying. Doors LEAD — they open over the first half of the throw, and the
   // legs only start dropping once the bays are ~open, so a leg never clips a
-  // closed hatch. Both pivots ride in from ussthumm.glb; no-op until the model loads.
+  // closed hatch. Both pivots ride in from uss-thumm.glb; no-op until the model loads.
   const gearTarget = landedOn ? 1 : 0;
   gearT += (gearTarget - gearT) * Math.min(1, dt * 3);   // ~1s full cycle
   // same snap as the idle float above: without it the legs micro-settle
