@@ -3069,8 +3069,13 @@ const HAULER_RAM_HURT = 9;         // hull per 100 u/s closing — heavier than 
    intake. Eating is the SILENT removal: no junkKills, no scrap, no boom —
    the collector keeps what it eats, and the normal respawn cycle restocks
    the field a few seconds later. ---- */
-const SALV_RANGE = 1600;       // scan radius around the PACKRAT
+const SALV_RANGE = 900;        // scan radius around the PACKRAT — snacks NEAR the route only.
+                               // Was 1600, which let it park at the spawn shell (radar's edge)
+                               // and eat forever: 30 min of playtest, zero sightings. Legs are
+                               // what carry traffic through the player's sky — protect them.
 const SALV_SCAN_T = 0.75;      // seconds between lookouts — no per-frame 44-slot scans
+const SALV_BREAK_T = 20;       // post-meal coffee break: truck the leg a while before the
+                               // next snack, so the collector keeps CROSSING your patch
 const SALV_MAX_R = 30;         // won't try to swallow a boulder bigger than itself
 const SALV_EAT_R = 60;         // gap beyond the piece's radius that counts as "in the throat"
 const SALV_EAT_T = 2.75;       // seconds to consume a piece
@@ -3311,6 +3316,7 @@ function updateSalvage(h, dt) {
     burstSparks(t.group.position, t.vel, 6);    // a swallow, not a kill
     junkTinkSound(shipObj.position.distanceTo(t.group.position));
     salvageDrop(h);
+    h.scanT = SALV_BREAK_T;   // meal's done — back on the road before the next one
   }
 }
 
