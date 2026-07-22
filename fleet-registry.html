@@ -723,10 +723,18 @@
       scene = new THREE.Scene();
       camera = new THREE.PerspectiveCamera(38, 1, 0.1, 8000);
       holder = new THREE.Group(); scene.add(holder);
-      scene.add(new THREE.HemisphereLight(0xbfe4ff, 0x0a0f18, 0.95));
-      const key = new THREE.DirectionalLight(0xffffff, 1.15); key.position.set(3, 5, 4); scene.add(key);
-      const fill = new THREE.DirectionalLight(0x88bbff, 0.5); fill.position.set(-4, 1, -2); scene.add(fill);
-      const rim = new THREE.DirectionalLight(0x50ffe0, 0.55); rim.position.set(0, -3, -5); scene.add(rim);
+      // match the game's OWN dim scene, or dark hulls read pale: the game lights
+      // ships with just a slate-blue ambient + a distant warm sun, letting each
+      // hull's self-lit floor (applyGameShading, below) carry its true colour.
+      // Bright studio lights washed low-value hulls (SAMSAM's charcoal) to grey,
+      // so these stay deliberately dim — only a soft warm key for showcase shape.
+      scene.add(new THREE.AmbientLight(0x1c2836, 0.8));           // the game's exact ambient
+      const key = new THREE.DirectionalLight(0xfff0d5, 0.55);     // soft warm sun key — shape, don't wash
+      key.position.set(4, 5, 3); scene.add(key);
+      const fill = new THREE.DirectionalLight(0x6f93c0, 0.22);    // a whisper of cool fill
+      fill.position.set(-4, 1, -3); scene.add(fill);
+      const rim = new THREE.DirectionalLight(0xffffff, 0.28);     // faint rim off the dark backdrop
+      rim.position.set(0, -2, -5); scene.add(rim);
       loader = new THREE.GLTFLoader();
       return true;
     }
@@ -745,6 +753,29 @@
         }
       });
       curModel = null;
+    }
+
+    // mirror the game's loadPlayerShip material pass so hulls read the same
+    // colour here as in flight: any *Glow material stays bright (engines, nav
+    // lights); everything else gets a faint self-lit floor of its own base
+    // colour — which replaces washed-out exported emissive and keeps true
+    // colours in the viewer's dim space.
+    function applyGameShading(root) {
+      root.traverse(function (o) {
+        if (!o.isMesh || !o.material) return;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach(function (m) {
+          if (!m || !m.emissive || !m.color) return;
+          if (m.name && m.name.endsWith('Glow')) {
+            if (m.emissive.getHex() === 0) m.emissive.copy(m.color);
+            m.emissiveIntensity = 1.5;
+          } else {
+            m.emissive.copy(m.color);
+            m.emissiveIntensity = 0.15;
+          }
+          m.needsUpdate = true;
+        });
+      });
     }
 
     function frameModel(obj) {
@@ -816,6 +847,7 @@
         if (seq !== loadSeq) return;              // a newer open() won the race
         hideMsg();
         curModel = gltf.scene;
+        applyGameShading(curModel);               // match the in-flight self-lit look
         holder.add(curModel);
         frameModel(curModel);
         viewer.dataset.state = 'loaded';
