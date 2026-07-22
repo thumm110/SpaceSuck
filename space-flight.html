@@ -130,6 +130,30 @@
   }
   #settings.ctrls #settingsCtrls { display: block; }
 
+  /* ---- FLEET REGISTRY (v58): the standalone ship database, framed in a
+     glass panel over the hangar (z 40 > settings 30 > start 20). The iframe
+     is its own dark page; only the bar is themed to match the HUD. ---- */
+  #fleet {
+    position: fixed; inset: 0; z-index: 40; display: none;
+    align-items: center; justify-content: center;
+    font-family: "Lucida Console", Monaco, monospace; color: #6ee7d8;
+    background: rgba(0,0,0,.62);
+  }
+  #fleetPanel {
+    display: flex; flex-direction: column; overflow: hidden;
+    width: min(1040px, 94vw); height: 90vh;
+    background: rgba(6,14,16,.96); border: 1px solid rgba(110,231,216,.35);
+    border-radius: 8px; box-shadow: 0 0 30px rgba(110,231,216,.12);
+  }
+  #fleetBar {
+    flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px 10px 16px; border-bottom: 1px solid rgba(110,231,216,.22);
+  }
+  #fleetTitle { font-size: 15px; letter-spacing: 6px;
+                text-shadow: 0 0 12px rgba(110,231,216,.6); }
+  #fleetBar .ss-btn { padding: 7px 18px; font-size: 12px; letter-spacing: 3px; }
+  #fleetFrame { flex: 1 1 auto; width: 100%; border: 0; background: #05090f; }
+
   #hud {
     position: fixed; inset: 0; pointer-events: none;
     font-family: "Lucida Console", Monaco, monospace;
@@ -377,6 +401,7 @@
         <button id="shipNext" type="button" class="ss-arrow">›</button>
       </div>
       <button id="btnStart" type="button" class="ss-btn">START</button>
+      <button id="btnFleet" type="button" class="ss-btn sub">FLEET</button>
       <button id="btnSettings" type="button" class="ss-btn sub">SETTINGS</button>
     </div>
     <div class="ss-hint">SALVAGE · UPGRADE · HAUL · SURVIVE</div>
@@ -394,6 +419,18 @@
     <button id="settingsCtrlsToggle" type="button">CONTROLS ▾</button>
     <div id="settingsCtrls"></div>
     <button id="btnResume" type="button" class="ss-btn sub">CLOSE</button>
+  </div>
+</div>
+<!-- v58: FLEET REGISTRY — the hangar's ship database. The standalone
+     fleet-registry.html shown in-window as an iframe over the front door
+     (no popup); lazy-loaded on first open. Sits above start + settings. -->
+<div id="fleet">
+  <div id="fleetPanel">
+    <div id="fleetBar">
+      <span id="fleetTitle">FLEET REGISTRY</span>
+      <button id="btnFleetClose" type="button" class="ss-btn sub">CLOSE ✕</button>
+    </div>
+    <iframe id="fleetFrame" title="SpaceSuck fleet registry" loading="lazy"></iframe>
   </div>
 </div>
 <div id="atmo"></div>
@@ -5513,6 +5550,30 @@ function togglePause() {
 }
 document.getElementById("btnSettings").addEventListener("click", openSettings);
 btnResumeEl.addEventListener("click", closeSettings);
+
+/* ---- FLEET REGISTRY (v58): the hangar's ship database ----
+   Opens the standalone fleet-registry.html in-window as an iframe over the
+   front door — no popup, stays in the app window. Lazy-loaded on first open
+   (ASSET_V keeps it cache-fresh after a rebuild); CLOSE or ESC returns to
+   the hangar. */
+const fleetEl = document.getElementById("fleet");
+const fleetFrameEl = document.getElementById("fleetFrame");
+function openFleet() {
+  if (!fleetFrameEl.getAttribute("src"))
+    fleetFrameEl.src = "fleet-registry.html" + ASSET_V;
+  fleetEl.style.display = "flex";
+}
+function closeFleet() { fleetEl.style.display = "none"; }
+document.getElementById("btnFleet").addEventListener("click", openFleet);
+document.getElementById("btnFleetClose").addEventListener("click", closeFleet);
+// ESC closes the registry first — capture-phase so it runs before the pause
+// toggle, and stopImmediate (both listeners live on window) so one ESC only
+// closes the panel, never also opens PAUSE.
+addEventListener("keydown", e => {
+  if (e.key === "Escape" && fleetEl.style.display === "flex") {
+    closeFleet(); e.stopImmediatePropagation();
+  }
+}, true);
 
 /* sliders: 0-100 on screen ↔ 0..1 in `settings`. Every notch applies live
    and persists; releasing EFFECTS answers with a chime at the new level,
