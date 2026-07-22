@@ -237,6 +237,33 @@
   .shopRow.broke:hover, .shopRow.maxed:hover { background: none; }
   /* gamepad cursor: the highlighted row the D-pad is sitting on */
   .shopRow.cursor { background: rgba(110,231,216,.18); outline: 1px solid rgba(110,231,216,.55); }
+  /* the dispatch board (v56) — Charleston's job faucet. Same dock gate as the
+     outfitter, parked to the LEFT so the two panels don't share the centreline. */
+  #dispatchboard {
+    position: absolute; top: 31%; left: 24px;
+    display: none; pointer-events: auto;
+    background: rgba(10, 6, 20, .8);
+    border: 1px solid rgba(192,125,255,.45);
+    padding: 8px 14px 10px; font-size: 12px; letter-spacing: 1px;
+    color: #d9c6f0; text-align: left; white-space: nowrap;
+  }
+  #dispatchboard .title { color: #c07dff; letter-spacing: 3px; font-size: 11px;
+                          text-align: center; margin-bottom: 7px; }
+  #dispatchboard .title b { color: #ffd34d; font-weight: normal; }
+  .jobRow { padding: 3px 4px; cursor: pointer; }
+  .jobRow:hover { background: rgba(192,125,255,.14); }
+  .jobRow.live { cursor: default; color: #e8dcff; }
+  .jobRow.live:hover { background: none; }
+  .jobRow .key { color: #c07dff; opacity: .65; }
+  .jobRow .price { color: #ffd34d; float: right; margin-left: 22px; }
+  .jobRow.cursor { background: rgba(192,125,255,.18); outline: 1px solid rgba(192,125,255,.55); }
+  .jobHint { margin-top: 6px; font-size: 10px; opacity: .6; color: #c07dff;
+             white-space: normal; max-width: 220px; }
+  /* on a narrow screen the two docked panels can't sit side-by-side — drop the
+     board below the outfitter instead of overlapping it */
+  @media (max-width: 1024px) {
+    #dispatchboard { top: 46%; left: 50%; transform: translateX(-50%); }
+  }
   /* red vignette pulse on a hull hit. Edges only — the middle stays clear, so
      it never hides the thing that just hit you. */
   #damageflash {
@@ -432,6 +459,9 @@
     <div class="shopRow"></div>
     <div class="shopRow"></div>
   </div>
+  <div id="dispatchboard">
+    <div class="title">◆ DISPATCH ◆</div>
+  </div>
   <div id="flightdata">
     <span id="pilotrow" style="display:none"><span class="dim">PILOT</span> <span id="pilot"></span><br></span>
     <span class="dim">HULL</span> <span id="hullpct">100%</span>
@@ -442,6 +472,7 @@
     <span class="dim">CARGO</span> <span id="cargo">0</span><br>
     <span class="dim">BANK</span> <span id="bank">0</span><br>
     <span class="dim">JUNK DESTROYED</span> <span id="kills">0</span>
+    <br><span class="dim">DISPATCH</span> <span id="jobline">—</span>
   </div>
   <div id="throttlewrap">
     THR<br>
@@ -591,7 +622,7 @@ const BODIES = [
     // radius, and DECK height as a radius multiplier. The height grid only
     // knows the ground plateau (1.012) — the pad cylinder's top sits at
     // 1.0175, so without this you sink ~14u through the deck.
-    pads: [{ lat: 32.9, lon: -80.0, ang: 0.045, top: 1.0175 }],
+    pads: [{ lat: 32.9, lon: -80.0, ang: 0.026, top: 1.0175 }],
     atmosphere: 0x5f9dff, atmoStrength: 1.05,
     // Luna-true proportions: real Moon = 0.27 Earth radii. Orbits just
     // outside the 3-radii gravity well so approach stays clean.
@@ -629,8 +660,9 @@ const BODIES = [
     heightFile: "planets/rubicon_height.json",
     landable: true,
     gravity: 1.25,                  // beefier pull than Earth; still lands clean (keep ≤1.5)
-    // NO pads on purpose: no bank/outfitter here, so Charleston keeps its
-    // monopoly. RUBICON is wild — set down on open desert anywhere to repair.
+    // ONE rough pad at the pirate market (RustHollow) — no bank, just a place to
+    // set down and fence cargo. You can still land on open desert anywhere else.
+    pads: [{ lat: -18.5, lon: 15.0, ang: 0.016, top: 1.013 }],
     atmosphere: 0xd98a4f, atmoStrength: 1.0,   // thin orange dust haze
     // three moons, three sizes, each on a plane tilted by `incl` so they
     // don't stack. Moons are procedural (genRocky) and non-collidable — built
@@ -2912,6 +2944,8 @@ for (let i = 0; i < PIRATE_COUNT; i++) {
   pirates.push({
     faction: "hostile",       // future: "neutral" / "ally" — AI keys off this, nothing else rewrites
     name: PIRATE_NAMES[i % PIRATE_NAMES.length],   // for the hails, later
+    baseName: PIRATE_NAMES[i % PIRATE_NAMES.length], // stable slot name; a bounty temporarily overrides .name
+    bounty: false,                                 // (10h) true = this raider is the dispatch mark
     group: built.group,
     engineGlow: built.engineGlow,
     beacon: built.beacon,
@@ -3034,6 +3068,8 @@ const HAULER_DEFS = [
     first: 70,  firstRnd: 40,  rMin: 110, rMax: 220 },
   { file: "npc/hauler_max.glb",     name: "SS DOUBLE OVERTIME", hp: 9, bits: 20, val: 8,   // 160 — the loot piñata,
     first: 300, firstRnd: 120, rMin: 420, rMax: 720 },                             // priced by its rarity
+  { file: "npc/collector.glb",      name: "SS PACKRAT",         hp: 6, bits: 14, val: 7,   // ~100 — the salvage collector,
+    first: 150, firstRnd: 90,  rMin: 200, rMax: 420, len: 22, thruster: "ThrusterL" },     // mid-size (2x a fighter), its own class
 ];
 
 const haulTmpA = new THREE.Vector3(), haulTmpB = new THREE.Vector3(), haulTmpC = new THREE.Vector3();
@@ -3047,19 +3083,21 @@ for (const def of HAULER_DEFS) {
   scene.add(g);
   // engine glow + running light, the pirate pattern: ion-blue exhaust bloom,
   // and a slow amber blink — honest traffic, the neutral scavenger's rhythm
+  const hlF = (def.len || HAULER_LEN) / HAULER_LEN;   // size factor vs the base 52u truck (PACKRAT = 22 -> ~0.42x)
   const engineGlow = new THREE.Sprite(new THREE.SpriteMaterial({
     map: boltGlowTex, color: 0x55aaff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   }));
-  engineGlow.scale.setScalar(9);
+  engineGlow.scale.setScalar(9 * hlF);
   g.add(engineGlow);
   const beacon = new THREE.Sprite(new THREE.SpriteMaterial({
     map: boltGlowTex, color: BEACON_NEUTRAL, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   }));
-  beacon.position.set(0, 11, -14);   // over the cab — the nose is -Z after export
-  beacon.scale.setScalar(14);
+  beacon.position.set(0, 11 * hlF, -14 * hlF);   // over the cab — the nose is -Z after export
+  beacon.scale.setScalar(14 * hlF);
   g.add(beacon);
   haulers.push({
     def, group: g, engineGlow, beacon,
+    hitR: (def.len || HAULER_LEN) / 2,   // collision sphere scales with the ship (PACKRAT ~11, trucks 26)
     model: null,                   // set when the GLB lands — no model, no spawns (no primitive stand-in)
     mixer: null, mats: [],
     vel: new THREE.Vector3(), wanderPt: new THREE.Vector3(),
@@ -3088,15 +3126,16 @@ if (THREE.GLTFLoader) for (const h of haulers) {
       }
     });
     const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
-    model.scale.setScalar(HAULER_LEN / size.z);
+    const hlen = h.def.len || HAULER_LEN;
+    model.scale.setScalar(hlen / size.z);
     h.group.add(model);
     h.model = model;
-    // exhaust bloom sits behind the center engine bell
+    // exhaust bloom sits behind the engine bell (PACKRAT has no ThrusterC — use its def's node)
     h.group.updateMatrixWorld(true);
-    const tC = model.getObjectByName("ThrusterC");
+    const tC = model.getObjectByName(h.def.thruster || "ThrusterC");
     if (tC) {
       h.engineGlow.position.copy(h.group.worldToLocal(tC.getWorldPosition(new THREE.Vector3())));
-      h.engineGlow.position.z += 2.3;
+      h.engineGlow.position.z += 2.3 * (hlen / HAULER_LEN);
     }
     // the authored idle float — a loaded truck riding its suspension
     if (gltf.animations && gltf.animations.length) {
@@ -3192,7 +3231,7 @@ function haulerTestBolt(p0, p1, boltVel) {
     haulToC.subVectors(h.group.position, p0);
     const t = segLen2 > 0 ? THREE.MathUtils.clamp(haulToC.dot(haulSeg) / segLen2, 0, 1) : 0;
     haulNearPt.copy(p0).addScaledVector(haulSeg, t);
-    if (haulNearPt.distanceToSquared(h.group.position) <= HAULER_HIT_R * HAULER_HIT_R) {
+    if (haulNearPt.distanceToSquared(h.group.position) <= h.hitR * h.hitR) {
       haulerDamage(h, haulNearPt, boltVel);
       return true;
     }
@@ -3253,7 +3292,7 @@ function updateHaulers(dt) {
     /* ---- ram: the truck is the WALL in this collision — you bounce off,
        it rolls on rattled. Rams never pay (house rule 10c), and damage goes
        last for the same load-bearing reason as the junk and pirate rams. ---- */
-    const rr = HAULER_HIT_R + SHIP_HIT_R;
+    const rr = h.hitR + SHIP_HIT_R;
     if (!landedOn && shipObj.position.distanceToSquared(h.group.position) < rr * rr) {
       haulTmpB.subVectors(shipObj.position, h.group.position).normalize();
       haulTmpC.subVectors(ship.velocity, h.vel);
@@ -3315,6 +3354,21 @@ function pirateSpawn(p) {
   // tell (amber = business, red = duck), so only a bandit earns the ping.
   p.wingSide = 0; p.hailed = false;
   p.hailLine = (Math.random() * HAIL_LINES.length) | 0;
+  // Dispatch bounty (10h): if a contract's live and the mark isn't already on
+  // the field, THIS spawn IS the wanted raider — force it hostile and wear the
+  // contract name. Anti-farm: a one-shot target the pirate system already
+  // spawns (same speed-capped rules as any raider), never a farmable bubble;
+  // it re-spawns as the mark until you collect it.
+  p.bounty = false;         // clear any stale mark FIRST so bountyOnField() below can't count THIS slot
+  p.name = p.baseName;      // default hail name; the mark overrides it just below
+  if (activeJob && activeJob.type === "bounty" && !bountyOnField()) {
+    p.bounty = true;
+    p.name = activeJob.name;
+    p.faction = "hostile"; p.state = "HUNT";
+    p.beacon.material.color.setHex(BEACON_HOSTILE);
+    pirateWarnSound();
+    return;
+  }
   if (Math.random() < NEUTRAL_ODDS) {
     p.faction = "neutral"; p.state = "LOITER"; p.wanderT = 0;   // picks a leg first frame
     p.beacon.material.color.setHex(BEACON_NEUTRAL);
@@ -3343,6 +3397,8 @@ function pirateDestroy(p, dist) {
 
 // shot down — the only pirate that pays (junkKill's twin)
 function pirateKill(p, dist) {
+  // capture the mark flag BEFORE pirateDestroy despawns the slot below
+  const wasBounty = !!(activeJob && activeJob.type === "bounty" && p.bounty);
   pirateDestroy(p, dist);
   killsEl.textContent = ++junkKills;
   // the bounty: same scatter as junkDropScrap — inherit the wreck's drift
@@ -3352,6 +3408,9 @@ function pirateKill(p, dist) {
     pirTmpA.multiplyScalar(8 + Math.random() * 18).add(p.vel);
     emitScrap(p.group.position, pirTmpA, PIRATE_SCRAP_VAL);
   }
+  // (10h) dispatch: shooting the marked raider down collects the contract.
+  // Ram never gets here (pirateDestroy is the ram twin) — so ramming pays 0.
+  if (wasBounty) { p.bounty = false; completeJob(); }
 }
 
 // stage 2: shooting a neutral is a declaration. It gets the full bandit
@@ -3522,6 +3581,15 @@ function updateEnemies(dt) {
   // bandits don't stack past the old duel.
   let wildAlive = 0;
   for (const q of pirates) if (q.alive && q.faction !== "ally") wildAlive++;
+  // (10h) dispatch: a live bounty GUARANTEES its mark shows up promptly — bypass
+  // both the WILD_CAP pool limit and the 60-120s respawn cooldown, so accepting a
+  // contract never strands you hunting a raider that never comes. The mark is
+  // contract content, allowed to exceed the ambient duel cap by one.
+  if (activeJob && activeJob.type === "bounty" && !harbor && !landedOn && !bountyOnField()) {
+    for (const q of pirates) {
+      if (!q.alive) { pirateSpawn(q); if (q.alive) wildAlive++; break; }   // pirateSpawn tags it the mark
+    }
+  }
   let hailBest = null, hailD2 = HAIL_R * HAIL_R;   // nearest open channel this frame
   for (const p of pirates) {
     if (!p.alive) {
@@ -3899,6 +3967,110 @@ function toggleView() {
 }
 applyView();   // seed the initial (cockpit) view state
 
+/* ============ 10h. DISPATCH CONTRACTS (v56) ============
+   Stage 6 — the last of the junk economy. The Charleston beacon becomes a
+   DISPATCHER: it hands out jobs, so collecting finally has a GOAL past the
+   number going up. Slice 1 is the BOUNTY — a named raider gets a price on its
+   head. Accept it at the dispatch board (parked at Charleston, beside the
+   outfitter); a violet mark hunts the raider down for you; SHOOTING IT DOWN
+   pays the reward into the bank. Ramming pays nothing — the payout hangs on
+   pirateKill, never its ram twin (house rule 10c). One contract at a time.
+   The target is a hostile the pirate system already spawns — anti-farm-clean:
+   one-shot per contract (not a farmable bubble), flying the same speed-capped
+   rules as any raider, re-spawning as the mark until you collect. Persists
+   next to the bank; #reset wipes it. */
+const NAV_CONTRACT = "#c07dff";           // violet — a NEW marker category (grey/gold/red/teal/amber all taken)
+const BOUNTY_REWARDS = [250, 350, 450];   // the three offer tiers, paid on top of the ~40 kill scrap
+let activeJob = null;      // { type:"bounty", name, reward } or null — one at a time
+let offeredJobs = [];      // the board's current offers; a fresh set rolls when one's collected
+let jobDirty = true;       // rebuild the board rows on the next docked frame
+let jobCursor = 0;         // gamepad: which offer row the D-pad is highlighting
+let jobFlash = 0;          // seconds left on the "CONTRACT COMPLETE" banner
+
+// an accepted job survives a reload; the offers are ephemeral (re-rolled below)
+try {
+  const j = JSON.parse(localStorage.getItem("spacesuck.job") || "null");
+  if (j && j.type === "bounty" && typeof j.reward === "number" && typeof j.name === "string") activeJob = j;
+} catch (e) {}
+if (location.hash === "#reset") { activeJob = null; try { localStorage.removeItem("spacesuck.job"); } catch (e) {} }
+function saveJob() { try { localStorage.setItem("spacesuck.job", JSON.stringify(activeJob)); } catch (e) {} }
+addEventListener("pagehide", saveJob);
+
+const dispatchEl = document.getElementById("dispatchboard");
+const jobEl = document.getElementById("jobline");
+
+/* three fresh bounty offers on three different raiders (shuffle the roster so
+   the board never lists the same name twice) */
+function rollOffers() {
+  const names = PIRATE_NAMES.slice();
+  for (let i = names.length - 1; i > 0; i--) {
+    const k = (Math.random() * (i + 1)) | 0;
+    const t = names[i]; names[i] = names[k]; names[k] = t;
+  }
+  offeredJobs = [0, 1, 2].map(i => ({ type: "bounty", name: names[i], reward: BOUNTY_REWARDS[i] }));
+  jobCursor = 0;
+  jobDirty = true;
+}
+rollOffers();
+
+// is the wanted raider currently alive on the field? (drives re-marking a spawn)
+function bountyOnField() {
+  for (const p of pirates) if (p.alive && p.bounty) return true;
+  return false;
+}
+
+function refreshDispatch() {
+  if (activeJob) {
+    dispatchEl.innerHTML =
+      '<div class="title">◆ DISPATCH ◆ <b>CONTRACT ACTIVE</b></div>' +
+      '<div class="jobRow live">BOUNTY · ' + activeJob.name +
+      ' <span class="price">+' + activeJob.reward + '</span></div>' +
+      '<div class="jobHint">hunt the violet mark — shoot it down to collect.</div>';
+    return;
+  }
+  let html = '<div class="title">◆ DISPATCH ◆ take a <b>CONTRACT</b></div>';
+  offeredJobs.forEach((j, i) => {
+    const cur = padIndex !== null && i === jobCursor ? " cursor" : "";   // pad highlight only with a pad connected
+    html += '<div class="jobRow' + cur + '"><span class="key">[' + (i + 4) + ']</span> BOUNTY · ' +
+            j.name + ' <span class="price">+' + j.reward + '</span></div>';
+  });
+  dispatchEl.innerHTML = html;
+}
+
+// accept an offered contract — no fee: the cost is the fight
+function acceptJob(i) {
+  if (activeJob) { shopDenySound(); return; }     // one contract at a time
+  const j = offeredJobs[i];
+  if (!j) { shopDenySound(); return; }
+  activeJob = { type: j.type, name: j.name, reward: j.reward };
+  offeredJobs = [];                                // clear the board until this one's done
+  jobDirty = true;
+  saveJob();
+  shopBuySound();
+}
+
+// the mark is down — reward into the bank, roll a fresh board, flash the win
+function completeJob() {
+  if (!activeJob) return;
+  banked += activeJob.reward;
+  bankEl.textContent = banked;
+  saveBank();
+  activeJob = null;
+  saveJob();
+  rollOffers();
+  jobFlash = 2.4;
+  shopDirty = true;                                // the outfitter quotes the same bank
+  bankDoneSound();
+}
+
+// click/tap a row to accept (keyboard 4/5/6 in the INPUT section mirrors this)
+dispatchEl.addEventListener("click", e => {
+  const row = e.target.closest(".jobRow");
+  if (!row || row.classList.contains("live")) return;
+  const rows = Array.from(dispatchEl.querySelectorAll(".jobRow"));
+  acceptJob(rows.indexOf(row));
+});
+
 /* ============ 11. INPUT ============ */
 const keys = {};
 addEventListener("keydown", e => {
@@ -3920,6 +4092,12 @@ addEventListener("keydown", e => {
     if (e.code === "Digit1") buyUpgrade(0);
     else if (e.code === "Digit2") buyUpgrade(1);
     else if (e.code === "Digit3") buyUpgrade(2);
+  }
+  // docked at the dispatch board, 4/5/6 accept an offered contract (v56)
+  if (dispatchEl.style.display === "block" && !keys[e.code]) {
+    if (e.code === "Digit4") acceptJob(0);
+    else if (e.code === "Digit5") acceptJob(1);
+    else if (e.code === "Digit6") acceptJob(2);
   }
   keys[e.code] = true;
 });
@@ -4038,6 +4216,7 @@ let padIndex = null;
 let padViewHeld = false;      // edge-detect for the view toggle
 let padStartHeld = false;     // edge-detect for pad-Start pause (v54)
 let padUpHeld = false, padDownHeld = false, padBuyHeld = false;   // shop D-pad edge-detect (v35)
+let padJobMoveHeld = false, padJobTakeHeld = false;              // dispatch board pad edge-detect (v56)
 let lastPadRumble = 0;
 addEventListener("gamepadconnected", e => { padIndex = e.gamepad.index; initAudio(); });
 addEventListener("gamepaddisconnected", e => { if (e.gamepad.index === padIndex) padIndex = null; });
@@ -4209,7 +4388,7 @@ function drawThreatChevron(c, W, H) {
   if (landedOn) return;
   let threat = null, threatD2 = Infinity;
   for (const p of pirates) {
-    if (!p.alive || p.faction !== "hostile") continue;   // v47: only a bandit is a THREAT
+    if (!p.alive || p.faction !== "hostile" || p.bounty) continue;   // v47: only a bandit is a THREAT · v56: the mark owns the violet chevron
     const d2 = p.group.position.distanceToSquared(shipObj.position);
     if (d2 < threatD2) { threatD2 = d2; threat = p; }
   }
@@ -4234,6 +4413,42 @@ function drawThreatChevron(c, W, H) {
   c.rotate(-ang);
   c.fillText("RAIDER " + Math.round(Math.sqrt(threatD2)).toLocaleString() + " u",
              -Math.cos(ang) * 46, -Math.sin(ang) * 46 + 4);
+  c.restore();
+}
+
+/* (D3) CONTRACT marker (v56) — the THREAT chevron's dispatch cousin: a violet
+   edge chevron (and on-screen name tag) toward the live bounty mark, so the
+   wanted raider is always findable. Same projection math as its red twin. */
+function drawJobChevron(c, W, H) {
+  if (landedOn || !activeJob) return;
+  let mark = null;
+  for (const p of pirates) if (p.alive && p.bounty) { mark = p; break; }
+  if (!mark) return;
+  _nCam.copy(mark.group.position).applyMatrix4(camera.matrixWorldInverse);
+  _nProj.copy(mark.group.position).project(camera);
+  let x = _nProj.x, y = _nProj.y;
+  const behind = _nCam.z >= 0;
+  if (behind) { x = -x; y = -y; }             // projection mirrors behind the camera
+  c.save();
+  c.fillStyle = NAV_CONTRACT; c.shadowColor = NAV_CONTRACT; c.shadowBlur = 6;
+  c.font = "11px " + navFont; c.textAlign = "center";
+  if (!behind && Math.abs(x) < 1 && Math.abs(y) < 1) {
+    // on-screen: name the mark above its red strobe so you know which one it is
+    c.fillText("◆ " + mark.name, (x * 0.5 + 0.5) * W, (-y * 0.5 + 0.5) * H - 30);
+  } else {
+    const m = Math.max(Math.abs(x), Math.abs(y)) || 1e-6;   // dead-center-behind: don't divide by 0
+    x /= m; y /= m;
+    const M = 52;
+    const sx = M + (x * 0.5 + 0.5) * (W - 2 * M);
+    const sy = M + (-y * 0.5 + 0.5) * (H - 2 * M);
+    const ang = Math.atan2(sy - H / 2, sx - W / 2);
+    c.translate(sx, sy); c.rotate(ang);
+    c.beginPath(); c.moveTo(11, 0); c.lineTo(-2, -6); c.lineTo(-2, 6); c.closePath(); c.fill();
+    c.rotate(-ang);
+    const dist = Math.round(mark.group.position.distanceTo(shipObj.position));
+    c.fillText(mark.name + " " + dist.toLocaleString() + " u",
+               -Math.cos(ang) * 46, -Math.sin(ang) * 46 + 4);
+  }
   c.restore();
 }
 
@@ -4396,8 +4611,19 @@ function drawNavHud(dt) {
   // --- D: the way home, whenever the hold is worth banking ---
   drawHomeChevron(c, W, H);
   drawThreatChevron(c, W, H);
+  drawJobChevron(c, W, H);              // violet: the dispatch bounty mark (v56)
   // --- E: the landing reticle, on close approach to the pad ---
   drawPadMarker(c, W, H, dt);
+  // --- F: contract-complete banner — a violet flash on payout (v56) ---
+  if (jobFlash > 0) {
+    jobFlash = Math.max(0, jobFlash - dt);
+    c.save();
+    c.textAlign = "center"; c.globalAlpha = Math.min(1, jobFlash);
+    c.fillStyle = NAV_CONTRACT; c.shadowColor = NAV_CONTRACT; c.shadowBlur = 8;
+    c.font = "16px " + navFont;
+    c.fillText("◆ CONTRACT COMPLETE ◆", W / 2, H * 0.30);
+    c.restore();
+  }
 }
 
 /* controls menu — a click (or H) tucks the mapping open/closed */
@@ -4610,6 +4836,15 @@ function animate() {
         if (down && !padDownHeld) { shopCursor = (shopCursor + 1) % SHOP.length; shopDirty = true; }
         if (buy  && !padBuyHeld)  buyUpgrade(shopCursor);
         padUpHeld = up; padDownHeld = down; padBuyHeld = buy;
+        // dispatch board (v56): D-pad Left cycles the bounties, X takes the one
+        // under the cursor. Up/Down/Right stay the outfitter's — Left + X are free.
+        const jmove = !!(gp.buttons[14] && gp.buttons[14].pressed);   // D-pad Left
+        const jtake = !!(gp.buttons[2]  && gp.buttons[2].pressed);    // X
+        if (offeredJobs.length) {
+          if (jmove && !padJobMoveHeld) { jobCursor = (jobCursor + 1) % offeredJobs.length; jobDirty = true; }
+          if (jtake && !padJobTakeHeld) acceptJob(jobCursor);
+        }
+        padJobMoveHeld = jmove; padJobTakeHeld = jtake;
         padFire = false;                                   // parked: don't fire while shopping
       } else {
         // in flight, D-pad Up answers a hail (v47) — same edge-detect trick
@@ -4617,6 +4852,7 @@ function animate() {
         if (up && !padUpHeld) tryRecruit();
         padUpHeld = up;
         padDownHeld = padBuyHeld = false;
+        padJobMoveHeld = padJobTakeHeld = false;
         shopCursor = 0;
       }
     }
@@ -5135,6 +5371,10 @@ function animate() {
     refreshShop();
     shopBankShown = banked; shopDirty = false;
   }
+  // the dispatch board rides the same dock gate (v56); rebuilds only when the
+  // offers / active job changed (bounties are free — no bank-driven redraw)
+  dispatchEl.style.display = onPort ? "block" : "none";
+  if (onPort && jobDirty) { refreshDispatch(); jobDirty = false; }
   const hullPct = ship.hull / ship.hullMax;
   const hullCol = hullPct > 0.5 ? "#6ee7d8" : hullPct > 0.25 ? "#ffb066" : "#ff5544";
   hullFillEl.style.width = (hullPct * 100) + "%";
@@ -5155,6 +5395,7 @@ function animate() {
   }
 
   speedEl.textContent = Math.round(spd);
+  jobEl.textContent = activeJob ? "⟡ " + activeJob.name + "  +" + activeJob.reward : "—";
   revTag.style.visibility = ship.throttle < -0.01 ? "visible" : "hidden";
   if (ship.throttle >= 0) {
     throttleFwd.style.height = (ship.throttle * 67) + "%";

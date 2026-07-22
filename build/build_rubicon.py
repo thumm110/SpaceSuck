@@ -37,7 +37,7 @@ import math
 import os
 import random
 import numpy as np
-from mathutils import Vector
+from mathutils import Vector, Matrix
 
 # ---------------------------------------------------------------- CONFIG --
 R          = 100.0      # base radius in Blender units — MUST stay 100 (loader
@@ -45,8 +45,18 @@ R          = 100.0      # base radius in Blender units — MUST stay 100 (loader
 SUBDIV     = 7          # icosphere subdivisions: 7 → 327,680 triangles, ~12MB.
 SEED       = 137        # change this for a totally different-looking world.
 
-# RUBICON is uncolonized: no cities, no landing pad. You land on open terrain.
-CITIES = []
+# RUBICON has ONE settlement: RustHollow, a small and DANGEROUS pirate market —
+# an underground bazaar dug into a low basin on the far side from Earth. Smaller
+# and grungier than Charleston, and no bank/outfitter: you come here to fence
+# cargo and take your chances. You can still set down on open desert anywhere.
+SETTLEMENTS = [
+    {"name": "RustHollow", "lat": -18.0, "lon": 12.0, "ang": 0.055, "h": 1.008,
+     "structures": 46},
+]
+# a small, rough landing pad at the market's edge (much smaller than Earth's)
+PAD_LAT, PAD_LON = -18.5, 15.0
+PAD_H   = 1.009        # pad plateau height (surface multiplier)
+PAD_ANG = 0.02         # pad flatten radius, radians of arc (a small rough deck)
 
 # continents: (lat, lon, width_radians, strength) — soft blobs summed into a
 # landmass mask. RUBICON is a DESERT world: mostly land, so the blobs are wide
@@ -74,10 +84,17 @@ PAL = {
     "sand":    0xc86b34,   # dune / plateau
     "grass":   0x9c5a2a,   # scrubland (green slot, repurposed)
     "forest":  0x7a3f1e,   # dark mesa / dry scrub
-    "rock":    0x8a4b2f,   # canyon rock
-    "snow":    0xd8b48a,   # warm peak dust — dust on the highest ridges, not snow
-    "ice":     0xd7c3a3,   # pale dust polar caps (kept small + warm)
+    "rock":    0x8a4b2f,   # canyon rock (base; strata gradient overrides on relief)
+    "strataLo": 0x521e0c, "strataMid": 0x923f1c, "strataHi": 0xac5626,  # rock layers floor→rim (deep rust)
+    "snow":    0xcaa46a,   # warm pale dust — small accent on the highest ridges only
+    "ice":     0xc19a70,   # dusty polar caps (warm, not white; small + ragged now)
     "cloud":   0xcdb598,   # tan dust cloud (muted so it doesn't blow out white)
+    # pirate market — scavenged scrap palette + hazard lights
+    "camp":    0x241d18, "padR":   0x2f2b28,
+    "metalA":  0x6e4a38, "metalB": 0x55585c, "metalC": 0x3a3a3e,
+    "contA":   0x8a4a2a, "contB":  0x3e5240, "contC":  0x7a6f5a,
+    "tent":    0x8a5038, "hazard": 0xff6a1a, "redlite": 0xd11f1f,
+    "salt":    0xc7b493, "saltCrack": 0x8f7a5c, "boulder": 0x6e3a22,  # salt pans + rocks
     # kept so nothing crashes if referenced; unused (no city/pad on RUBICON)
     "pad":     0x3a4148, "beacon":  0xffb066, "asphalt": 0x24282e,
     "towerA":  0x6b7280, "towerB": 0x4b5563, "towerC": 0x94a3b8,
@@ -142,6 +159,14 @@ def ll_dir(lat, lon):
                      math.cos(la) * math.sin(lo),
                      math.sin(la)])
 
+# hero rift geometry: a great-circle canyon defined by the plane normal RIFT_N
+# (points near this circle get carved) and a midpoint RIFT_M on the arc that
+# gates how long the canyon runs. tuned to slash across the equatorial face.
+_RA, _RB = ll_dir(-4, -38), ll_dir(8, 66)
+RIFT_N = np.cross(_RA, _RB); RIFT_N = RIFT_N / np.linalg.norm(RIFT_N)
+RIFT_M = ll_dir(2, 14)
+PAD_DIR = ll_dir(PAD_LAT, PAD_LON)
+
 # ------------------------------------------------------- THE HEIGHT FIELD --
 # One function decides the whole planet. dirs: (N,3) unit vectors.
 # Returns the surface multiplier m (basin floor = exactly 1.0, land > 1.0)
@@ -163,19 +188,42 @@ def height_field(dirs):
     land  = smoothstep(0.48, 0.60, mask)               # 0 = basin, 1 = land
     core  = smoothstep(0.58, 0.92, mask)               # highland interior
     hills = (fbm(dirs * 6.0 + 3.3, 5, SEED + 40) - 0.5) * 2.0
-    ridge = ridged(dirs * 3.8 + 1.1, 5, SEED + 80)
+    ridge = ridged(dirs * 4.6 + 1.1, 5, SEED + 80)     # finer ridges = rounder limb
 
-    # canyon-and-mesa relief: ridge term cranked to ~1.8x Earth's for a
-    # dramatically rugged desert; hills roughen the dunes and plateaus
-    elev = land * (0.014 + 0.006 * hills) + core * ridge * 0.075 * land
+    # canyon-and-mesa relief. dropped the ridge amplitude (0.075 → 0.05) so the
+    # SILHOUETTE reads as a sphere, not a potato — the drama comes back as strata
+    # color (in the color pass) and the hero rift below, not a bumpy outline.
+    elev = land * (0.014 + 0.006 * hills) + core * ridge * 0.05 * land
     elev = np.maximum(elev, 0.0)
 
-    # dusty polar caps: slightly raised, land or not. Kept SMALL — a red
-    # desert wears only a thin dust cap at the true poles (lat > ~72°).
-    ice = smoothstep(0.945, 0.985, np.abs(z) + (fbm(dirs * 5.0, 3, SEED + 7) - 0.5) * 0.05)
+    # dusty polar caps: thin, feathered, true-poles-only. high-freq + big edge
+    # noise breaks up the old spilled-milk blob into a ragged dust cap.
+    ice = smoothstep(0.965, 0.995, np.abs(z) + (fbm(dirs * 8.0, 4, SEED + 7) - 0.5) * 0.07)
     elev = np.maximum(elev, ice * 0.006)
 
+    # HERO RIFT — a Valles-Marineris canyon slashing across the equator. carved
+    # LAST so the max() clamps above can't fill it back in. it goes through the
+    # ONE height function, so the mesh, the colors, and the sampled height grid
+    # all agree — you can actually fly down into it and set down on the floor.
+    perp   = np.abs(dirs @ RIFT_N)                          # ~sin(dist from the rift plane)
+    alongM = np.arccos(np.clip(dirs @ RIFT_M, -1.0, 1.0))   # dist from the rift's midpoint
+    rift = np.exp(-(perp / 0.05) ** 2) * smoothstep(0.95, 0.6, alongM)
+    elev = elev - rift * 0.055
+
     m = 1.0 + elev
+
+    # flatten the pirate settlement footprint + its landing pad into plateaus, so
+    # the market sits on level ground and the sampled height grid agrees (same
+    # trick as Earth's Charleston). pad after the camp so the pad wins any overlap.
+    for c in SETTLEMENTS:
+        cd = ll_dir(c["lat"], c["lon"])
+        ang_c = np.arccos(np.clip(dirs @ cd, -1.0, 1.0))
+        t = 1.0 - smoothstep(c["ang"], c["ang"] * 1.9, ang_c)
+        m = m * (1.0 - t) + c["h"] * t
+    ang_pad = np.arccos(np.clip(dirs @ PAD_DIR, -1.0, 1.0))
+    t = 1.0 - smoothstep(PAD_ANG, PAD_ANG * 2.6, ang_pad)
+    m = m * (1.0 - t) + PAD_H * t
+
     return m, {"mask": mask, "land": land, "elev": m - 1.0, "ice": ice, "z": z}
 
 # ------------------------------------------------------------- COLOR PASS --
@@ -185,6 +233,11 @@ def hex_rgb(h):
 def lerp_col(a, b, t):
     t = t[:, None]
     return a[None, :] * (1 - t) + b[None, :] * t
+
+def tint(base, color, t):
+    """pull a per-face color ARRAY toward a single color by weight t (per face)"""
+    t = t[:, None]
+    return base * (1 - t) + color[None, :] * t
 
 def face_colors(dirs):
     """dirs: (F,3) unit face directions → (F,4) RGBA float colors"""
@@ -208,16 +261,38 @@ def face_colors(dirs):
     plains = is_land & ~dune
     col[plains] = scrub[plains]
 
-    # canyon rock fills the bulk of the highland relief — the red we want
-    rocky = is_land & (elev > 0.028)
-    col[rocky] = hex_rgb(PAL["rock"])
+    # SALT FLATS — the lowest, flattest dry-basin floors go pale + cracked, a
+    # dead lakebed. patchy (noise-gated) so not every basin is a salt pan.
+    salt_n = fbm(dirs * 8.0 + 4.4, 3, SEED + 33)
+    salt = (~is_land) & (mask < 0.34) & (salt_n > 0.46)
+    col[salt] = hex_rgb(PAL["salt"])
+    cracks = salt & (fbm(dirs * 24.0, 2, SEED + 91) > 0.62)   # darker crack veins
+    col[cracks] = hex_rgb(PAL["saltCrack"])
 
-    # dusty caps ONLY on the very tippy-top ridge peaks and the true poles
-    caps = (is_land & (elev > 0.090)) | (is_land & (np.abs(z) > 0.955))
+    # canyon rock colored by elevation: dark iron-red floor → rust → clay-ochre
+    # rim. the gradient rides the relief, so canyon walls read as layered (dark
+    # at the bottom, lighter up top) — a warm RED planet, no pale wash-out.
+    rocky = is_land & (elev > 0.016)
+    et = np.clip(elev / 0.05, 0.0, 1.0)
+    rock_col = lerp_col(hex_rgb(PAL["strataLo"]), hex_rgb(PAL["strataMid"]),
+                        smoothstep(0.0, 0.45, et))
+    rock_col = tint(rock_col, hex_rgb(PAL["strataHi"]), smoothstep(0.6, 1.0, et))
+    col[rocky] = rock_col[rocky]
+
+    # thin, warm, feathered polar caps — true poles only, no big pale blob
+    caps = is_land & (np.abs(z) > 0.975)
     col[caps] = hex_rgb(PAL["snow"])
-
-    icy = ice > 0.40
+    icy = ice > 0.5
     col[icy] = hex_rgb(PAL["ice"])
+
+    # pirate market ground: a scorched dark pan under the structures + a rough
+    # dark pad deck (painted LAST so they override the terrain colors)
+    for c in SETTLEMENTS:
+        cd = ll_dir(c["lat"], c["lon"])
+        ang_c = np.arccos(np.clip(dirs @ cd, -1.0, 1.0))
+        col[ang_c < c["ang"] * 0.92] = hex_rgb(PAL["camp"])
+    ang_padc = np.arccos(np.clip(dirs @ PAD_DIR, -1.0, 1.0))
+    col[ang_padc < PAD_ANG * 1.5] = hex_rgb(PAL["padR"])
 
     # per-face brightness jitter — the thing that makes low-poly look rich
     rng = np.random.default_rng(SEED)
@@ -287,6 +362,197 @@ attr.data.foreach_set("color", np.repeat(cols, 3, axis=0).ravel())
 bpy.ops.object.shade_flat()
 me.materials.append(make_material("Terrain", vertex_colors=True, roughness=0.94))
 
+# ------------------------------------------------------- PIRATE SETTLEMENT --
+# RustHollow: a small, dangerous underground market. Low scavenged structures —
+# cargo-container stacks, market tents, fuel tanks, watchtowers with red hazard
+# lights, and dark ramps down into the bazaar below. Same local-frame trick as
+# Earth's city: build each piece in a +Z-up frame, drop it onto the sphere via
+# base_pt + rot @ offset (rot maps local +Z onto the surface normal d).
+print("raising the pirate market…")
+
+def surf_quat(d, fwd):
+    """local +Z → surface normal d, +X → fwd projected into the tangent plane"""
+    z = d.normalized()
+    x = (fwd - z * fwd.dot(z)).normalized()
+    y = z.cross(x)
+    return Matrix((x, y, z)).transposed().to_quaternion()
+
+def _box(base_pt, rot, off, scale, mat, objs):
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=base_pt + rot @ Vector(off))
+    b = bpy.context.active_object
+    b.scale = Vector(scale)
+    b.rotation_mode = 'QUATERNION'; b.rotation_quaternion = rot
+    b.data.materials.append(mat); objs.append(b); return b
+
+def _cyl(base_pt, rot, off, radius, height, mat, objs, verts=10):
+    bpy.ops.mesh.primitive_cylinder_add(vertices=verts, radius=radius, depth=height,
+                                        location=base_pt + rot @ Vector(off))
+    b = bpy.context.active_object
+    b.rotation_mode = 'QUATERNION'; b.rotation_quaternion = rot
+    b.data.materials.append(mat); objs.append(b); return b
+
+def _ico(base_pt, rot, off, scale, mat, objs, subd=2):
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=subd, radius=1.0,
+                                          location=base_pt + rot @ Vector(off))
+    b = bpy.context.active_object
+    b.scale = Vector(scale)
+    b.rotation_mode = 'QUATERNION'; b.rotation_quaternion = rot
+    b.data.materials.append(mat); objs.append(b); return b
+
+metal_mats = [make_material("MetalA", color_hex=PAL["metalA"], roughness=0.92),
+              make_material("MetalB", color_hex=PAL["metalB"], roughness=0.85),
+              make_material("MetalC", color_hex=PAL["metalC"], roughness=0.9)]
+cont_mats  = [make_material("ContA", color_hex=PAL["contA"], roughness=0.85),
+              make_material("ContB", color_hex=PAL["contB"], roughness=0.85),
+              make_material("ContC", color_hex=PAL["contC"], roughness=0.85)]
+tent_mat   = make_material("Tent", color_hex=PAL["tent"], roughness=1.0)
+hazard_mat = make_material("Hazard", color_hex=PAL["hazard"],
+                           emission_hex=PAL["hazard"], strength=3.0)
+red_mat    = make_material("RedLite", color_hex=PAL["redlite"],
+                           emission_hex=PAL["redlite"], strength=3.5)
+hole_mat   = make_material("Hole", color_hex=0x0a0806, roughness=1.0)
+
+def make_hab(base_pt, rot, fx, fy, h, rng, objs):
+    """pick a scrappy market structure and build it"""
+    k = rng.random()
+    if k < 0.26:
+        # CARGO CONTAINER stack — long low boxes in scavenged colors
+        _box(base_pt, rot, (0, 0, 0.17), (fx * 1.4, fy * 0.7, 0.34),
+             cont_mats[rng.randrange(3)], objs)
+        if rng.random() < 0.55:
+            _box(base_pt, rot, (0, 0, 0.52), (fx * 1.3, fy * 0.66, 0.32),
+                 cont_mats[rng.randrange(3)], objs)
+    elif k < 0.46:
+        # market TENT / inflatable hab — a squashed dome
+        _ico(base_pt, rot, (0, 0, 0.0), (fx * 0.95, fy * 0.95, h * 0.75), tent_mat, objs)
+    elif k < 0.58:
+        # FUEL TANK — upright cylinder capped with an amber hazard light
+        r = min(fx, fy) * 0.5
+        _cyl(base_pt, rot, (0, 0, h * 0.5), r, h, metal_mats[1], objs, verts=10)
+        _ico(base_pt, rot, (0, 0, h + 0.06), (0.05, 0.05, 0.05), hazard_mat, objs, subd=1)
+    elif k < 0.70:
+        # WATCHTOWER — a tall rough post + cab + red warning light (danger)
+        th = h * 2.2
+        _box(base_pt, rot, (0, 0, th * 0.5), (fx * 0.5, fy * 0.5, th), metal_mats[2], objs)
+        _box(base_pt, rot, (0, 0, th + 0.1), (fx * 0.8, fy * 0.8, 0.16), metal_mats[0], objs)
+        _ico(base_pt, rot, (0, 0, th + 0.28), (0.06, 0.06, 0.06), red_mat, objs, subd=1)
+    elif k < 0.82:
+        # UNDERGROUND ENTRANCE — a low frame around a black hole (the ramp down
+        # into the bazaar) + an amber light. "the market is below."
+        _box(base_pt, rot, (0, 0, 0.11), (fx * 1.2, fy * 1.2, 0.22), metal_mats[2], objs)
+        _box(base_pt, rot, (0, 0, 0.02), (fx * 0.7, fy * 0.7, 0.10), hole_mat, objs)
+        if rng.random() < 0.6:
+            _ico(base_pt, rot, (fx * 0.5, fy * 0.5, 0.3), (0.04, 0.04, 0.04),
+                 hazard_mat, objs, subd=1)
+    else:
+        # plain SHACK / warehouse — a low rusty box, maybe a vent unit on top
+        _box(base_pt, rot, (0, 0, h * 0.5), (fx, fy, h), metal_mats[rng.randrange(3)], objs)
+        if rng.random() < 0.5:
+            _box(base_pt, rot, (rng.uniform(-fx * 0.2, fx * 0.2),
+                                rng.uniform(-fy * 0.2, fy * 0.2), h + 0.05),
+                 (0.12, 0.12, 0.1), metal_mats[1], objs)
+
+for camp in SETTLEMENTS:
+    cd = Vector(ll_dir(camp["lat"], camp["lon"]).tolist())
+    t1 = cd.cross(Vector((0, 0, 1))).normalized()
+    t2 = cd.cross(t1)
+    ground = R * camp["h"]
+    cr = camp["ang"] * R
+    step = 0.85                          # tighter packing than Earth — a shanty
+    rng2 = random.Random(SEED + sum(ord(ch) for ch in camp["name"]))
+    parts = []
+    built = 0
+    padv = Vector(PAD_DIR.tolist())
+    n = int(math.ceil(cr / step))
+    for gi in range(-n, n + 1):
+        if built >= camp["structures"]:
+            break
+        for gj in range(-n, n + 1):
+            if built >= camp["structures"]:
+                break
+            u = gi * step + rng2.uniform(-0.22, 0.22)
+            v = gj * step + rng2.uniform(-0.22, 0.22)
+            if math.hypot(u, v) > cr * 0.9:
+                continue
+            d = (cd * R + t1 * u + t2 * v).normalized()
+            if d.dot(padv) > math.cos(PAD_ANG * 2.4):
+                continue                 # keep the pad clear
+            fx, fy = rng2.uniform(0.45, 0.85), rng2.uniform(0.45, 0.85)
+            hh = rng2.uniform(0.28, 0.62)
+            make_hab(d * ground, surf_quat(d, t1), fx, fy, hh, rng2, parts)
+            built += 1
+    print(f"  {camp['name']}: {built} structures, {len(parts)} parts")
+
+    # ---- the rough landing pad: a dark octagonal deck + amber hazard posts ----
+    pu = Vector(PAD_DIR.tolist())
+    pquat = surf_quat(pu, t1)
+    pc = pu * (R * PAD_H)
+    pad_deck = make_material("PadDeck", color_hex=PAL["padR"], roughness=0.7)
+    _cyl(pc, pquat, (0, 0, 0.2), 1.8, 0.4, pad_deck, parts, verts=8)
+    for kk in range(4):
+        a = kk / 4.0 * 2.0 * math.pi
+        ox, oy = math.cos(a) * 1.55, math.sin(a) * 1.55
+        _box(pc, pquat, (ox, oy, 0.35), (0.08, 0.08, 0.5), metal_mats[2], parts)
+        _ico(pc, pquat, (ox, oy, 0.62), (0.07, 0.07, 0.07), hazard_mat, parts, subd=1)
+
+    bpy.ops.object.select_all(action='DESELECT')
+    for b in parts:
+        b.select_set(True)
+    bpy.context.view_layer.objects.active = parts[0]
+    bpy.ops.object.join()
+    cobj = bpy.context.active_object
+    cobj.name = "Camp_" + camp["name"]
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+
+# ---------------------------------------------------------------- BOULDERS --
+# a few boulder fields strewn on the highland relief — ground-scale detail so a
+# low fly-through has something to bank around. irregular low-poly rocks sitting
+# on the sampled surface (NOT in the height grid — pure decoration).
+print("scattering boulders…")
+boulder_mat = make_material("Boulder", color_hex=PAL["boulder"], roughness=0.95)
+padc = Vector(PAD_DIR.tolist())
+boulders = []
+random.seed(SEED + 5)
+fields, attempts = 0, 0
+while fields < 8 and attempts < 250:
+    attempts += 1
+    uu, vv = random.random(), random.random()
+    th, ph = 2 * math.pi * uu, math.acos(2 * vv - 1)
+    d = Vector((math.sin(ph) * math.cos(th), math.sin(ph) * math.sin(th), math.cos(ph)))
+    if abs(d.z) > 0.88:                       # not at the poles
+        continue
+    if d.dot(padc) > math.cos(0.14):          # not on the market
+        continue
+    hm, _ = height_field(np.array([[d.x, d.y, d.z]]))
+    if float(hm[0]) < 1.006:                  # only on relief/land, not basin floor
+        continue
+    fields += 1
+    tan1 = d.cross(Vector((0, 0, 1)) if abs(d.z) < 0.9 else Vector((1, 0, 0))).normalized()
+    tan2 = d.cross(tan1)
+    for _ in range(random.randint(4, 9)):
+        pdir = (d * R + tan1 * random.uniform(-3, 3) + tan2 * random.uniform(-3, 3)).normalized()
+        phm, _ = height_field(np.array([[pdir.x, pdir.y, pdir.z]]))
+        pr = R * float(phm[0])
+        sz = random.uniform(0.12, 0.42)
+        bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=1.0,
+                                              location=pdir * (pr + sz * 0.3))
+        bl = bpy.context.active_object
+        bl.scale = (sz, sz * random.uniform(0.7, 1.1), sz * random.uniform(0.5, 0.8))
+        bl.rotation_mode = 'QUATERNION'
+        bl.rotation_quaternion = surf_quat(pdir, tan1)   # lie flat on the ground
+        bl.data.materials.append(boulder_mat)
+        boulders.append(bl)
+if boulders:
+    bpy.ops.object.select_all(action='DESELECT')
+    for b in boulders:
+        b.select_set(True)
+    bpy.context.view_layer.objects.active = boulders[0]
+    bpy.ops.object.join()
+    bpy.context.active_object.name = "Boulders"
+    bpy.ops.object.shade_flat()
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    print(f"  {len(boulders)} boulders in {fields} fields")
+
 # ---------------------------------------------------------------- CLOUDS --
 # Sparse tan dust clouds — thinner and fewer than Earth's weather (a desert
 # sky). Each system is 3-6 overlapping squashed blobs.
@@ -311,9 +577,9 @@ while systems < 9 and attempts < 200:
     tan2 = d.cross(tan1)
     for _ in range(random.randint(3, 6)):
         off = (tan1 * random.uniform(-7, 7) + tan2 * random.uniform(-4, 4))
-        pos = d * (R * random.uniform(1.095, 1.115)) + off
-        sx, sy, sz = (random.uniform(3.5, 8.0), random.uniform(2.6, 5.5),
-                      random.uniform(1.1, 2.0))
+        pos = d * (R * random.uniform(1.04, 1.06)) + off   # low, flat dust deck
+        sx, sy, sz = (random.uniform(4.0, 9.0), random.uniform(3.0, 6.0),
+                      random.uniform(0.7, 1.3))
         bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=1.0, location=pos)
         blob = bpy.context.active_object
         blob.rotation_mode = 'QUATERNION'
@@ -393,14 +659,16 @@ cam = bpy.context.active_object
 scene.camera = cam
 
 SHOTS = [
-    ("rubicon_preview_a.png",     Vector(ll_dir(12, -55).tolist()) * 330,
-                                  Vector((0, 0, 0))),                     # one face
+    ("rubicon_preview_a.png",     Vector(ll_dir(16, 14).tolist()) * 330,
+                                  Vector((0, 0, 0))),                     # rift-bearing face
     ("rubicon_preview_b.png",     Vector(ll_dir(12, 125).tolist()) * 330,
                                   Vector((0, 0, 0))),                     # far face
     ("rubicon_preview_pole.png",  Vector(ll_dir(68, 20).tolist()) * 300,
                                   Vector((0, 0, 0))),                     # dusty cap
-    ("rubicon_preview_close.png", Vector(ll_dir(2, 5).tolist()) * 150,    # canyon close-up
-                                  Vector(ll_dir(2, 5).tolist()) * 100),
+    ("rubicon_preview_close.png", Vector(ll_dir(20, -2).tolist()) * 150,  # oblique along the rift
+                                  Vector(ll_dir(-2, 26).tolist()) * 96),
+    ("rubicon_preview_market.png", Vector(ll_dir(-10, 5).tolist()) * 131, # pirate market, oblique
+                                   Vector(ll_dir(-19, 13).tolist()) * 100),
 ]
 for fname, pos, target in SHOTS:
     cam.location = pos
