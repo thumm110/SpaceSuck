@@ -3078,6 +3078,16 @@ const SALV_HOLD_SPD = 12;      // creep speed while feeding
 const SALV_JUMP = 100;         // target moved this far in one tick → it teleported, drop it
 const SALV_BEAM_N = 5;         // suction blobs marching junk → intake
 const SALV_BEAM_COLOR = 0x7dd8ff;  // pale tractor blue — utility, not weapon
+const SALV_REEL = 50;          // u/s² the beam pulls the piece toward the intake
+const salvTmpA = new THREE.Vector3();   // salvage-only scratch — never the haul/junk sets
+
+/* ---- v57 convoy events + pay tiers (Tanner's design): the DOUBLE
+   OVERTIME manifest is priced by its protection. Unguarded runs carry
+   the cheap load; the guarded solo is the 160 baseline; convoy freight
+   pays premium because 2-3 capital guns are the cover charge. ---- */
+const CONVOY_ODDS = 0.12;        // rolled BEFORE the escort roll at the piñata's spawn
+const PAY_UNGUARDED_BITS = 14;   // ×8 = 112 — no security, no premium
+const PAY_CONVOY_BITS = 24;      // ×8 = 192 a truck — earned through the guns
 
 const HAULER_DEFS = [
   //                                             hp: no guns, so durability IS the fight
@@ -3095,8 +3105,14 @@ const haulTmpA = new THREE.Vector3(), haulTmpB = new THREE.Vector3(), haulTmpC =
 const haulSeg = new THREE.Vector3(), haulToC = new THREE.Vector3(), haulNearPt = new THREE.Vector3();
 const haulAimObj = new THREE.Object3D();
 
+/* v57 convoys: three extra DOUBLE OVERTIME slots ride at the end of the
+   array, DORMANT (respawnIn Infinity) until a convoy event claims them.
+   The one-live-ship-per-slot rule holds — there are just more slots now. */
+const haulerSlotDefs = [...HAULER_DEFS, HAULER_DEFS[1], HAULER_DEFS[1], HAULER_DEFS[1]];
 const haulers = [];
-for (const def of HAULER_DEFS) {
+for (let si = 0; si < haulerSlotDefs.length; si++) {
+  const def = haulerSlotDefs[si];
+  const convoyOnly = si >= HAULER_DEFS.length;
   const g = new THREE.Group();
   g.visible = false;
   scene.add(g);
@@ -3121,11 +3137,13 @@ for (const def of HAULER_DEFS) {
     mixer: null, mats: [],
     vel: new THREE.Vector3(), wanderPt: new THREE.Vector3(),
     hp: def.hp, flash: 0, alive: false,
-    respawnIn: def.first + Math.random() * def.firstRnd,
+    respawnIn: convoyOnly ? Infinity : def.first + Math.random() * def.firstRnd,
     state: "CRUISE", fleeT: 0, legT: 0,   // "CRUISE" | "FLEE" (+ "SALVAGE" for the PACKRAT, v57)
     phase: Math.random() * 6.28,
     // v57 salvage fields — only the PACKRAT ever touches them
     target: null, targetPos: new THREE.Vector3(), scanT: 0, eatT: 0, eatScale0: 1, beam: null,
+    // v57 convoy fields — payBits 0 means "use the def's baseline"
+    convoyOnly, convoyId: 0, convoyLead: false, convoyOff: new THREE.Vector3(), payBits: 0,
   });
   // the PACKRAT's suction beam: soft blobs marching junk → intake. WORLD-space
   // sprites (scene, not the group) so the line stays straight while she banks;
@@ -3263,7 +3281,15 @@ function updateSalvage(h, dt) {
   const k = Math.min(1, h.eatT / SALV_EAT_T);
   t.group.scale.setScalar(Math.max(0.05, h.eatScale0 * (1 - k)));
   t.radius = t.baseR * t.group.scale.x;
-  t.vel.lerp(h.vel, 1 - Math.exp(-2 * dt));   // tractor grip: the piece rides along, drift can't break the meal
+  // the tow does real work: match the truck's velocity AND reel the piece
+  // in toward the intake. Without the reel, the entry transient (a piece
+  // arriving at cruise speed while the truck clamps to creep) can walk the
+  // piece out past the SHRINKING gap and stall the meal forever — found by
+  // probe: dist grew 35→61 while the gap closed 90→71.
+  t.vel.lerp(h.vel, 1 - Math.exp(-2 * dt));
+  salvTmpA.subVectors(h.group.position, t.group.position);
+  const reelD = salvTmpA.length() || 1;
+  t.vel.addScaledVector(salvTmpA.divideScalar(reelD), SALV_REEL * dt);
 
   // the suction made visible: blobs march piece → intake, swallowed small
   for (let i = 0; i < h.beam.length; i++) {
@@ -3311,10 +3337,63 @@ function haulerSpawn(h) {
   haulAimObj.position.copy(h.group.position);
   haulAimObj.lookAt(haulTmpB.copy(h.group.position).multiplyScalar(2).sub(h.wanderPt));
   h.group.quaternion.copy(haulAimObj.quaternion);
-  // v57: the loot piñata rolls for security — most shifts, LOSS PREVENTION
-  // rides along (10i). Rolled HERE so every respawn is a fresh read: is
-  // this one guarded? You have to get close enough to find out.
-  if (h.def.escort && Math.random() < ESCORT_ODDS) gunshipSpawnEscort(h);
+  // v57: the piñata's manifest is rolled fresh every spawn. Three reads,
+  // priced by risk: a rare full CONVOY (premium freight, 2-3 guns), the
+  // usual guarded solo, or an unguarded run carrying the cheap manifest.
+  // You have to get close enough to count the blue glows to know which.
+  h.payBits = 0; h.convoyId = 0; h.convoyLead = false;
+  if (h.def.escort && !h.convoyOnly) {
+    if (Math.random() < CONVOY_ODDS) spawnConvoy(h);
+    else if (Math.random() < ESCORT_ODDS) gunshipSpawnEscort(h);   // guarded solo — the 160 baseline
+    else h.payBits = PAY_UNGUARDED_BITS;                           // unguarded — the cheap run
+  }
+}
+
+/* ---- v57 convoy event: 3-4 DOUBLE OVERTIMEs in echelon behind a lead,
+   2-3 escorts around it. Premium freight on every truck — and the column
+   fights as ONE: hit any member and every gun in the detail goes red
+   (gunshipWardHit matches on convoyId). ---- */
+let convoySeq = 0;
+function spawnConvoy(lead) {
+  const id = ++convoySeq;
+  lead.convoyId = id; lead.convoyLead = true;
+  lead.payBits = PAY_CONVOY_BITS;
+  const members = [lead];
+  const total = 3 + (Math.random() < 0.5 ? 1 : 0);   // 3-4 trucks
+  for (const h of haulers) {
+    if (members.length >= total) break;
+    if (!h.convoyOnly || h.alive || !h.model) continue;
+    const i = members.length;
+    // echelon: alternate flanks, stagger the deck, step back down the line
+    h.convoyOff.set((i % 2 ? 140 : -140) * Math.ceil(i / 2), ((i % 3) - 1) * 45, i * 170);
+    haulTmpC.copy(h.convoyOff).applyQuaternion(lead.group.quaternion);
+    haulTmpB.copy(lead.group.position).add(haulTmpC);
+    if (junkPointBlocked(haulTmpB)) continue;   // slot lands in a rock — short column today
+    h.group.position.copy(haulTmpB);
+    h.alive = true; h.group.visible = true;
+    h.hp = h.def.hp; h.flash = 0;
+    for (const m of h.mats) m.emissive.copy(m.userData.baseEmissive);
+    h.state = "CRUISE"; h.fleeT = 0;
+    h.convoyId = id; h.convoyLead = false;
+    h.payBits = PAY_CONVOY_BITS;
+    h.wanderPt.copy(lead.wanderPt); h.legT = lead.legT;   // the lead's line IS the schedule
+    h.group.quaternion.copy(lead.group.quaternion);
+    h.vel.copy(lead.vel);
+    members.push(h);
+  }
+  // the security detail: every gun wards the LEAD — gunshipWardGone
+  // re-wards down the column when trucks start dropping
+  const nGuards = members.length >= 4 ? 3 : 2;
+  for (let n = 0; n < nGuards; n++) {
+    const g = gunshipSpawnEscort(lead);
+    if (g) g.convoyId = id;
+  }
+}
+
+// the column's current boss — null means the line is leaderless
+function convoyLeadOf(h) {
+  for (const q of haulers) if (q.alive && q.convoyId === h.convoyId && q.convoyLead) return q;
+  return null;
 }
 
 // quiet exit — culls only. No bang, no pay, just a delivery completed elsewhere.
@@ -3323,7 +3402,9 @@ function haulerDespawn(h) {
   gunshipWardGone(h);   // v57: security clocks out with the ward — unless it's mid-fight
   h.alive = false;
   h.group.visible = false;
-  h.respawnIn = h.def.rMin + Math.random() * (h.def.rMax - h.def.rMin);
+  // convoy extras go back in the drawer, not on the schedule
+  h.respawnIn = h.convoyOnly ? Infinity : h.def.rMin + Math.random() * (h.def.rMax - h.def.rMin);
+  h.convoyId = 0; h.convoyLead = false;
 }
 
 function haulerFlee(h) {
@@ -3339,7 +3420,8 @@ function haulerKill(h, dist) {
   junkBoomSound(dist, 70);   // fake radius 70: a 52u freighter dies with a real whump
   if (dist < 1100) padRumble(Math.min(0.7, 0.5 * (350 / Math.max(60, dist))), 110);
   killsEl.textContent = ++junkKills;
-  for (let i = 0; i < h.def.bits; i++) {
+  const bits = h.payBits || h.def.bits;   // v57 pay tiers: the manifest was priced at spawn
+  for (let i = 0; i < bits; i++) {
     randUnit(haulTmpA);
     haulTmpA.multiplyScalar(10 + Math.random() * 24).add(h.vel);
     emitScrap(h.group.position, haulTmpA, h.def.val);
@@ -3406,6 +3488,17 @@ function updateHaulers(dt) {
     if (h.state === "FLEE") {
       h.fleeT -= dt;
       if (h.fleeT <= 0) { h.state = "CRUISE"; haulerPickLeg(h); }   // back to the schedule
+    } else if (h.convoyId && !h.convoyLead) {
+      // convoy discipline: fly the LEAD's line from your slot in its frame —
+      // no independent leg re-picks, so the column stays a column
+      const lead = convoyLeadOf(h);
+      if (lead) {
+        haulTmpC.copy(h.convoyOff).applyQuaternion(lead.group.quaternion);
+        h.wanderPt.copy(lead.wanderPt).add(haulTmpC);
+      } else {
+        h.convoyLead = true;   // battlefield promotion — this truck runs the line now
+        haulerPickLeg(h);
+      }
     } else if (h.def.role === "salvage") {
       updateSalvage(h, dt);
     } else if (h.legT <= 0 || h.group.position.distanceToSquared(h.wanderPt) < 400 * 400) {
@@ -3767,6 +3860,10 @@ function gunshipWardHit(h) {
 function gunshipWardGone(h) {
   for (const g of gunships) {
     if (!g.alive || g.role !== "escort" || g.ward !== h) continue;
+    if (g.convoyId) {   // convoy duty: re-ward the next truck still in the column
+      const next = haulers.find(q => q.alive && q !== h && q.convoyId === g.convoyId);
+      if (next) { g.ward = next; continue; }
+    }
     if (g.hostile) { g.ward = null; continue; }   // already in the fight — it finishes the fight
     gunshipDespawn(g);                            // shift's over, nothing to guard
   }
