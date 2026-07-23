@@ -613,12 +613,29 @@ const BODIES = [
     position: [0, 0, -90000],
   },
   {
-    name: "CINDER", type: "planet", style: "rocky", seed: 11,
-    radius: 900,
+    name: "CINDER", type: "planet", style: "gltf", seed: 11,
+    radius: 900,                    // the inner scorched world — smallest
+                                    // landable body, so the GLB scales by 9
     orbit: { radius: 36000, speed: 0.006, angle: 3.0, y: 2400 },
-    spin: 0.02,
+    spin: 0.005,                    // was 0.02 — fine for a flyby, but a
+                                    // parked ship RIDES the rotation, and at
+                                    // 0.02 the ground shears out from under you
+    file: "planets/cinder.glb",     // built by build_cinder.py (Blender)
+    heightFile: "planets/cinder_height.json",
+    landable: true,
+    gravity: 0.6,                   // small world, light pull — forgiving
+    // NO pads. The whole surface is landable off the height grid, and both
+    // outposts sit on leveled pans, so you just set down on the open apron
+    // next to them. No pad cylinder = no deck-vs-grid height mismatch.
     atmosphere: 0xcc5522, atmoStrength: 0.5,
-    palette: { dark: 0x4a2318, mid: 0x9c4a2e, light: 0xd98d5f },
+    // fallback palette: if cinder.glb can't load (file:// with no server) the
+    // planet still exists as a procedural scorched sphere. NOTE the loader's
+    // fallback forces style "terrestrial", so these must be the TERRESTRIAL
+    // keys — the old dark/mid/light rocky palette would have been ignored.
+    palette: {
+      deep: 0x1a1512, shallow: 0x2b2523, sand: 0x55504a,
+      low: 0x39352f, high: 0x4d423a, snow: 0xff7a1a,
+    },
   },
   {
     name: "AZURE", type: "planet", style: "terrestrial", seed: 42,
