@@ -216,6 +216,11 @@
     font-size: 12px; letter-spacing: 2px; text-align: center; opacity: .9;
   }
   #nearest .name { font-size: 16px; }
+  /* the landing instruments ride under NEAREST BODY, hidden until you're
+     close enough to a landable world for them to mean anything */
+  #surfrow { display: none; margin-top: 5px; font-size: 12px; letter-spacing: 2px; }
+  #surfrow .sep { opacity: .35; margin: 0 4px; }
+  #surfAlt { color: #6ee7d8; }
   #alarm {
     position: absolute; top: 62%; left: 50%; transform: translateX(-50%);
     color: #ff5544; text-shadow: 0 0 10px rgba(255,80,60,.8);
@@ -491,6 +496,13 @@
     <span class="dim">NEAREST BODY</span><br>
     <span class="name" id="nearName">—</span><br>
     <span id="nearDist">—</span>
+    <!-- landing instruments (v61): true height over the terrain under you, and
+         what that terrain IS. Only appears on approach to a world you can land on. -->
+    <div id="surfrow">
+      <span class="dim">ALT</span> <span id="surfAlt">—</span>
+      <span class="sep">·</span>
+      <span class="dim">SURFACE</span> <span id="surfType">—</span>
+    </div>
   </div>
   <div id="alarm">⚠ PROXIMITY ⚠</div>
   <div id="entrytag">◆ ATMOSPHERIC ENTRY ◆</div>
@@ -628,6 +640,19 @@ const BODIES = [
     file: "planets/cinder.glb",     // built by build_cinder.py (Blender)
     heightFile: "planets/cinder_height.json",
     landable: true,
+    /* NO hazard band here on purpose (v61). An elevation cut works for WATER —
+       water pools in low ground, so "low" and "wet" are the same fact — but
+       CINDER's lava is not carved, it's PAINTED: build_cinder.py's lava_field()
+       picks faces, and the result sits at every elevation. The Maw's lava lake
+       floor is at +0.030 ABOVE the datum (it's a volcano caldera, SHIELD_H
+       0.095), while the safe ash plains are the 17% of the surface BELOW 1.0.
+       A "below X" rule would flag the boring flats as molten and leave the
+       actual lava lake safe — including the Heatsink outpost, which sits on an
+       ash plain. Exactly backwards.
+       CINDER needs a baked hazard MASK instead: lava_field() already computes
+       it on the same lat/lon grid as the height field, so build_cinder.py can
+       emit cinder_hazard.json next to cinder_height.json and the engine reads
+       it with the same sampler. Until then this world reports SOLID. */
     gravity: 0.6,                   // small world, light pull — forgiving
     // NO pads. The whole surface is landable off the height grid, and both
     // outposts sit on leveled pans, so you just set down on the open apron
@@ -677,6 +702,11 @@ const BODIES = [
     file: "planets/earth.glb",      // built by build_earth.py (Blender)
     heightFile: "planets/earth_height.json",
     landable: true,
+    // hazard band (v61): build_earth.py bakes the sea floor perfectly FLAT at
+    // exactly 1.0 (grid min == 1.00000), so the whole ocean is one number away.
+    // 1.0005 clears the flat floor without eating the coastline; Charleston's
+    // plateau (1.012) and its deck (1.0175) sit well clear.
+    hazard: { below: 1.0005, name: "OCEAN", color: "#4aa3ff" },
     gravity: 1.0,                   // colony worlds keep landing-friendly pull
     // landing pads: lat/lon as baked in build_earth.py, footprint angular
     // radius, and DECK height as a radius multiplier. The height grid only
@@ -1434,6 +1464,37 @@ function groundRadius(body, n) {
   const bot = s(X0, Y1) + (s(X1, Y1) - s(X0, Y1)) * fx;
   const val = top + (bot - top) * fy;
   return body.cfg.radius * (g.min + (g.max - g.min) * val / 255);
+}
+
+/* What is the ship standing over? (v61 — the instrument, not the trap.)
+   groundRadius() already answers "how high is the terrain here"; this reads the
+   same number as a radius MULTIPLIER and asks whether it falls inside the
+   world's hazard band. One rule covers water and lava identically, because both
+   were built into the LOW ground — EARTH's sea floor bakes flat at exactly 1.0,
+   CINDER's basins bottom out at 0.958.
+
+   Deliberately NON-LETHAL right now: nothing consumes `hazard` except the HUD.
+   Fly the thresholds, see where they actually fall, THEN make them bite —
+   probes before vibes. When AZURE goes landable it plugs in here too, reading
+   its height from the seed's fbm instead of a baked grid.
+
+   Landing pads are exempt for free: groundRadius returns the deck height
+   (Charleston 1.0175) inside a pad footprint, well clear of the ocean band. */
+const _surfN = new THREE.Vector3();
+function surfaceUnder(body) {
+  if (!body || !body.cfg.landable) return null;
+  _surfN.subVectors(shipObj.position, body.group.position);
+  const fromCenter = _surfN.length();
+  if (!fromCenter) return null;
+  _surfN.multiplyScalar(1 / fromCenter);
+  const ground = groundRadius(body, _surfN);
+  const hz = body.cfg.hazard;
+  const mult = ground / body.cfg.radius;
+  return {
+    alt: fromCenter - ground,            // TRUE altitude over terrain, not the datum
+    mult,
+    hazard: hz && mult < hz.below ? hz : null,
+  };
 }
 
 /* ============ 7. BODY BUILDER ============ */
@@ -5230,6 +5291,9 @@ const clock = new THREE.Clock();
 const speedEl = document.getElementById("speed");
 const nearNameEl = document.getElementById("nearName");
 const nearDistEl = document.getElementById("nearDist");
+const surfRowEl = document.getElementById("surfrow");
+const surfAltEl = document.getElementById("surfAlt");
+const surfTypeEl = document.getElementById("surfType");
 const throttleFwd = document.getElementById("throttlefwd");
 const throttleRev = document.getElementById("throttlerev");
 const alarmEl = document.getElementById("alarm");
@@ -6552,6 +6616,21 @@ function animate() {
   if (nearest) {
     nearNameEl.textContent = nearest.cfg.name;
     nearDistEl.textContent = Math.round(nearestDist).toLocaleString() + " u";
+  }
+  /* landing instruments (v61): true altitude over the terrain under the ship —
+     NEAREST BODY measures to the planet's datum, which is wrong by hundreds of
+     units over a mountain or a basin, i.e. exactly where it matters. Shows the
+     surface type beside it so a hazard is something you watched coming.
+     Appears inside half a radius of a landable world; stays up while parked so
+     you can see what you set down on. */
+  const surf = surfaceUnder(nearest);
+  if (surf && surf.alt < nearest.cfg.radius * 0.5) {
+    surfRowEl.style.display = "block";
+    surfAltEl.textContent = Math.round(Math.max(0, surf.alt)).toLocaleString() + " u";
+    surfTypeEl.textContent = surf.hazard ? surf.hazard.name : "SOLID";
+    surfTypeEl.style.color = surf.hazard ? surf.hazard.color : "#6ee7d8";
+  } else {
+    surfRowEl.style.display = "none";
   }
   // closing speed only means something if we're comparing distances to the
   // SAME body — when the "nearest" title changes hands, skip one frame
