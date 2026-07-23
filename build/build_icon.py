@@ -10,7 +10,7 @@ build_earth.py): edit the numbers, re-run headless, get a fresh icon. The
 Outputs (written next to this script):
     icon.png   — 512x512 RGBA hero render of ussthumm.glb on a transparent
                  background. SpaceSuck.desktop points at it, so re-run this
-                 after rebuilding the ship in ~/Blender/spaceship/build_ship.py
+                 after rebuilding the ship in ~/Blender/spacesuck/ships/uss-thumm/build_ship.py
                  and the desktop launcher picks the new one up for free.
 
 Two things here are less obvious than they look:
