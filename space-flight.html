@@ -700,6 +700,10 @@ const BODIES = [
     // outposts sit on leveled pans, so you just set down on the open apron
     // next to them. No pad cylinder = no deck-vs-grid height mismatch.
     atmosphere: 0xcc5522, atmoStrength: 0.5,
+    atmoAlt: 700,                   // v65: was 360 (radius × 0.4) — and the Plume
+                                    // geometry DRAWS to 370u, so the volcanic plumes
+                                    // were poking out through the top of the sky.
+                                    // (They collide at 120u; drawn ≠ hit, see below.)
     // fallback palette: if cinder.glb can't load (file:// with no server) the
     // planet still exists as a procedural scorched sphere. NOTE the loader's
     // fallback forces style "terrestrial", so these must be the TERRESTRIAL
@@ -737,6 +741,7 @@ const BODIES = [
     ],
     clouds: true,
     atmosphere: 0x5599ff, atmoStrength: 1.0,
+    atmoAlt: 850,                   // v65: was 570. Island peaks reach 166u.
     palette: {
       deep: 0x0a2d52, shallow: 0x1a6b8f, sand: 0xc2b280,
       low: 0x3d7a3d, high: 0x6b5d45, snow: 0xf0f5fa,
@@ -750,6 +755,12 @@ const BODIES = [
     spin: 0.005,                    // v64: halved system-wide (was 0.01) — the gas
                                     // giant's banding reads best turning slowly
     atmosphere: 0xddbb77, atmoStrength: 0.7,
+    atmoAlt: 1000,                  // v65: was 780, and it moves the LEAST of any
+                                    // world on purpose — the rings start 2550 from
+                                    // center and the glow already reached 2730, so
+                                    // the inner band sits inside the sky. Push it
+                                    // hard and additive glow washes the rings out.
+                                    // KRONOS isn't landable; it needs no flying room.
     palette: { dark: 0x7a5c38, mid: 0xc9a86b, light: 0xf0dcae },
     rings: { inner: 2550, outer: 4200, color: 0x8a7a5c },
     belt: { inner: 4500, outer: 6300, count: 1000 },
@@ -790,6 +801,7 @@ const BODIES = [
              port: { name: "CHARLESTON SPACEPORT", home: true,
                      pay: 1.0, shop: true, dispatch: true } }],
     atmosphere: 0x5f9dff, atmoStrength: 1.05,
+    atmoAlt: 1400,                  // v65: was 1000. Already roomy — a modest lift.
     // Luna-true proportions: real Moon = 0.27 Earth radii. Orbits just
     // outside the 3-radii gravity well so approach stays clean.
     moon: { radius: 675, distance: 8000, speed: 0.05, seed: 8 },
@@ -831,6 +843,13 @@ const BODIES = [
     ],
     clouds: true,
     atmosphere: 0x77ffaa, atmoStrength: 0.9,
+    atmoAlt: 600,                   // v65: was 270 — the tightest sky in the system
+                                    // and the reason this change exists. Smallest
+                                    // world, so radius × 0.4 gave it the least air,
+                                    // while the canopy you must fly over is drawn
+                                    // 110u tall (the Cone mesh; the height grid only
+                                    // records 42u). 160u of clear sky — under a
+                                    // second at cruise — becomes 490u.
     palette: {
       deep: 0x0d3d33, shallow: 0x1f7a5c, sand: 0xb5c28a,
       low: 0x3f8f2e, high: 0x5c7a3d, snow: 0xeafaef,
@@ -858,6 +877,8 @@ const BODIES = [
     pads: [{ lat: -18.5, lon: 15.0, ang: 0.016, top: 1.013,
              port: { name: "RUSTHOLLOW", pay: 0.7, shop: false, dispatch: false } }],
     atmosphere: 0xd98a4f, atmoStrength: 1.0,   // thin orange dust haze
+    atmoAlt: 1600,                  // v65: was 1280. Biggest world, already had the
+                                    // most room — the smallest proportional lift.
     // three moons, three sizes, each on a plane tilted by `incl` so they
     // don't stack. Moons are procedural (genRocky) and non-collidable — built
     // in JS, not Blender — so they're pure decoration and can't wreck anything.
@@ -1112,7 +1133,7 @@ function genSun(cfg) {
 }
 
 /* ============ 4. ATMOSPHERE SHADER ============ */
-function makeAtmosphere(radius, colorHex, strength) {
+function makeAtmosphere(shellRadius, colorHex, strength) {
   const mat = new THREE.ShaderMaterial({
     uniforms: {
       atmoColor: { value: new THREE.Color(colorHex) },
@@ -1141,9 +1162,13 @@ function makeAtmosphere(radius, colorHex, strength) {
     depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
-  // 1.4× shell so the glow reads as a VOLUME you fly inside (a touch bigger
-  // as of v37), matching the ~1.2-radius effect band — not a thin skin
-  return new THREE.Mesh(new THREE.SphereGeometry(radius * 1.4, 64, 48), mat);
+  // v65: the caller hands us the SHELL radius outright (surface + the world's
+  // own atmoAlt). It used to be a blanket radius × 1.4 — but that ties the
+  // amount of flying room to planet SIZE, and your ship and your speed don't
+  // care how big the world is. VERDANT is the smallest world in the system, so
+  // it got the thinnest air while its canopy is proportionally the tallest
+  // thing standing on any surface: 229u of clear sky, about a second at cruise.
+  return new THREE.Mesh(new THREE.SphereGeometry(shellRadius, 64, 48), mat);
 }
 
 /* ============ 5. SCENE SETUP ============ */
@@ -1809,7 +1834,12 @@ function buildBody(cfg) {
     }
 
     if (cfg.atmosphere) {
-      group.add(makeAtmosphere(cfg.radius, cfg.atmosphere, cfg.atmoStrength ?? 0.8));
+      // atmoAlt = how high the visible sky reaches ABOVE the surface, in units.
+      // Absolute, not a multiple of the radius, so small worlds aren't punished
+      // for being small. Unset falls back to the old radius × 0.4 (the blanket
+      // 1.4× shell) so a new world can't silently lose its sky.
+      group.add(makeAtmosphere(cfg.radius + (cfg.atmoAlt ?? cfg.radius * 0.4),
+                               cfg.atmosphere, cfg.atmoStrength ?? 0.8));
     }
 
     if (cfg.rings) {
