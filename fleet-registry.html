@@ -765,8 +765,11 @@
     // hauler lamps (NavRed/NavGreen/MarkerAmber/Headlight — pure emission
     // but not named *Glow) rendered here as dim self-lit hull.
     // weather:true gives the viewer the same procedural plating as flight.
-    function applyGameShading(root) {
-      dressHullMats(root, { floor: 0.15, weather: true });
+    // shipFile lets the lib look up this hull's world length: the viewer frames
+    // every ship to the same screen size, so plate density is the only cue that
+    // a 52u freighter is bigger than a 10u fighter.
+    function applyGameShading(root, file) {
+      dressHullMats(root, { floor: 0.15, weather: true, shipFile: file });
     }
 
     function frameModel(obj) {
@@ -838,7 +841,7 @@
         if (seq !== loadSeq) return;              // a newer open() won the race
         hideMsg();
         curModel = gltf.scene;
-        applyGameShading(curModel);               // match the in-flight self-lit look
+        applyGameShading(curModel, model);        // match the in-flight self-lit look
         holder.add(curModel);
         frameModel(curModel);
         viewer.dataset.state = 'loaded';

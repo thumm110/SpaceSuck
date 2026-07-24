@@ -2273,7 +2273,7 @@ function loadPlayerShip(def) {
     // glows bright; the hull gets a faint self-lit floor so it still reads
     // out past HELIOS, where the sun's inverse-square falloff would
     // otherwise leave the whole ship near-black
-    dressHullMats(model, { floor: 0.15, weather: true });   // player only, for now
+    dressHullMats(model, { floor: 0.15, weather: true, shipLen: def.len });
 
     // swap hulls: strip everything that isn't a glow sprite — the primitive
     // placeholder on first load, the PREVIOUS fighter on a picker swap. The
@@ -3584,7 +3584,7 @@ if (THREE.GLTFLoader) {
       // gets a self-lit floor. The raider's gunmetal is near-black by
       // design, so it gets a higher floor than the player's 0.15 — the
       // dagger silhouette stays, the edges still catch
-      dressHullMats(model, { floor: 0.5 });   // AFTER the clone above
+      dressHullMats(model, { floor: 0.5, weather: true, shipLen: 10 });   // AFTER the clone above
 
       // swap hulls: strip the primitives, KEEP the sprites the game loop
       // holds references to (strobe beacon + engine glow)
@@ -3753,13 +3753,16 @@ for (let si = 0; si < haulerSlotDefs.length; si++) {
 if (THREE.GLTFLoader) for (const h of haulers) {
   new THREE.GLTFLoader().load(h.def.file + ASSET_V, gltf => {
     const model = gltf.scene;
-    // shared material pass. build_hauler.py names its lamps NavRed/NavGreen/
-    // MarkerAmber/Headlight rather than *Glow, but authors them pure-emission,
-    // so the black-albedo half of the LIGHT test picks them up
-    dressHullMats(model, { floor: 0.5 });
     const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
     const hlen = h.def.len || HAULER_LEN;
     model.scale.setScalar(hlen / size.z);
+    // shared material pass. build_hauler.py names its lamps NavRed/NavGreen/
+    // MarkerAmber/Headlight rather than *Glow, but authors them pure-emission,
+    // so the black-albedo half of the LIGHT test picks them up.
+    // MUST come after hlen is declared — it's a const, so reading it above is a
+    // temporal-dead-zone throw that kills the whole load callback (and with it
+    // every hauler in the traffic system).
+    dressHullMats(model, { floor: 0.5, weather: true, shipLen: hlen });
     h.group.add(model);
     h.model = model;
     // exhaust bloom sits behind the engine bell (PACKRAT has no ThrusterC — use its def's node)
@@ -4305,7 +4308,7 @@ if (THREE.GLTFLoader) for (const g of gunships) {
     const model = gltf.scene;
     // the raider's material pass: authored glows boosted, near-black gothic
     // hull gets the raider's brighter self-lit floor so it reads at range
-    dressHullMats(model, { floor: 0.5 });   // BEFORE the escort retint below
+    dressHullMats(model, { floor: 0.5, weather: true, shipLen: g.len });   // BEFORE the escort retint
     // the escort retint: swap the four red foe-tells to ion blue. EMISSIVE,
     // never color — pure-emission mats export a BLACK base color; the visible
     // color lives in emissiveFactor. Refs kept for the live red-flip.
