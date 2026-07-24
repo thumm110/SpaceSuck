@@ -259,6 +259,15 @@
     font-size: 15px; letter-spacing: 4px; visibility: hidden;
     text-align: center; white-space: nowrap;
   }
+  /* landing-assist prompt (v68): a contextual call-to-action low on the glass —
+     "[G] LAND" when aligned over a pad, "[G] LAUNCH" when parked, "AUTO-LANDING"
+     while the autopilot flies. Teal like the nav reticle it belongs to. */
+  #assisttag {
+    position: absolute; top: 60%; left: 50%; transform: translateX(-50%);
+    color: #6ee7d8; text-shadow: 0 0 10px rgba(110,231,216,.8);
+    font-size: 13px; letter-spacing: 3px; visibility: hidden;
+    text-align: center; white-space: nowrap;
+  }
   /* the outfitter — Charleston's upgrade shop (v34). Only exists while
      parked on the pad, so it borrows the centreline under the landing tag.
      The HUD ignores the pointer; this panel is the one part that doesn't. */
@@ -384,6 +393,9 @@
   }
   #btnThrust { right: 24px; bottom: 240px; }
   #btnBrake  { right: 24px; bottom: 150px; }
+  /* landing-assist button (v68): left thumb's side, above the steering area.
+     Hidden unless a landing/launch is actually available (toggled in JS). */
+  #btnLand   { left: 24px; bottom: 240px; border-color: rgba(125,255,168,.7); color: #7dffa8; }
   #btnRev    { right: 24px; bottom: 60px; border-color: rgba(255,176,102,.6); color: #ffb066; }
   /* FIRE is the biggest target on the glass because it's the one control a
      shooting game presses constantly. Inboard of REVERSE and sharing its row
@@ -523,6 +535,7 @@
   <div id="alarm">⚠ PROXIMITY ⚠</div>
   <div id="entrytag">◆ ATMOSPHERIC ENTRY ◆</div>
   <div id="landtag">◆ LANDED ◆</div>
+  <div id="assisttag">◆ [G] LAND ◆</div>
   <div id="breachtag">◆ HULL BREACH — TOWED HOME ◆</div>
   <!-- ditch warning (v62): you're IN a hazard and the hull is flooding.
        Counts down the seconds you have left so pulling up is a decision. -->
@@ -561,6 +574,7 @@
 
 <button class="touchbtn" id="btnThrust">THRUST</button>
 <button class="touchbtn" id="btnBrake">STOP</button>
+<button class="touchbtn" id="btnLand">LAND</button>
 <button class="touchbtn" id="btnRev">REVERSE</button>
 <button class="touchbtn" id="btnFire">FIRE</button>
 <button class="touchbtn" id="btnView">VIEW</button>
@@ -857,8 +871,10 @@ const BODIES = [
     // safe ground in the city. Pads are tested before the grid AND before the
     // mask, so they're exempt for free.
     pads: [
-      { lat: 9.00,  lon: -32.89, ang: 0.0133, top: 1.03313 },   // Angel Oak platform 1
-      { lat: 14.92, lon: -23.00, ang: 0.0133, top: 1.03313 },   // Angel Oak platform 2
+      // lat/lon come straight from build_verdant.py's emitted config (PAD_DIRS):
+      // they were ~14u stale, so the reticle + every landing aimed beside the deck (v68 fix)
+      { lat: 8.39,  lon: -33.86, ang: 0.0133, top: 1.03313 },   // Angel Oak platform 1
+      { lat: 15.49, lon: -21.98, ang: 0.0133, top: 1.03313 },   // Angel Oak platform 2
     ],
     clouds: true,
     atmosphere: 0x77ffaa, atmoStrength: 0.9,
@@ -2496,6 +2512,7 @@ function shipBreach() {
   ship.throttle = 0;
   landedOn = null;
   liftoff = null;   // a tow-home mid-liftoff must not leave the autopilot pinning us to the old pad
+  landing = null;   // ...and neither must a tow mid-approach — same stale-pad trap (v68)
   // the tow pulls you out of whatever you were sitting in — drop the ditch state
   // too, or the warning lingers a frame and the carry claim points at a world
   // you're no longer anywhere near
@@ -5502,6 +5519,7 @@ addEventListener("keydown", e => {
   if (e.code === "KeyV" && !keys["KeyV"]) toggleView(); // fire once per press
   if (e.code === "KeyH" && !keys["KeyH"]) ctrlMenu.classList.toggle("open"); // controls menu
   if (e.code === "KeyE" && !keys["KeyE"]) tryRecruit(); // answer a hail — hire the wingman (v47)
+  if (e.code === "KeyG" && !keys["KeyG"]) tryAssist();  // landing assist / leave pad (v68)
   if (e.code === "KeyM" && !keys["KeyM"]) toggleMusic(); // music on/off (v48) — effects stay up
   if (e.code === "Space") e.preventDefault();           // Space fires; don't scroll
   // docked at the outfitter, 1/2/3 buy the rows (fire once per press)
@@ -5606,6 +5624,10 @@ const bindHold = (id, setter) => {
 };
 bindHold("btnThrust", v => touchThrust = v);
 bindHold("btnBrake",  v => touchBrake  = v);
+// LAND is a TAP, not a hold — it fires tryAssist() once (land / launch / abort)
+document.getElementById("btnLand").addEventListener("touchstart", e => {
+  e.preventDefault(); initAudio(); tryAssist();
+});
 bindHold("btnRev",    v => touchRev    = v);
 /* Hold to fire. FIRE_COOLDOWN already paces the gate at ~9 shots/sec, so a
    held button machine-guns and a quick tap fires exactly one bolt — both fall
@@ -5632,6 +5654,7 @@ document.getElementById("btnView").addEventListener("touchstart", e => {
 let padIndex = null;
 let padViewHeld = false;      // edge-detect for the view toggle
 let padStartHeld = false;     // edge-detect for pad-Start pause (v54)
+let padBHeld = false;         // edge-detect for B → landing assist / launch (v68)
 let padUpHeld = false, padDownHeld = false, padBuyHeld = false;   // shop D-pad edge-detect (v35)
 let padJobMoveHeld = false, padJobTakeHeld = false;              // dispatch board pad edge-detect (v56)
 let lastPadRumble = 0;
@@ -5678,7 +5701,28 @@ const LIFTOFF_ALT = 30;        // control comes back this far above the gear sto
 const LIFTOFF_DUR = 2.0;       // seconds, pad to altitude
 const GEAR_HEIGHT = 4;         // the ship rests this far above the terrain
 const SURFACE_G = 26;          // gravity at surface level, u/s²
+
+/* landing assist (v68) — the inverse of auto-liftoff. Press [G] while aligned
+   over a pad and the autopilot swings over the deck (canopy-clearing altitude),
+   then descends the surface normal and latches. { b, pad, t, dir0, r0, hoverR,
+   deckR } — dir0 is the START up-vector in the BAKED frame, so the whole path
+   is interpolated in the planet's own frame and rides its spin/orbit for free.
+   [G] also doubles as the leave-pad button when parked. */
+let landing = null;
+let assistManualPrev = false;  // edge-detect: only a FRESH grab of the controls aborts the approach
+const ASSIST_RANGE = 600;      // deck distance (u) within which the assist offers itself
+const ASSIST_DUR = 1.6;        // s: the auto-descent, from where you lined up down to the deck
+const LAUNCH_THROTTLE = 0.45;  // [G]-launch engages a gentle cruise so you actually leave
+const _asstPad = new THREE.Vector3();   // assist scratch — helper only (keypress/HUD, never the loop)
+const _asstUp  = new THREE.Vector3();
+const _landDir = new THREE.Vector3();   // assist scratch — collision-loop branch only
+const _landTgt = new THREE.Vector3();
+const _landUp  = new THREE.Vector3();
+const _alignQ  = new THREE.Quaternion();
+const _easeQ   = new THREE.Quaternion();
 const landTagEl = document.getElementById("landtag");
+const assistEl = document.getElementById("assisttag");
+const btnLandEl = document.getElementById("btnLand");
 const SPIN_AXIS = new THREE.Vector3(0, 1, 0);  // planets spin about local +Y
 const spinRideQ = new THREE.Quaternion();      // parked ship rides the spin
 
@@ -5940,6 +5984,63 @@ function pickPadTarget() {
     if (dot > top) { top = dot; pad = p; }
   }
   return { b: best, pad, dot: top };   // dot is reused as the ALIGNED test
+}
+
+/* The pad the landing assist would grab RIGHT NOW, or null. Same alignment cone
+   the exchange and the reticle use, plus a range gate — so the prompt, the
+   button, and the [G] press can never disagree about whether a landing is on
+   offer. Nothing here mutates state; tryAssist() and the HUD both call it. */
+function landingTarget() {
+  if (landedOn || liftoff || landing) return null;      // already down, or an autopilot's flying
+  const tgt = pickPadTarget();
+  if (!tgt || tgt.dot <= tgt.pad.districtCos) return null;   // not inside a pad's district
+  const b = tgt.b, pad = tgt.pad;
+  const yaw = b.surface ? b.surface.rotation.y : (b.cfg.yaw || 0);
+  // live world deck position — baked dir un-frozen by the planet's spin
+  _asstPad.set(pad.dx, pad.dy, pad.dz).applyAxisAngle(SPIN_AXIS, yaw)
+          .multiplyScalar(b.cfg.radius * pad.top).add(b.group.position);
+  if (shipObj.position.distanceTo(_asstPad) > ASSIST_RANGE) return null;
+  return tgt;
+}
+
+/* Is the pilot holding a "fly the ship myself" input right now (keyboard/touch
+   half — the pad triggers are locals inside animate and get OR'd in there)? Used
+   to abort the landing autopilot only on a FRESH grab, never on an input that was
+   already held when the approach began. */
+function manualKT() {
+  return !!(keys["KeyW"] || keys["KeyS"] || keys["KeyX"] || touchThrust || touchRev || touchBrake);
+}
+
+/* [G] — one context-sensitive button (also the mobile LAND button):
+     • auto-landing in progress → abort, hand control back
+     • parked → launch (the leave-pad half Tanner asked for)
+     • aligned + in range over a pad → start the auto-approach
+   Called from a keypress / touch, never mid-frame, so it may use the loop's
+   scratch freely. */
+function tryAssist() {
+  if (landing) { landing = null; return; }              // press again to bail out
+  if (liftoff) return;                                  // mid-launch — let it finish
+  if (landedOn) {                                       // leave the pad: same rise as throttle-up
+    const b = landedOn;
+    landedOn = null;
+    liftoff = { b, t: 0, rise: 0 };
+    ship.throttle = LAUNCH_THROTTLE;                    // engage cruise so you actually depart
+    return;
+  }
+  const tgt = landingTarget();
+  if (!tgt) return;
+  const b = tgt.b, pad = tgt.pad;
+  const r0 = shipObj.position.distanceTo(b.group.position);
+  _asstUp.subVectors(shipObj.position, b.group.position).multiplyScalar(1 / r0);
+  const dir0 = new THREE.Vector3();
+  toBakedFrame(b, _asstUp, dir0);                       // start up-vector, baked frame
+  const deckR = b.cfg.radius * pad.top;
+  landing = { b, pad, t: 0, dir0, r0, deckR };
+  // seed the abort baseline TRUE so ANY input you were already holding at engage
+  // (a throttle key, a touch button, or the RT/LT/X pad triggers) doesn't read as
+  // a fresh yoke-grab and cancel the assist on frame one. A genuine fresh grab is
+  // caught from the next frame on, once the guard has the real prev-state.
+  assistManualPrev = true;
 }
 function drawPadMarker(c, W, H, dt) {
   if (landedOn || !padTarget) { prevPadDist = -1; return; }   // parked, or nothing in range
@@ -6346,7 +6447,18 @@ function animate() {
       padThrust  = gp.buttons[7] ? gp.buttons[7].value : 0;    // RT — analog throttle
       padReverse = gp.buttons[6] ? gp.buttons[6].value : 0;    // LT — analog reverse
       padStop    = !!(gp.buttons[2] && gp.buttons[2].pressed); // X — full stop
-      padBoost   = !!(gp.buttons[1] && gp.buttons[1].pressed); // B — boost (hold)
+      // B (v68): context-sensitive, mirrors the [G] key. Near a pad it's the
+      // landing / launch / abort button (edge-fired once per press); everywhere
+      // else it stays BOOST (hold), so the controller loses nothing — you don't
+      // boost sitting on a deck or lining up a final approach anyway.
+      const bBtn = !!(gp.buttons[1] && gp.buttons[1].pressed);
+      if (landing || landedOn || landingTarget()) {
+        padBoost = false;
+        if (bBtn && !padBHeld) tryAssist();
+      } else {
+        padBoost = bBtn;                                      // B — boost (hold)
+      }
+      padBHeld = bBtn;
       // LB / RB — the rudder: nose left / nose right at any speed. Pairs
       // with the stick's at-speed roll: bank with the stick, tighten the
       // line with the bumpers.
@@ -6457,6 +6569,13 @@ function animate() {
   tmpDir.negate(); // getWorldDirection points +Z for Groups; our nose is -Z
 
   /* ---- throttle ---- */
+  // grabbing the yoke drops the landing autopilot — reach for thrust/reverse/stop
+  // (keyboard, touch, OR pad triggers) and you fly out of it, no fighting the pin.
+  // EDGE-detected: only a FRESH grab aborts, so holding W to hold your line or X
+  // to bleed speed while you press the button no longer cancels it instantly (v68).
+  const manualNow = manualKT() || padThrust > 0.02 || padReverse > 0.02 || padStop;
+  if (landing && manualNow && !assistManualPrev) landing = null;
+  assistManualPrev = manualNow;
   // W and S are mirror twins: W ramps the throttle up, S ramps it down
   // through zero into reverse. X is the full shutdown — throttle to zero
   // and scrub velocity until you're parked.
@@ -6523,13 +6642,13 @@ function animate() {
   camCarry.set(0, 0, 0);        // the carry the camera rig owes the lens this frame
   const COLLIDE_BUFFER = 12;
   for (const b of liveBodies) {
-    // parked? ride the planet's orbital travel (spin is handled in the
-    // landed branch below)
-    // a ditched ship rides the world exactly like a parked one — carried BEFORE
-    // its up-vector is measured, which is the whole reason parked ships don't
-    // drift. Do it here or the clamp below bakes the planet's orbital travel
-    // (~8.6u/frame for Earth) into a slide across the surface.
-    if (landedOn === b || ditchBody === b) {
+    // parked / ditched / LIFTING OFF: ride the planet's orbital travel (spin is
+    // handled per-branch below) — carried BEFORE the up-vector is measured, which
+    // is the whole reason parked ships don't drift. Do it here or the clamp below
+    // bakes the planet's orbital travel (~8.6u/frame for Earth) into a slide
+    // across the surface. Liftoff pins to that same up-vector as it climbs, so
+    // without this the pad skates ~340u out from under the 2s VTOL rise (v67 fix).
+    if (landedOn === b || ditchBody === b || (liftoff && liftoff.b === b)) {
       shipObj.position.add(b.orbitDelta);
       camCarry.add(b.orbitDelta);          // the lens rides along (v64)
     }
@@ -6544,10 +6663,11 @@ function animate() {
          grip bleeds off the slide, and below walking pace you're parked.
          Throttle up to take off again. */
       tmpNormal.multiplyScalar(1 / dist);            // local "up"
-      // (the liftoff branch below pins position absolutely and rides the
-      // spin itself — the SOI carry and gravity tug would just fight it)
+      // (the liftoff AND landing branches below pin position absolutely and
+      // ride the spin themselves — the SOI carry and gravity tug would just
+      // fight it)
       if (dist < b.cfg.radius * 3 && landedOn !== b && ditchBody !== b
-          && !(liftoff && liftoff.b === b)) {
+          && !(liftoff && liftoff.b === b) && !(landing && landing.b === b)) {
         /* sphere of influence (v19, widened + spin-carry v35): the planet
            orbits the sun at ~170 u/s AND spins, so braking near it lets the
            pad slide out from under you — which reads as gravity shoving you
@@ -6649,6 +6769,42 @@ function animate() {
         if (liftoff.t >= LIFTOFF_DUR) {
           ship.velocity.copy(tmpNormal).multiplyScalar(2 * LIFTOFF_ALT / LIFTOFF_DUR);
           liftoff = null;
+        }
+      } else if (landing && landing.b === b) {
+        /* ---- landing assist (v68): CENTER over the pad, then descend onto the
+           deck and latch. The pad's data coordinate now matches the GLB deck
+           (VERDANT's were ~14u stale — fixed), so centering on it lands you dead
+           on the platform even though the "aligned" district (~35u) is wider than
+           the ~10u deck. Centering LEADS the descent, so we're over the clear
+           approach shaft before dropping through canopy height. Pinned +
+           velocity-zeroed (spin/orbit ride for free); the aim is spin-tracked by
+           the live yaw so the deck never slides out from under the gear. */
+        const yaw = b.surface ? b.surface.rotation.y : (b.cfg.yaw || 0);
+        carryPrev.copy(shipObj.position);
+        landing.t += dt;
+        const k = Math.min(1, landing.t / ASSIST_DUR);
+        const kC = Math.min(1, k * 1.6);
+        const eC = kC * kC * (3 - 2 * kC);     // centering: front-loaded (done by ~62%)
+        const eR = k * k * (3 - 2 * k);        // descent: smoothstep across the whole run
+        const curR = landing.r0 + (landing.deckR + GEAR_HEIGHT - landing.r0) * eR;
+        _landDir.copy(landing.dir0)
+                .lerp(_landTgt.set(landing.pad.dx, landing.pad.dy, landing.pad.dz), eC)
+                .normalize()
+                .applyAxisAngle(SPIN_AXIS, yaw);   // center on the deck, spin-tracked
+        shipObj.position.copy(b.group.position).addScaledVector(_landDir, curR);
+        // ease the hull to gear-down (belly to the deck) — a fraction of the
+        // minimal up→normal rotation each frame, so it settles without a snap
+        _landUp.set(0, 1, 0).applyQuaternion(shipObj.quaternion);
+        _alignQ.setFromUnitVectors(_landUp, _landDir);
+        _easeQ.identity().slerp(_alignQ, Math.min(1, dt * 4));
+        shipObj.quaternion.premultiply(_easeQ);
+        camCarry.add(carryDelta.subVectors(shipObj.position, carryPrev));
+        ship.velocity.set(0, 0, 0);
+        if (landing.t >= ASSIST_DUR) {                                  // touched down
+          landedOn = b;
+          landing = null;
+          ship.velocity.set(0, 0, 0);
+          ship.throttle = 0;
         }
       } else {
         const gr = groundRadius(b, tmpNormal);
@@ -7210,6 +7366,26 @@ function animate() {
   } else {
     landTagEl.style.visibility = "hidden";
   }
+
+  /* landing-assist prompt (v68): one contextual line + one mobile button.
+       auto-landing   → "AUTO-LANDING"      (button hidden — abort is [G])
+       parked         → "[G] LAUNCH"        (button reads LAUNCH)
+       aligned in range→ "[G] LAND"         (button reads LAND)
+       otherwise      → nothing */
+  let assistTxt = null, btnTxt = null;
+  if (landing) {
+    assistTxt = "◆ AUTO-LANDING — "
+      + (landing.pad.port ? landing.pad.port.name.split(" ")[0] : landing.b.cfg.name) + " ◆";
+  } else if (landedOn) {
+    assistTxt = "◆ [G] LAUNCH ◆"; btnTxt = "LAUNCH";
+  } else if (landingTarget()) {
+    assistTxt = "◆ [G] LAND ◆";   btnTxt = "LAND";
+  }
+  if (assistTxt) { assistEl.textContent = assistTxt; assistEl.style.visibility = "visible"; }
+  else assistEl.style.visibility = "hidden";
+  // the mobile button only exists while it does something (and never mid-approach)
+  btnLandEl.style.display = (btnTxt && document.body.classList.contains("touch")) ? "flex" : "none";
+  if (btnTxt) btnLandEl.textContent = btnTxt;
 
   /* ---- atmospheric entry: the "middle path" — effects, not scenes ----
      Below a quarter-radius of altitude over any body with an atmosphere,
