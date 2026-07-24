@@ -250,6 +250,15 @@
     font-size: 15px; letter-spacing: 4px; visibility: hidden;
     text-align: center; white-space: nowrap;
   }
+  /* tree-strike warning (v67): trees are their own hazard, above the canopy
+     blanket, so they get their own tag. Amber default (a crown brush); the JS
+     flips it red inline on a trunk hit. Shares the ditch line — never both at once. */
+  #treetag {
+    position: absolute; top: 40%; left: 50%; transform: translateX(-50%);
+    color: #ffcf5a; text-shadow: 0 0 12px rgba(255,170,50,.9);
+    font-size: 15px; letter-spacing: 4px; visibility: hidden;
+    text-align: center; white-space: nowrap;
+  }
   /* the outfitter — Charleston's upgrade shop (v34). Only exists while
      parked on the pad, so it borrows the centreline under the landing tag.
      The HUD ignores the pointer; this panel is the one part that doesn't. */
@@ -518,6 +527,7 @@
   <!-- ditch warning (v62): you're IN a hazard and the hull is flooding.
        Counts down the seconds you have left so pulling up is a decision. -->
   <div id="ditchtag">◆ IN THE WATER — PULL UP ◆</div>
+  <div id="treetag">◆ SCRAPING THE CANOPY ◆</div>
   <div id="shop">
     <div class="title">◆ OUTFITTER ◆ pay from the <b>BANK</b></div>
     <div class="shopRow"></div>
@@ -823,6 +833,7 @@ const BODIES = [
                                     // then because VERDANT wasn't landable.
     file: "planets/verdant.glb",    // built by build_verdant.py (Blender)
     heightFile: "planets/verdant_height.json",
+    treeFile: "planets/verdant_trees.json",   // 588 trunks/crowns as damage volumes (v67)
     landable: true,
     gravity: 0.45,                  // smallest world in the system — light pull
     /* THE CANOPY IS THE TERRAIN. height_field() returns the canopy TOP over
@@ -1583,6 +1594,108 @@ function loadHazardGrid(body, url) {
   }).catch(() => {});   // no mask → the world just has no painted hazard
 }
 
+/* ---- trees as damage VOLUMES (v67) ----
+   The height blanket groundRadius() reads is the canopy FLOOR; the 588 drawn
+   trees stand ~48u above it, so nothing in the terrain-collision path can feel
+   them (v66 memory: the drawn canopy is a hologram). loadTrees() bakes each tree
+   into the same as-baked lat/lon frame the height grid uses (dir = the pad
+   convention), precomputes its trunk/crown radial bands, and buckets them into a
+   coarse lat/lon grid so the flight loop only ever tests the handful of trees
+   under the ship. Add more trees later and it's a bigger manifest, same code —
+   the collider READS the file, it isn't hard-wired to any count or planet.
+
+   Cells are 3° (120 x 60). forEachNearTree() opens its search window to the
+   widest crown's angular reach — and WIDENS it in longitude toward the poles,
+   where 3°-of-longitude cells shrink by cos(lat). A fixed 3x3 window silently
+   dropped grazes on the biggest / highest-latitude crowns (v67 review). */
+const TREE_COLS = 120, TREE_ROWS = 60;
+function loadTrees(body, url) {
+  fetch(url + ASSET_V).then(r => r.json()).then(j => {
+    const R = body.cfg.radius;
+    const buckets = new Map();
+    let maxR = 0, reach = 0;
+    for (const t of j.trees) {
+      const la = t.lat * Math.PI / 180, lo = t.lon * Math.PI / 180;
+      const cla = Math.cos(la);
+      // baked-frame unit direction — the exact pad convention (groundRadius' inverse)
+      const tx = cla * Math.cos(lo), ty = Math.sin(la), tz = -cla * Math.sin(lo);
+      const br = R * t.ground;          // trunk foot: world radius of the ground here
+      const top = br + t.h;             // crown top
+      const mid = br + t.h * 0.72;      // trunk below, crown in the top ~28% (json's ~25%)
+      if (top > maxR) maxR = top;
+      // angular footprint radius (crown + ship hull), in radians — how far off the
+      // trunk axis a clip can still land. The search window opens to the widest one.
+      const foot = (t.crownR + SHIP_HIT_R) / br;
+      if (foot > reach) reach = foot;
+      const rec = { tx, ty, tz, br, mid, top, trunkR: t.trunkR, crownR: t.crownR };
+      // bucket by the SAME lat/lon→cell mapping the grids use, coarse
+      let col = Math.floor((lo + Math.PI) / (2 * Math.PI) * TREE_COLS);
+      let row = Math.floor((Math.PI / 2 - la) / Math.PI * TREE_ROWS);
+      col = ((col % TREE_COLS) + TREE_COLS) % TREE_COLS;
+      row = Math.max(0, Math.min(TREE_ROWS - 1, row));
+      const key = row * TREE_COLS + col;
+      let arr = buckets.get(key);
+      if (!arr) buckets.set(key, arr = []);
+      arr.push(rec);
+    }
+    body.trees = { buckets, maxR, reach };  // reach: widest crown footprint (rad); maxR: tallest crown
+  }).catch(() => {});                   // no file → the world just has no trees
+}
+/* Visit every tree whose crown can reach the ship-direction (bx,by,bz), a unit
+   vector already in the baked frame (run toBakedFrame() first). The window is
+   `reach` wide in latitude; in longitude it widens by 1/cos(lat) because the
+   meridians converge toward the poles — a fixed ±1 window missed high-latitude
+   crowns (v67). Both callers fold results idempotently (max), so a column
+   revisited near a pole is harmless. */
+function forEachNearTree(trees, bx, by, bz, fn) {
+  const lon = Math.atan2(-bz, bx);
+  const lat = Math.asin(Math.max(-1, Math.min(1, by)));
+  const cellLat = Math.PI / TREE_ROWS, cellLon = 2 * Math.PI / TREE_COLS;
+  const col = Math.floor((lon + Math.PI) / (2 * Math.PI) * TREE_COLS);
+  const row = Math.floor((Math.PI / 2 - lat) / Math.PI * TREE_ROWS);
+  const drN = Math.min(TREE_ROWS, Math.ceil(trees.reach / cellLat) + 1);
+  // widen with cos taken at the band's far edge, so we never under-reach a tree
+  // sitting a little poleward of the ship; clamped so the pole doesn't blow up
+  const cosLat = Math.max(0.02, Math.cos(Math.min(Math.PI / 2, Math.abs(lat) + trees.reach + cellLat)));
+  const dcN = Math.min(TREE_COLS >> 1, Math.ceil(trees.reach / cosLat / cellLon) + 1);
+  for (let dr = -drN; dr <= drN; dr++) {
+    const r = row + dr;
+    if (r < 0 || r >= TREE_ROWS) continue;                            // clamp at the poles
+    for (let dc = -dcN; dc <= dcN; dc++) {
+      const c = (((col + dc) % TREE_COLS) + TREE_COLS) % TREE_COLS;   // wrap east-west
+      const arr = trees.buckets.get(r * TREE_COLS + c);
+      if (arr) for (let i = 0; i < arr.length; i++) fn(arr[i]);
+    }
+  }
+}
+const _canB = new THREE.Vector3();
+/* Tallest tree-top world-radius the ship is standing UNDER (footprint overlaps a
+   crown), else 0. Lets ALT read the canopy you SEE, not the forest floor — the
+   cockpit complaint that started this. */
+function canopyTop(body, n, fromCenter) {
+  toBakedFrame(body, n, _canB);
+  // over a landing pad the DECK is the real surface — the Angel Oak platforms sit
+  // right beside big crowns, and without this a neighbouring crown hijacks the ALT
+  // readout on the one approach it matters most (v67 review). Same footprint test
+  // groundRadius()/hazardLevel() use, so ALT and the touchdown rule agree.
+  if (body.pads) {
+    for (const pad of body.pads)
+      if (_canB.x * pad.dx + _canB.y * pad.dy + _canB.z * pad.dz > pad.cosAng) return 0;
+  }
+  let top = 0;
+  forEachNearTree(body.trees, _canB.x, _canB.y, _canB.z, t => {
+    const dot = _canB.x * t.tx + _canB.y * t.ty + _canB.z * t.tz;
+    if (dot <= 0) return;
+    const rp = fromCenter * Math.sqrt(Math.max(0, 1 - dot * dot));    // lateral gap to trunk axis
+    if (rp < t.crownR + SHIP_HIT_R && t.top > top) top = t.top;
+  });
+  return top;
+}
+// scratch for the physics-path tree test — its OWN vectors, never a shared one
+// borrowed across the collision loop (that's how the old ram heisenbugs happened)
+const _treeUp = new THREE.Vector3();
+const _treeB = new THREE.Vector3();
+
 /* Undo the planet's CURRENT rotation (initial yaw + accumulated spin): rotate a
    world direction back into the as-baked frame before any lat/lon lookup.
    `out` is explicit — these run inside the collision loop where borrowing a
@@ -1697,10 +1810,14 @@ function surfaceUnder(body) {
   if (!fromCenter) return null;
   _surfN.multiplyScalar(1 / fromCenter);
   const ground = groundRadius(body, _surfN);
+  // over VERDANT the collidable "ground" is the canopy FLOOR; if a crown is
+  // under us, ALT should read height over the treetop you SEE, not the buried
+  // floor ~48u below it (the cockpit complaint that started v67).
+  const top = body.trees ? Math.max(ground, canopyTop(body, _surfN, fromCenter)) : ground;
   const mult = ground / body.cfg.radius;
   const h = hazardOf(body, _surfN, mult);
   return {
-    alt: fromCenter - ground,            // TRUE altitude over terrain, not the datum
+    alt: fromCenter - top,               // over the tallest thing beneath us: ground, pad, or crown
     mult,
     hazard: h && h.hz,
     level: h ? h.i : 0,
@@ -1814,6 +1931,9 @@ function buildBody(cfg) {
       // a painted hazard mask in its own file (CINDER's lava). VERDANT's canopy
       // rides inside its height json instead, so it needs no second fetch.
       if (cfg.hazardFile) loadHazardGrid(body, cfg.hazardFile);
+      // trunk/crown collision manifest (VERDANT) — fire-and-forget like the rest;
+      // body.trees is undefined for a frame or two, and every consumer null-checks.
+      if (cfg.treeFile) loadTrees(body, cfg.treeFile);
     } else {
       group.add(makeProceduralSurface(cfg));
     }
@@ -2334,12 +2454,23 @@ const DITCH_DRAG = 0.94;    // per-60fps velocity retention while in a hazard. L
                             // than ground grip (0.9): water should feel thick and slow
                             // your escape, never PREVENT it. Raise toward 1.0 if pulling
                             // out still feels like wading.
+// VERDANT's trees poke ~48u ABOVE the collidable height blanket, so the ground
+// clamp never sees them (v66 memory: the drawn canopy is a hologram). These
+// govern the trunk/crown damage VOLUMES — clip one and it BITES, but you keep
+// flying, never a wall you can wedge between. Trunk heavy, crown light; nothing
+// here is lethal. Feel numbers — tune freely. (v67)
+const TRUNK_DPS = 24;       // hull/sec grinding a trunk (heavy); water is 22 for scale
+const CANOPY_DPS = 8;       // hull/sec brushing crown leaves (light) — skim the tops, feel it
+const TRUNK_FREE_SPD = 25;  // clip a trunk slower than this and it's a nudge, no slam
+const TRUNK_SLAM_MUL = 0.35;// hull per u/s over that on the leading edge (a one-time bite)
+const TRUNK_SLAM_CAP = 45;  // a trunk hurts more than a splash, but still can't one-shot a hull
 const FLASH_WHITE = new THREE.Color(0xffffff);
 const killsEl = document.getElementById("kills");
 const hullFillEl = document.getElementById("hullfill");
 const hullPctEl = document.getElementById("hullpct");
 const breachEl = document.getElementById("breachtag");
 const ditchEl = document.getElementById("ditchtag");
+const treeEl = document.getElementById("treetag");
 const dmgFlashEl = document.getElementById("damageflash");
 let junkKills = 0;
 let dmgFlash = 0;       // red vignette strength, decays each frame
@@ -2348,6 +2479,8 @@ let ditching = null;    // the hazard we're sitting in this frame (null = flying
 let wasDitching = null; // edge-detect, so the entry splash only bites once
 let ditchBody = null;   // the world we're ditched on — carried like a parked ship
 let ditchLevel = 0;     // how deep in it we are, 0..1 (a graded mask scales the burn)
+let treeHit = 0;        // this frame's worst tree contact on VERDANT: 0 none · 1 crown · 2 trunk
+let wasInTrunk = false; // edge-detect, so the trunk SLAM (not the graded grind) bites once
 
 function shipDamage(amount) {
   ship.hull = Math.max(0, ship.hull - amount);
@@ -6411,6 +6544,7 @@ function animate() {
 
   /* ---- collisions (against the ship's position) ---- */
   ditching = null;              // the hazard branch below re-arms this each frame
+  treeHit = 0;                  // ditto for the tree-strike state (set in the loop)
   camCarry.set(0, 0, 0);        // the carry the camera rig owes the lens this frame
   const COLLIDE_BUFFER = 12;
   for (const b of liveBodies) {
@@ -6619,6 +6753,42 @@ function animate() {
             landedOn = b;
             ship.velocity.set(0, 0, 0);
             ship.throttle = 0;
+          }
+        }
+        /* trees poke ABOVE the height blanket, so the ground clamp never sees
+           them — clip a trunk and it BITES (thump + speed-scaled damage) but you
+           keep flying: a damage volume, not a wall, so you can't get wedged
+           between trunks. Trunk heavy, crown light; nothing here is lethal. (v67)
+           Own scratch + a fresh normal — the branches above may have spin-rotated
+           tmpNormal, and this must read the ship's true up. */
+        _treeUp.subVectors(shipObj.position, b.group.position);
+        const treeDist = _treeUp.length();
+        if (b.trees && treeDist < b.trees.maxR + SHIP_HIT_R) {
+          _treeUp.multiplyScalar(1 / treeDist);
+          toBakedFrame(b, _treeUp, _treeB);
+          let worst = 0;                    // 0 clear · 1 crown (light) · 2 trunk (heavy)
+          forEachNearTree(b.trees, _treeB.x, _treeB.y, _treeB.z, t => {
+            const dot = _treeB.x * t.tx + _treeB.y * t.ty + _treeB.z * t.tz;
+            if (dot <= 0) return;           // tree is on the far side of the world
+            const ra = treeDist * dot;      // ship's height projected onto the trunk axis
+            const rp = treeDist * Math.sqrt(Math.max(0, 1 - dot * dot));   // lateral gap to it
+            // the ship is a ~12u ball: overlap its [ra±HR] radial span with each band
+            if (ra + SHIP_HIT_R >= t.br && ra - SHIP_HIT_R <= t.mid && rp < t.trunkR + SHIP_HIT_R) worst = 2;
+            else if (worst < 1 && ra + SHIP_HIT_R >= t.mid && ra - SHIP_HIT_R <= t.top && rp < t.crownR + SHIP_HIT_R) worst = 1;
+          });
+          if (worst) {
+            const spd = ship.velocity.length();
+            // graded grind while overlapping — light for leaves, heavy for wood
+            shipDamage((worst === 2 ? TRUNK_DPS : CANOPY_DPS) * (0.4 + spd / 90) * dt);
+            if (worst === 2 && !wasInTrunk) {           // leading edge: the wood bites once, hard
+              thump(Math.min(300, 80 + spd * 2));
+              if (spd > TRUNK_FREE_SPD)
+                shipDamage(Math.min(TRUNK_SLAM_CAP, (spd - TRUNK_FREE_SPD) * TRUNK_SLAM_MUL));
+            }
+            // the grind is small per-frame damage, so force the red vignette up to
+            // a visible floor — otherwise the hit never registers on screen (v67)
+            dmgFlash = Math.max(dmgFlash, worst === 2 ? 0.45 : 0.22);
+            treeHit = worst;                            // for the HUD banner + slam edge-detect
           }
         }
       }
@@ -7012,7 +7182,18 @@ function animate() {
     ditchBody = null;          // clear the carry claim once we're actually out
     ditchLevel = 0;
   }
+  /* tree-strike warning (v67): the canopy grind is tiny per-frame damage, so the
+     hull bar barely moves and the flash barely shows — name it, the way the ditch
+     names the water. Ditch wins the shared line if both are true at the blanket edge. */
+  if (treeHit && !ditching) {
+    treeEl.textContent = treeHit === 2 ? "◆ HULL STRIKE — TREES · CLIMB ◆" : "◆ SCRAPING THE CANOPY ◆";
+    treeEl.style.color = treeHit === 2 ? "#ff5544" : "#ffcf5a";
+    treeEl.style.visibility = "visible";
+  } else {
+    treeEl.style.visibility = "hidden";
+  }
   wasDitching = ditching;
+  wasInTrunk = treeHit === 2;
 
   const surf = surfaceUnder(nearest);
   if (surf && surf.alt < nearest.cfg.radius * 0.5) {
