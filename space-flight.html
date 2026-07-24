@@ -664,9 +664,10 @@ const BODIES = [
     radius: 900,                    // the inner scorched world — smallest
                                     // landable body, so the GLB scales by 9
     orbit: { radius: 36000, speed: 0.006, angle: 3.0, y: 2400 },
-    spin: 0.005,                    // was 0.02 — fine for a flyby, but a
-                                    // parked ship RIDES the rotation, and at
-                                    // 0.02 the ground shears out from under you
+    spin: 0.0025,                   // v64: halved system-wide — every world was
+                                    // visibly whipping around. (Was 0.02 originally:
+                                    // fine for a flyby, but a parked ship RIDES the
+                                    // rotation and the ground sheared out from under you.)
     file: "planets/cinder.glb",     // built by build_cinder.py (Blender)
     heightFile: "planets/cinder_height.json",
     landable: true,
@@ -712,7 +713,7 @@ const BODIES = [
     name: "AZURE", type: "planet", style: "gltf", seed: 42,
     radius: 1425,                   // the archipelago world — only ~7.7% land
     orbit: { radius: 49500, speed: 0.004, angle: 0.3, y: -3600 },
-    spin: 0.003,                    // was 0.015 — a parked ship rides the rotation
+    spin: 0.0015,                   // v64: halved system-wide (was 0.015 originally)
     file: "planets/azure.glb",      // built by build_azure.py (Blender)
     heightFile: "planets/azure_height.json",
     landable: true,
@@ -746,7 +747,8 @@ const BODIES = [
     name: "KRONOS", type: "planet", style: "gas", seed: 23,
     radius: 1950,
     orbit: { radius: 73000, speed: 0.002, angle: 4.2, y: 9000 },
-    spin: 0.01,
+    spin: 0.005,                    // v64: halved system-wide (was 0.01) — the gas
+                                    // giant's banding reads best turning slowly
     atmosphere: 0xddbb77, atmoStrength: 0.7,
     palette: { dark: 0x7a5c38, mid: 0xc9a86b, light: 0xf0dcae },
     rings: { inner: 2550, outer: 4200, color: 0x8a7a5c },
@@ -758,7 +760,8 @@ const BODIES = [
     // angle π/2 parks Earth's orbit on the spawn side of the sun — you
     // still start the game with home in the windshield
     orbit: { radius: 68500, speed: 0.0025, angle: Math.PI / 2, y: -400 },
-    spin: 0.002,                    // ~5min day; a parked ship RIDES the
+    spin: 0.001,                    // v64: halved system-wide — a ~10min day now
+                                    // (was 0.002, ~5min). A parked ship RIDES the
                                     // rotation (see the landed branch)
     yaw: Math.PI,                   // initial turn so Charleston faces the sun
     file: "planets/earth.glb",      // built by build_earth.py (Blender)
@@ -801,10 +804,11 @@ const BODIES = [
     name: "VERDANT", type: "planet", style: "gltf", seed: 99,
     radius: 675,                    // the smallest world — you can lap it in a minute
     orbit: { radius: 42500, speed: 0.005, angle: 5.4, y: 6000 },
-    spin: 0.004,                    // was 0.03, the fastest in the system. A parked
-                                    // ship RIDES the rotation and 0.02 already shears
-                                    // the ground out from under it (see CINDER) —
-                                    // only safe before because VERDANT wasn't landable.
+    spin: 0.002,                    // v64: halved system-wide (was 0.03 originally,
+                                    // the fastest in the system). A parked ship RIDES
+                                    // the rotation and 0.02 already sheared the ground
+                                    // out from under it (see CINDER) — only safe back
+                                    // then because VERDANT wasn't landable.
     file: "planets/verdant.glb",    // built by build_verdant.py (Blender)
     heightFile: "planets/verdant_height.json",
     landable: true,
@@ -840,7 +844,8 @@ const BODIES = [
     // FOREVER (any other speed and the two would slowly drift together).
     // orbit radius 62000 (vs Earth's 68500) opens an 11,000u gap to KRONOS.
     orbit: { radius: 62000, speed: 0.0025, angle: 3 * Math.PI / 2, y: -400 },
-    spin: 0.0016,                   // a slightly longer day than Earth for a bigger world
+    spin: 0.0008,                   // v64: halved system-wide (was 0.0016) — still a
+                                    // slightly longer day than Earth for a bigger world
     yaw: Math.PI,
     file: "planets/rubicon.glb",    // built by build_rubicon.py (Blender)
     heightFile: "planets/rubicon_height.json",
@@ -1150,6 +1155,27 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
 
 scene.add(new THREE.AmbientLight(0x1c2836, 0.8));
+
+/* ---- HANGAR LIGHTS (v64): the front door only --------------------------
+   In flight the entire system is lit by one thing — HELIOS, parked 90k units
+   out at -Z. The start-screen turntable orbits the ship's FRONT, so the sun
+   is always behind the hull and every ship reads as a black silhouette: you
+   can't see the plating, the paint, or which ship you're actually picking.
+   These four lights exist ONLY while the menu is up — a warm key over the
+   camera's shoulder, a cool fill opposite it, a rim behind the hull to pop
+   the edges, and a soft sky/ground bounce to lift the shadow side. The menu
+   frame in animate() re-aims them at the ship every tick; startGame() hides
+   the group, and an invisible parent is skipped by the renderer entirely, so
+   flight lighting is exactly what it always was. */
+const menuLights = new THREE.Group();
+const menuKey  = new THREE.DirectionalLight(0xfff2e2, 2.0);   // warm key, camera side
+const menuFill = new THREE.DirectionalLight(0x8fb4ff, 0.85);  // cool fill, opposite
+const menuRim  = new THREE.DirectionalLight(0xffd6a0, 1.5);   // backlight, edge pop
+menuLights.add(
+  menuKey, menuKey.target, menuFill, menuFill.target, menuRim, menuRim.target,
+  new THREE.HemisphereLight(0x9ec4ff, 0x30414f, 0.85),        // soft ambient lift
+);
+scene.add(menuLights);
 
 function makeStars(count, spread) {
   const geo = new THREE.BufferGeometry();
@@ -1776,7 +1802,10 @@ function buildBody(cfg) {
         })
       );
       group.add(cloudMesh);
-      cloudLayers.push({ mesh: cloudMesh, speed: (cfg.spin || 0.01) * 6 });
+      // clouds drift at 6× the planet's own spin, so halving cfg.spin (v64)
+      // already halved them — the fallback is halved to match for any future
+      // world that ships without a spin of its own
+      cloudLayers.push({ mesh: cloudMesh, speed: (cfg.spin || 0.005) * 6 });
     }
 
     if (cfg.atmosphere) {
@@ -5123,6 +5152,19 @@ const chaseFixQ = new THREE.Quaternion();
 const CAM_GROUND_MARGIN = 2.5;             // v55: the lens keeps this much air under it
 const camGroundV = new THREE.Vector3();    // scratch for the ground clamp
 
+/* planet-carry for the lens (v64): inside a world's SOI the physics step
+   TELEPORTS the ship each frame to ride the planet's orbit and spin — that's
+   what keeps the pad from sliding out from under a landing. The chase cam only
+   EASES toward its ideal spot, so that carry became pure lag: Earth travels
+   ~170 u/s, and at 60fps the easing leaves the lens a permanent ~7u off to the
+   side of a 17u chase arm. The frame guarantee then rotates to keep the ship
+   centered, and you end up flying while looking at your own flank. Fix: bank
+   the frame's carry here and hand the camera the same nudge, so the easing
+   happens in the PLANET's frame instead of the sun's. */
+const camCarry = new THREE.Vector3();      // this frame's total world-carry nudge
+const carryPrev = new THREE.Vector3();     // ship position before a carry patch
+const carryDelta = new THREE.Vector3();
+
 /* head-look (right stick): a view-angle offset from the nose — look
    around at space while the ship flies on. Springs back to forward. */
 let lookYaw = 0, lookPitch = 0;
@@ -5979,6 +6021,7 @@ function startGame() {
   }
   document.body.classList.remove("menu");   // reveal the flight HUD
   startScreenEl.style.display = "none";
+  menuLights.visible = false;   // hangar rig off — space goes back to being lit by HELIOS alone
 }
 document.getElementById("btnStart").addEventListener("click", startGame);
 // ENTER in the callsign field flies too — type your name, hit enter, go
@@ -6099,14 +6142,25 @@ function animate() {
   if (!gameStarted) {
     menuTime += dt;
     twinkleStars.material.uniforms.uTime.value = clock.elapsedTime;   // keep the starfield alive
-    const orbR = 16, orbYaw = menuTime * 0.16;
+    const orbR = 17, orbYaw = menuTime * 0.16;
     camera.position.set(
       shipObj.position.x + Math.sin(orbYaw) * orbR,
       shipObj.position.y + 3.2,
       shipObj.position.z + Math.cos(orbYaw) * orbR
     );
     // aim above the hull so the ship rides in the lower third, clear of the menu text
-    camera.lookAt(shipObj.position.x, shipObj.position.y + 7, shipObj.position.z);
+    camera.lookAt(shipObj.position.x, shipObj.position.y + 6.3, shipObj.position.z);
+    // ride the hangar rig around with the turntable: the key stays over the
+    // camera's shoulder, so whichever face of the hull you're looking at is
+    // the lit one. All three aim at the ship, offset in yaw from the camera.
+    const sp = shipObj.position;
+    for (const [lt, yawOff, dist, hgt] of
+         [[menuKey, 0.85, 24, 16], [menuFill, -1.7, 24, 3], [menuRim, Math.PI + 0.35, 26, 10]]) {
+      lt.position.set(sp.x + Math.sin(orbYaw + yawOff) * dist,
+                      sp.y + hgt,
+                      sp.z + Math.cos(orbYaw + yawOff) * dist);
+      lt.target.position.copy(sp);
+    }
     renderer.render(scene, camera);
     return;
   }
@@ -6323,6 +6377,7 @@ function animate() {
 
   /* ---- collisions (against the ship's position) ---- */
   ditching = null;              // the hazard branch below re-arms this each frame
+  camCarry.set(0, 0, 0);        // the carry the camera rig owes the lens this frame
   const COLLIDE_BUFFER = 12;
   for (const b of liveBodies) {
     // parked? ride the planet's orbital travel (spin is handled in the
@@ -6331,7 +6386,10 @@ function animate() {
     // its up-vector is measured, which is the whole reason parked ships don't
     // drift. Do it here or the clamp below bakes the planet's orbital travel
     // (~8.6u/frame for Earth) into a slide across the surface.
-    if (landedOn === b || ditchBody === b) shipObj.position.add(b.orbitDelta);
+    if (landedOn === b || ditchBody === b) {
+      shipObj.position.add(b.orbitDelta);
+      camCarry.add(b.orbitDelta);          // the lens rides along (v64)
+    }
     tmpNormal.subVectors(shipObj.position, b.group.position);
     let dist = tmpNormal.length();
     let minDist = b.cfg.radius + COLLIDE_BUFFER;
@@ -6361,6 +6419,7 @@ function animate() {
            the < 2.5 u/s landing latch below) still means what it always did.
            (Nudge is ≤ a few units per frame — tmpNormal stays valid.) */
         const soi = Math.min(1, Math.max(0, 3 - dist / b.cfg.radius));
+        carryPrev.copy(shipObj.position);   // v64: measure the carry for the lens
         // spin: swing the ship around the planet's axis with the surface so
         // the pad's longitude stays under you. Same rate/axis as the surface
         // animation and the parked ride. POSITION only — the nose is left
@@ -6372,6 +6431,8 @@ function animate() {
         }
         // orbit: carry with the planet's centre
         shipObj.position.addScaledVector(b.orbitDelta, soi);
+        // hand the spin + orbit nudge to the camera rig — same frame, same amount
+        camCarry.add(carryDelta.subVectors(shipObj.position, carryPrev));
         // inverse-square pull: a shrug at cruise range, a real tug on
         // final approach — kill the throttle and you'll settle.
         // cfg.gravity scales it per planet: colony worlds stay friendly.
@@ -6383,6 +6444,7 @@ function animate() {
         // If the planet spins, RIDE it — swing our anchor point and our
         // nose around the axis at the same rate the surface turns, so
         // the pad never slides out from under the gear.
+        carryPrev.copy(shipObj.position);   // v64: the spin ride is a carry too
         if (b.cfg.spin) {
           const dSpin = b.cfg.spin * dt * 10;   // must match the surface animation
           tmpNormal.applyAxisAngle(SPIN_AXIS, dSpin);
@@ -6392,6 +6454,7 @@ function animate() {
         const grP = groundRadius(b, tmpNormal);
         const ground = grP + GEAR_HEIGHT;
         shipObj.position.copy(b.group.position).addScaledVector(tmpNormal, ground);
+        camCarry.add(carryDelta.subVectors(shipObj.position, carryPrev));
         ship.velocity.set(0, 0, 0);
         /* You cannot be PARKED on a hazard — un-latch and let the ditch branch
            have it next frame (v62). This is the safety net that makes the whole
@@ -6404,7 +6467,8 @@ function animate() {
           landedOn = null;
         } else if (ship.throttle > 0.05) {           // takeoff → the autopilot rises first
           landedOn = null;
-          liftoff = { b, t: 0 };
+          liftoff = { b, t: 0, rise: 0 };   // rise: last frame's climb, so the
+                                            // camera carry can subtract it out
         }
       } else if (liftoff && liftoff.b === b) {
         /* ---- auto-liftoff (v55): throttle-up used to dump you into a flat
@@ -6416,6 +6480,8 @@ function animate() {
            each frame — same trick as the parked branch, so the planet's
            spin/orbit ride for free and thrust can't smear us mid-rise;
            velocity stays zeroed until the handoff so nothing banks up. */
+        carryPrev.copy(shipObj.position);   // v64: the rise is pinned, not flown —
+                                            // the lens has to be told about it
         if (b.cfg.spin) {
           const dSpin = b.cfg.spin * dt * 10;   // must match the surface animation
           tmpNormal.applyAxisAngle(SPIN_AXIS, dSpin);
@@ -6427,8 +6493,15 @@ function animate() {
         // k² climb: leaves the pad gently, exits at 2·ALT/DUR — which is
         // exactly the velocity the handoff below puts on the ship
         const ground = groundRadius(b, tmpNormal) + GEAR_HEIGHT;
+        const rise = LIFTOFF_ALT * k * k;
         shipObj.position.copy(b.group.position)
-               .addScaledVector(tmpNormal, ground + LIFTOFF_ALT * k * k);
+               .addScaledVector(tmpNormal, ground + rise);
+        // the lens owes only what the WORLD moved (orbit + spin) — back the
+        // climb itself out, so the chase still eases on the rise and you can
+        // see yourself leave the pad instead of the camera being welded on
+        camCarry.add(carryDelta.subVectors(shipObj.position, carryPrev)
+                               .addScaledVector(tmpNormal, liftoff.rise - rise));
+        liftoff.rise = rise;
         ship.velocity.set(0, 0, 0);
         if (liftoff.t >= LIFTOFF_DUR) {
           ship.velocity.copy(tmpNormal).multiplyScalar(2 * LIFTOFF_ALT / LIFTOFF_DUR);
@@ -6566,6 +6639,11 @@ function animate() {
     tmpOffset.copy(viewMode === VIEW_CHASE_FAR ? CHASE_FAR_OFFSET : CHASE_OFFSET)
              .applyQuaternion(shipObj.quaternion);
     tmpOffset.add(shipObj.position);
+    // v64: ride the planet first. The physics step teleported the ship to keep
+    // it with the world's orbit + spin; without the same nudge here the easing
+    // below is chasing a target that jumped, and the leftover lag parks the
+    // lens off the ship's shoulder for as long as you're near a planet.
+    camera.position.add(camCarry);
     // exponential easing — framerate-independent smooth pursuit. Tightened
     // again in v38 (16→20 here, 14→20 on the orientation slerp below) so the
     // crosshair tracks the guns and the ship stays planted through turns.
@@ -6628,7 +6706,9 @@ function animate() {
   for (const b of liveBodies) {
     if (b.cfg.spin || b.cfg.type === "star") {
       const surf = b.group.getObjectByName("surface");
-      if (surf) surf.rotation.y += (b.cfg.spin || 0.004) * dt * 10;
+      // the 0.002 fallback is HELIOS — the star carries no cfg.spin of its own
+      // (v64: halved with every world, was 0.004)
+      if (surf) surf.rotation.y += (b.cfg.spin || 0.002) * dt * 10;
     }
     // advance every moon (Earth has one, RUBICON has three). getObjectByName
     // would only find the first, so walk the group's children and move each
