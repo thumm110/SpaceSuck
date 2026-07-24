@@ -2330,6 +2330,10 @@ const DITCH_DPS = 22;       // hull/sec in the drink — ~4.5s of grace on a sto
 const DITCH_SLAM = 70;      // entry speed above which the splash itself does damage
 const DITCH_SLAM_MUL = 0.55;   // hull per u/s over that, capped like a ram below
 const DITCH_SKIN = 3;       // how far above a hazard's surface still counts as "in it"
+const DITCH_DRAG = 0.94;    // per-60fps velocity retention while in a hazard. Lighter
+                            // than ground grip (0.9): water should feel thick and slow
+                            // your escape, never PREVENT it. Raise toward 1.0 if pulling
+                            // out still feels like wading.
 const FLASH_WHITE = new THREE.Color(0xffffff);
 const killsEl = document.getElementById("kills");
 const hullFillEl = document.getElementById("hullfill");
@@ -6547,13 +6551,24 @@ function animate() {
            `ground`, so a bare `dist < ground` reads false the very next frame —
            you'd flicker in and out of the water and never actually flood. */
         if (hz ? dist < ground + DITCH_SKIN : dist < ground) {
-          shipObj.position.copy(b.group.position).addScaledVector(tmpNormal, ground);
           const into = ship.velocity.dot(tmpNormal);
-          if (into < 0) {
-            if (into < -100) thump(-into);             // came in hot
-            ship.velocity.addScaledVector(tmpNormal, -into);
+          /* Clamp ONLY when actually below the surface. For a hazard the SKIN
+             widens the DAMAGE test, not the floor — and clamping across the
+             whole skin turned water into a trap (v62 bug, caught on the first
+             playtest): every frame snapped the ship back to exactly `ground`,
+             so escaping meant clearing DITCH_SKIN in a SINGLE frame while the
+             drag guaranteed you never built that much speed. You'd pull up,
+             throttle out, and just skate across the surface forever. */
+          if (dist < ground) {
+            shipObj.position.copy(b.group.position).addScaledVector(tmpNormal, ground);
+            if (into < 0) {
+              if (into < -100) thump(-into);           // came in hot
+              ship.velocity.addScaledVector(tmpNormal, -into);
+            }
           }
-          ship.velocity.multiplyScalar(Math.pow(0.9, dt * 60));  // ground grip
+          // water is thick, but it must never be a lock — you should feel the
+          // hull fighting out, not glued down
+          ship.velocity.multiplyScalar(Math.pow(hz ? DITCH_DRAG : 0.9, dt * 60));
           if (hz) {
             /* IN THE DRINK (v62): a hazard has no deck to latch onto. No
                landedOn — which is the whole point, since that flag is what
@@ -6568,10 +6583,14 @@ function animate() {
                half of "float where you fell" instead of sliding across it. */
             if (b.cfg.spin) {
               const dSpin = b.cfg.spin * dt * 10;      // must match the surface animation
+              // hold whatever altitude we've actually climbed to — re-clamping
+              // to `ground` here would undo the climb and re-trap the ship,
+              // which is the other half of the skate-across-the-water bug
+              const rNow = Math.max(dist, ground);
               tmpNormal.applyAxisAngle(SPIN_AXIS, dSpin);
               spinRideQ.setFromAxisAngle(SPIN_AXIS, dSpin);
               shipObj.quaternion.premultiply(spinRideQ);
-              shipObj.position.copy(b.group.position).addScaledVector(tmpNormal, ground);
+              shipObj.position.copy(b.group.position).addScaledVector(tmpNormal, rNow);
             }
             let gone = false;
             if (!wasDitching) {                        // entry, once per splash
