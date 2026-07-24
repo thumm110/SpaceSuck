@@ -658,6 +658,8 @@
      which the viewer detects and explains. -->
 <script src="lib/three.min.js"></script>
 <script src="lib/GLTFLoader.js"></script>
+<!-- shared with space-flight.html: the hull material pass + plating shader -->
+<script src="lib/hull-plating.js"></script>
 
 <script>
   // Expand / collapse every disclosure node in the tree.
@@ -755,27 +757,14 @@
       curModel = null;
     }
 
-    // mirror the game's loadPlayerShip material pass so hulls read the same
-    // colour here as in flight: any *Glow material stays bright (engines, nav
-    // lights); everything else gets a faint self-lit floor of its own base
-    // colour — which replaces washed-out exported emissive and keeps true
-    // colours in the viewer's dim space.
+    // The game's exact material pass — same lib/hull-plating.js the game
+    // loads, so the viewer and flight can't drift. Was a hand-rolled copy
+    // until 2026-07-24, and it still had the old name-only light test, so
+    // hauler lamps (NavRed/NavGreen/MarkerAmber/Headlight — pure emission
+    // but not named *Glow) rendered here as dim self-lit hull.
+    // weather:true gives the viewer the same procedural plating as flight.
     function applyGameShading(root) {
-      root.traverse(function (o) {
-        if (!o.isMesh || !o.material) return;
-        const mats = Array.isArray(o.material) ? o.material : [o.material];
-        mats.forEach(function (m) {
-          if (!m || !m.emissive || !m.color) return;
-          if (m.name && m.name.endsWith('Glow')) {
-            if (m.emissive.getHex() === 0) m.emissive.copy(m.color);
-            m.emissiveIntensity = 1.5;
-          } else {
-            m.emissive.copy(m.color);
-            m.emissiveIntensity = 0.15;
-          }
-          m.needsUpdate = true;
-        });
-      });
+      dressHullMats(root, { floor: 0.15, weather: true });
     }
 
     function frameModel(obj) {
