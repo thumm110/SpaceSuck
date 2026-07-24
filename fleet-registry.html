@@ -658,8 +658,10 @@
      which the viewer detects and explains. -->
 <script src="lib/three.min.js"></script>
 <script src="lib/GLTFLoader.js"></script>
-<!-- shared with space-flight.html: the hull material pass + plating shader -->
-<script src="lib/hull-plating.js"></script>
+<!-- shared with space-flight.html: the hull material pass + plating shader.
+     document.write'n so a query string busts its cache — a plain <script
+     src> has none, and a stale copy after an edit is very hard to spot. -->
+<script>document.write('<script src="lib/hull-plating.js' + location.search + '"><\/script>');</script>
 
 <script>
   // Expand / collapse every disclosure node in the tree.

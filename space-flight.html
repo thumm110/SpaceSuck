@@ -578,8 +578,13 @@
      game still flies with the built-in primitive placeholder -->
 <script src="lib/GLTFLoader.js"></script>
 <!-- shared hull material pass + procedural plating shader (also used by
-     fleet-registry.html, so the viewer and the game can never drift) -->
-<script src="lib/hull-plating.js"></script>
+     fleet-registry.html, so the viewer and the game can never drift).
+     document.write'n so it picks up location.search the same way ASSET_V
+     busts .glb caching. A plain <script src> carries NO cache buster, so
+     editing this lib and hitting F5 can silently re-run the OLD file —
+     which is exactly how a weathering on/off A/B can lie to you. Load with
+     any query string (play.sh then ?2) to force a refetch. -->
+<script>document.write('<script src="lib/hull-plating.js' + location.search + '"><\/script>');</script>
 <script type="module">
   /* SpaceMusic (v48) is an ES module; the game is one classic script. This
      shim imports it — with the same cache-bust the .glbs ride — and hands
