@@ -3700,7 +3700,17 @@ const HAULER_DEFS = [
   { file: "npc/ss-packrat.glb",      name: "SS PACKRAT",         hp: 6, bits: 14, val: 7,   // ~100 — the salvage collector,
     first: 150, firstRnd: 90,  rMin: 200, rMax: 420, len: 22, thruster: "ThrusterL",       // mid-size (2x a fighter), its own class
     role: "salvage" },                                                                     // and it WORKS the field (v57)
-];
+  // SS CANARY (v69) — the container run. Biggest hull in the fleet, and the only
+  // hauler carrying its cargo on the OUTSIDE: 12 separately-named Cargo00..Cargo11
+  // crates in an open ribbed spine, so a future "shoot it and it sheds one" is a
+  // pure game-side change. len 68 not 130 — the registry runs the FORWARD spec
+  // (fighter 25 / hauler 100-130) while the live game still runs the OLD scale
+  // (fighter 10 / HAULER_LEN 52); 130/100 × 52 ≈ 68 keeps it the biggest truck in
+  // flight without dragging the whole scale retune in. hitR derives as len/2 = 34.
+  { file: "npc/canary-freight.glb",  name: "SS CANARY",          hp: 8, bits: 18, val: 7,   // 126 — between the everyday
+    first: 210, firstRnd: 110, rMin: 300, rMax: 560, len: 68 },                             // truck and the escorted piñata:
+                                                                                            // bigger than both, commoner
+];                                                                                          // than DOUBLE OVERTIME
 
 const haulTmpA = new THREE.Vector3(), haulTmpB = new THREE.Vector3(), haulTmpC = new THREE.Vector3();
 const haulSeg = new THREE.Vector3(), haulToC = new THREE.Vector3(), haulNearPt = new THREE.Vector3();
