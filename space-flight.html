@@ -2264,35 +2264,59 @@ let shipLoadSeq = 0;   // stale-load guard: a fast picker flip outruns a slow fe
                  its lights NavRed/MarkerAmber/Headlight/CabWindow, none of
                  which end in "Glow"
 
-   NOTE: deliberately does NOT dedupe by material. One material can back 40+
-   mesh primitives, so byEmissive sites visit it repeatedly and ratchet the
-   floor up to 1.5 on the second pass. That is a live bug (83 of 90 hauler
-   materials sit at 1.5, not 0.5) — preserved here on purpose so this commit
-   changes nothing. Fix it on its own commit where the visual diff is legible. */
+   ONE rule classifies every ship, current and future — see LIGHT vs HULL
+   below. The old split (name for fighters, emissive-value for haulers) is
+   gone, and with it a live bug: keying on the emissive VALUE meant reading
+   state this same pass writes, so a material backing 40+ mesh prims got
+   re-visited and ratcheted 0.5 -> 1.5 (83 of 90 hauler materials sat at 1.5).
+   The rule now reads only NAME and BASE COLOUR, both immutable here, so that
+   whole bug class is structurally impossible rather than merely fixed. */
+
+// baseColorFactor at/below this on every channel = a pure-emission material.
+// Real lamps export exactly 0; the darkest hull in the fleet (HullCharcoal)
+// is 0.0196, so this sits with ~5x margin on both sides.
+const PURE_EMISSION_ALBEDO = 0.004;
+
 function dressHullMats(model, opts) {
   const floor = opts.floor;
+  const seen = new Set();               // one material backs 40+ prims
   model.traverse(o => {
     if (!o.isMesh || !o.material) return;
     const m = o.material;
-    if (!m.emissive) return;              // unlit material — skip, don't throw
-    if (opts.byEmissive) {
-      if (m.emissive.getHex() !== 0) {
-        m.emissiveIntensity = Math.max(m.emissiveIntensity || 1, 1.5);
-      } else {
-        m.emissive.copy(m.color);
-        m.emissiveIntensity = floor;
-      }
-    } else if (m.name.endsWith("Glow")) {
+    if (seen.has(m) || !m.emissive) return;   // unlit material — skip, don't throw
+    seen.add(m);
+
+    /* LIGHT if the Blender script either named it *Glow, or authored it as
+       pure emission (black albedo + a real emissive colour). Both conventions
+       are live in the fleet: fighters/capitals use the *Glow suffix, while
+       build_hauler.py names its lamps NavRed/NavGreen/MarkerAmber/Headlight.
+       Both halves are load-bearing — CanopyGlow is named *Glow but its albedo
+       isn't quite black, and the haulers' lamps are black but aren't named. */
+    const lit = m.name.endsWith("Glow") ||
+      (m.emissive.getHex() !== 0 &&
+       m.color.r <= PURE_EMISSION_ALBEDO &&
+       m.color.g <= PURE_EMISSION_ALBEDO &&
+       m.color.b <= PURE_EMISSION_ALBEDO);
+
+    if (lit) {
       // pure-emission Blender materials export a BLACK base color with the
       // real color in emissiveFactor — keep the loader's emissive, only
       // falling back to base color if emissive came through empty
       if (m.emissive.getHex() === 0) m.emissive.copy(m.color);
       m.emissiveIntensity = 1.5;
     } else {
+      /* HULL. add_plating() authors a conduit-glow COLOUR on the BSDF but
+         gates its STRENGTH with a procedural mask that cannot survive glTF,
+         so char/samsam/thumm hulls arrive carrying a full-strength green /
+         orange / cyan emissive that would otherwise light the entire ship.
+         Stash it — the weathering shader reads it back as that ship's seam
+         colour, straight from the .glb, no per-ship table needed — then
+         replace it with the faint self-lit floor. */
+      if (m.emissive.getHex() !== 0) m.userData.seamGlow = m.emissive.getHex();
       m.emissive.copy(m.color);
       m.emissiveIntensity = floor;
     }
-    // weatherHullMat(m);   <- step 2: the plating shader hooks in right here
+    // weatherHullMat(m);   <- step 3: the plating shader hooks in right here
   });
 }
 
@@ -3792,10 +3816,10 @@ for (let si = 0; si < haulerSlotDefs.length; si++) {
 if (THREE.GLTFLoader) for (const h of haulers) {
   new THREE.GLTFLoader().load(h.def.file + ASSET_V, gltf => {
     const model = gltf.scene;
-    // material pass, generalized from the raider swap: anything the Blender
-    // script authored as emissive (EngineGlow, ReeferGlow, nav + marker
-    // lights) gets boosted; plain hull gets the self-lit floor
-    dressHullMats(model, { floor: 0.5, byEmissive: true });
+    // shared material pass. build_hauler.py names its lamps NavRed/NavGreen/
+    // MarkerAmber/Headlight rather than *Glow, but authors them pure-emission,
+    // so the black-albedo half of the LIGHT test picks them up
+    dressHullMats(model, { floor: 0.5 });
     const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
     const hlen = h.def.len || HAULER_LEN;
     model.scale.setScalar(hlen / size.z);
