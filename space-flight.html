@@ -243,6 +243,13 @@
     font-size: 13px; letter-spacing: 4px; visibility: hidden;
     text-align: center; white-space: nowrap;
   }
+  /* sits just under the breach tag's line so the two never collide */
+  #ditchtag {
+    position: absolute; top: 40%; left: 50%; transform: translateX(-50%);
+    color: #ff5544; text-shadow: 0 0 12px rgba(255,80,60,.9);
+    font-size: 15px; letter-spacing: 4px; visibility: hidden;
+    text-align: center; white-space: nowrap;
+  }
   /* the outfitter — Charleston's upgrade shop (v34). Only exists while
      parked on the pad, so it borrows the centreline under the landing tag.
      The HUD ignores the pointer; this panel is the one part that doesn't. */
@@ -508,6 +515,9 @@
   <div id="entrytag">◆ ATMOSPHERIC ENTRY ◆</div>
   <div id="landtag">◆ LANDED ◆</div>
   <div id="breachtag">◆ HULL BREACH — TOWED HOME ◆</div>
+  <!-- ditch warning (v62): you're IN a hazard and the hull is flooding.
+       Counts down the seconds you have left so pulling up is a decision. -->
+  <div id="ditchtag">◆ IN THE WATER — PULL UP ◆</div>
   <div id="shop">
     <div class="title">◆ OUTFITTER ◆ pay from the <b>BANK</b></div>
     <div class="shopRow"></div>
@@ -623,6 +633,26 @@ const ASSET_V = location.search;
    ×2.5) and pushes Earth to 2500u — the flagship destination. A low
    sightseeing lap of Earth is a ~15,700u journey now: minutes of flying,
    not moments. */
+/* ONE water rule, shared by every world that has water (v63) — Tanner: "all
+   water should react the same on every planet." Spread into each planet's
+   `hazard` with its own `below` cut, because that threshold is a property of
+   that world's height grid (EARTH's uint8 step is 0.000221, AZURE's 0.000482),
+   not of what water DOES. Change the behaviour here and it changes everywhere.
+
+   Water is LETHAL AT SPEED and survivable if you're careful (Tanner's call):
+   come in at `lethalSpeed` or harder and the entry IS the end of it, towed home,
+   no timer. Ease it in below that and you're swimming — the hull floods at
+   `dps` with a countdown, and flying out saves you.
+
+   That split is the whole point. A flat "water kills" would punish a controlled
+   approach the same as a careless one; a flat "water floods" makes coming in fat
+   free. This way the skill is in the descent rate, which is exactly what the
+   v61 ALT/SURFACE instruments let you read on the way down — so it stays inside
+   the game's "fair warning before contact" promise.
+   For a world where water should ALWAYS kill regardless of speed, add
+   `lethalAt: 0`. */
+const WATER = { name: "OCEAN", color: "#45c9d2", dps: 22, lethalSpeed: 70 };
+
 const BODIES = [
   {
     name: "HELIOS", type: "star",
@@ -652,7 +682,18 @@ const BODIES = [
        CINDER needs a baked hazard MASK instead: lava_field() already computes
        it on the same lat/lon grid as the height field, so build_cinder.py can
        emit cinder_hazard.json next to cinder_height.json and the engine reads
-       it with the same sampler. Until then this world reports SOLID. */
+       it with the same sampler.
+       That landed (v63). Same 1280x640 grid, same encoding and row order as the
+       height grid, and GRADED 0-255 — which buys CINDER the fairness tier a
+       flat ocean structurally cannot have: cool crust is a burn you can power
+       out of, the molten core is not. Checked against both outposts: Slagworks
+       (19.0,-52.0) and Heatsink (-33.0,104.0) each sit in a perfectly cold,
+       all-zero disc wider than their own pan, so both stay landable under any
+       threshold. The build script's bands are 0 / 1-63 / 64-127 / 128-191 /
+       192-255, so `at` 0.13 starts the burn at the crust edge and `lethalAt`
+       0.75 is the core. */
+    hazardFile: "planets/cinder_hazard.json",
+    hazard: { name: "MAGMA", color: "#ff6a1e", at: 0.1255, dps: 34, lethalAt: 0.7529 },
     gravity: 0.6,                   // small world, light pull — forgiving
     // NO pads. The whole surface is landable off the height grid, and both
     // outposts sit on leveled pans, so you just set down on the open apron
@@ -668,10 +709,31 @@ const BODIES = [
     },
   },
   {
-    name: "AZURE", type: "planet", style: "terrestrial", seed: 42,
-    radius: 1425,
+    name: "AZURE", type: "planet", style: "gltf", seed: 42,
+    radius: 1425,                   // the archipelago world — only ~7.7% land
     orbit: { radius: 49500, speed: 0.004, angle: 0.3, y: -3600 },
-    spin: 0.015,
+    spin: 0.003,                    // was 0.015 — a parked ship rides the rotation
+    file: "planets/azure.glb",      // built by build_azure.py (Blender)
+    heightFile: "planets/azure_height.json",
+    landable: true,
+    /* Water, same rule as everywhere else — see WATER. build_azure.py computes
+       real bathymetry for COLOUR, then clamps the visible mesh AND the height
+       grid perfectly flat at sea level, so "the grid says sea level" IS "this
+       is water": one comparison, no seafloor geometry, no transparency.
+       AZURE's grid runs 1.0 → 1.12289, so one uint8 step is 0.000482 — nearly
+       2.2x EARTH's. 1.0031 is ~6.4 steps of headroom, matching the margin
+       EARTH gets from its own step, at the cost of a ~4.4u lethal fringe at
+       the waterline. Land is precious here on purpose; every approach is a
+       commitment. Pads are exempt for free. */
+    hazard: { ...WATER, below: 1.0031 },
+    // four island landings. FOLLY is the hero: a salvage rig on pylons in THE
+    // RING's lagoon, with open water on every side.
+    pads: [
+      { lat:   7.0, lon:  -34.0, ang: 0.0241, top: 1.01000 },   // FOLLY, the salvage rig
+      { lat: -14.0, lon:   62.0, ang: 0.0840, top: 1.03519 },   // BULLS BAY, the capital port
+      { lat:  26.0, lon:  118.0, ang: 0.0560, top: 1.02752 },   // SHEM
+      { lat: -32.0, lon: -110.0, ang: 0.0496, top: 1.02448 },   // BREACH INLET
+    ],
     clouds: true,
     atmosphere: 0x5599ff, atmoStrength: 1.0,
     palette: {
@@ -702,11 +764,17 @@ const BODIES = [
     file: "planets/earth.glb",      // built by build_earth.py (Blender)
     heightFile: "planets/earth_height.json",
     landable: true,
-    // hazard band (v61): build_earth.py bakes the sea floor perfectly FLAT at
-    // exactly 1.0 (grid min == 1.00000), so the whole ocean is one number away.
-    // 1.0005 clears the flat floor without eating the coastline; Charleston's
-    // plateau (1.012) and its deck (1.0175) sit well clear.
-    hazard: { below: 1.0005, name: "OCEAN", color: "#4aa3ff" },
+    /* hazard band (v61, retuned v62): build_earth.py bakes the sea floor
+       perfectly FLAT at exactly 1.0 (grid min == 1.00000), so the ocean is one
+       number away. The number needs QUANTIZATION HEADROOM though: the grid is
+       one byte per cell over min..max, so a single step is (1.05643-1)/255 =
+       0.000221 — byte 3 already reads 1.00066. A tight 1.0005 cut let a ship
+       drifting a fraction of a unit fall OUT of the hazard mid-ocean, latch,
+       and start repairing on the open water. 1.0015 is ~7 byte steps, still
+       only 3.7u of elevation, and the survey says it costs ~1% more coastline
+       than the tight cut. Charleston's plateau (1.012) and deck (1.0175) sit
+       far clear either way. */
+    hazard: { ...WATER, below: 1.0015 },
     gravity: 1.0,                   // colony worlds keep landing-friendly pull
     // landing pads: lat/lon as baked in build_earth.py, footprint angular
     // radius, and DECK height as a radius multiplier. The height grid only
@@ -730,10 +798,33 @@ const BODIES = [
     },
   },
   {
-    name: "VERDANT", type: "planet", style: "terrestrial", seed: 99,
-    radius: 675,
+    name: "VERDANT", type: "planet", style: "gltf", seed: 99,
+    radius: 675,                    // the smallest world — you can lap it in a minute
     orbit: { radius: 42500, speed: 0.005, angle: 5.4, y: 6000 },
-    spin: 0.03,
+    spin: 0.004,                    // was 0.03, the fastest in the system. A parked
+                                    // ship RIDES the rotation and 0.02 already shears
+                                    // the ground out from under it (see CINDER) —
+                                    // only safe before because VERDANT wasn't landable.
+    file: "planets/verdant.glb",    // built by build_verdant.py (Blender)
+    heightFile: "planets/verdant_height.json",
+    landable: true,
+    gravity: 0.45,                  // smallest world in the system — light pull
+    /* THE CANOPY IS THE TERRAIN. height_field() returns the canopy TOP over
+       forest and the real floor inside clearings, so ~95% of this world is a
+       leaf roof you can rest on. That's why the hazard here is a MASK and NOT
+       an elevation band: height carries no information about danger (the safe
+       grove floor sits near the world's LOWEST elevations). The mask rides
+       inside verdant_height.json as canopy_b64 at 640x320 — no extra fetch.
+       Touching canopy costs hull; it doesn't kill. Navigation is the challenge:
+       finding somewhere to set down on a world that looks the same everywhere. */
+    hazard: { name: "CANOPY", color: "#3fd66a", at: 0.5, dps: 9 },
+    // the Angel Oak's two landing platforms, ~30u up at mid-trunk — the only
+    // safe ground in the city. Pads are tested before the grid AND before the
+    // mask, so they're exempt for free.
+    pads: [
+      { lat: 9.00,  lon: -32.89, ang: 0.0133, top: 1.03313 },   // Angel Oak platform 1
+      { lat: 14.92, lon: -23.00, ang: 0.0133, top: 1.03313 },   // Angel Oak platform 2
+    ],
     clouds: true,
     atmosphere: 0x77ffaa, atmoStrength: 0.9,
     palette: {
@@ -1417,41 +1508,50 @@ function buildShipMesh() {
    512×256 lat/lon map of "how far is the surface from the center", uint8,
    base64. groundRadius() bilinearly samples it — that's the ENTIRE
    terrain-collision system. No raycasts against 80k triangles. */
+function b64Bytes(s) {
+  const raw = atob(s), d = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) d[i] = raw.charCodeAt(i);
+  return d;
+}
 function loadHeightGrid(body, url) {
   fetch(url + ASSET_V).then(r => r.json()).then(j => {
-    const raw = atob(j.b64), d = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) d[i] = raw.charCodeAt(i);
-    body.height = { w: j.w, h: j.h, min: j.min, max: j.max, d };
+    body.height = { w: j.w, h: j.h, min: j.min, max: j.max, d: b64Bytes(j.b64) };
+    // VERDANT ships its canopy mask INSIDE the height json (no extra fetch) at
+    // its own resolution — 640x320 against the height grid's 1280x640. Which is
+    // exactly why sampleGrid() below takes w/h off the grid it's handed.
+    if (j.canopy_b64)
+      body.hazardGrid = { w: j.canopy_w, h: j.canopy_h, d: b64Bytes(j.canopy_b64) };
   }).catch(() => {});   // no grid → sphere collision, same as any planet
 }
+/* CINDER's lava mask is its own file instead (build_cinder.py's lava_field()
+   picks faces, so it can't be derived from elevation — see the BODIES comment).
+   Same encoding, so it lands in the same slot. */
+function loadHazardGrid(body, url) {
+  fetch(url + ASSET_V).then(r => r.json()).then(j => {
+    body.hazardGrid = { w: j.w, h: j.h, d: b64Bytes(j.b64) };
+  }).catch(() => {});   // no mask → the world just has no painted hazard
+}
 
-function groundRadius(body, n) {
-  // n: unit vector from planet center toward the ship
-  const g = body.height;
-  if (!g) return body.cfg.radius;
-  // undo the planet's CURRENT rotation (initial yaw + accumulated spin):
-  // rotate the world direction back into the as-baked frame before
-  // looking up lat/lon. body.surface is the spinning holder.
-  let nx = n.x, nz = n.z;
+/* Undo the planet's CURRENT rotation (initial yaw + accumulated spin): rotate a
+   world direction back into the as-baked frame before any lat/lon lookup.
+   `out` is explicit — these run inside the collision loop where borrowing a
+   shared scratch across a nested call is how you get a heisenbug. */
+function toBakedFrame(body, n, out) {
   const yaw = body.surface ? body.surface.rotation.y : (body.cfg.yaw || 0);
-  if (yaw) {
-    const cy = Math.cos(yaw), sy = Math.sin(yaw);
-    nx = n.x * cy - n.z * sy;
-    nz = n.x * sy + n.z * cy;
-  }
-  // Blender's Z-up became glTF's Y-up: north pole is +y, and Blender
-  // longitude works out to atan2(-z, x) on this side
-  // landing pad decks sit ABOVE the baked terrain grid — inside a pad's
-  // footprint the deck IS the ground (rotation already undone above, so
-  // this tracks the pad around the planet's spin)
-  if (body.pads) {
-    for (const pad of body.pads) {
-      if (nx * pad.dx + n.y * pad.dy + nz * pad.dz > pad.cosAng)
-        return body.cfg.radius * pad.top;
-    }
-  }
-  const lon = Math.atan2(-nz, nx);
-  const lat = Math.asin(Math.max(-1, Math.min(1, n.y)));
+  if (!yaw) return out.copy(n);
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  return out.set(n.x * cy - n.z * sy, n.y, n.x * sy + n.z * cy);
+}
+
+/* Bilinear sample of ANY lat/lon uint8 grid, in the as-baked frame → 0..255.
+   Split out of groundRadius (v63): the height grid and the hazard masks are
+   separate grids at separate resolutions, so w/h has to come off the grid
+   rather than being baked into one function.
+   Blender's Z-up became glTF's Y-up: north pole is +y, and Blender longitude
+   works out to atan2(-z, x) on this side. */
+function sampleGrid(g, bx, by, bz) {
+  const lon = Math.atan2(-bz, bx);
+  const lat = Math.asin(Math.max(-1, Math.min(1, by)));
   const u = (lon + Math.PI) / (2 * Math.PI) * g.w - 0.5;
   const v = (Math.PI / 2 - lat) / Math.PI * g.h - 0.5;
   const x0 = Math.floor(u), y0 = Math.floor(v);
@@ -1462,8 +1562,26 @@ function groundRadius(body, n) {
   const s = (X, Y) => g.d[Y * g.w + X];
   const top = s(X0, Y0) + (s(X1, Y0) - s(X0, Y0)) * fx;
   const bot = s(X0, Y1) + (s(X1, Y1) - s(X0, Y1)) * fx;
-  const val = top + (bot - top) * fy;
-  return body.cfg.radius * (g.min + (g.max - g.min) * val / 255);
+  return top + (bot - top) * fy;
+}
+
+const _grN = new THREE.Vector3();
+function groundRadius(body, n) {
+  // n: unit vector from planet center toward the ship
+  const g = body.height;
+  if (!g) return body.cfg.radius;
+  const b = toBakedFrame(body, n, _grN);
+  // landing pad decks sit ABOVE the baked terrain grid — inside a pad's
+  // footprint the deck IS the ground (rotation already undone above, so
+  // this tracks the pad around the planet's spin). Checked BEFORE the grid,
+  // which is also what makes a pad immune to that world's hazard for free.
+  if (body.pads) {
+    for (const pad of body.pads) {
+      if (b.x * pad.dx + b.y * pad.dy + b.z * pad.dz > pad.cosAng)
+        return body.cfg.radius * pad.top;
+    }
+  }
+  return body.cfg.radius * (g.min + (g.max - g.min) * sampleGrid(g, b.x, b.y, b.z) / 255);
 }
 
 /* What is the ship standing over? (v61 — the instrument, not the trap.)
@@ -1480,6 +1598,46 @@ function groundRadius(body, n) {
 
    Landing pads are exempt for free: groundRadius returns the deck height
    (Charleston 1.0175) inside a pad footprint, well clear of the ocean band. */
+/* How dangerous is the ground under this direction, 0 (safe) .. 1 (worst)?
+   One function, three sources, because the worlds genuinely differ (v63):
+
+     ELEVATION (`below`) — water pools in low ground, so "low" and "wet" are the
+       same fact. EARTH's ocean and AZURE's sea both bake perfectly flat at
+       exactly 1.0, which makes this a single comparison.
+     PAINTED MASK (body.hazardGrid) — CINDER's lava is chosen by lava_field()
+       face by face and sits at every elevation (the Maw's lake floor is ABOVE
+       the safe ash plains), so no elevation rule can express it. VERDANT's
+       canopy varies in height for the same reason.
+
+   Graded on purpose where the source allows it: CINDER's mask is 0-255, so
+   crust edge and molten core can differ, which is the fairness tier a flat
+   ocean structurally cannot have.
+
+   PADS ARE ALWAYS SAFE. groundRadius() gives elevation worlds that for free by
+   returning the deck height, but a painted mask knows nothing about pads —
+   VERDANT's whole city sits in closed canopy with the platforms as the only
+   safe ground, so this check is what makes it landable at all. */
+const _hzN = new THREE.Vector3();
+function hazardLevel(body, n, mult) {
+  const hz = body.cfg.hazard;
+  if (!hz) return 0;
+  const b = toBakedFrame(body, n, _hzN);
+  if (body.pads) {
+    for (const pad of body.pads)
+      if (b.x * pad.dx + b.y * pad.dy + b.z * pad.dz > pad.cosAng) return 0;
+  }
+  if (hz.below != null) return mult < hz.below ? 1 : 0;
+  const g = body.hazardGrid;
+  return g ? sampleGrid(g, b.x, b.y, b.z) / 255 : 0;
+}
+/* The hazard you're actually in, or null. Split from hazardLevel so the HUD
+   readout and the touchdown rule can never disagree about what counts. */
+function hazardOf(body, n, mult) {
+  const hz = body.cfg.hazard;
+  if (!hz) return null;
+  const i = hazardLevel(body, n, mult);
+  return i >= (hz.at != null ? hz.at : 0.5) ? { hz, i } : null;
+}
 const _surfN = new THREE.Vector3();
 function surfaceUnder(body) {
   if (!body || !body.cfg.landable) return null;
@@ -1488,12 +1646,13 @@ function surfaceUnder(body) {
   if (!fromCenter) return null;
   _surfN.multiplyScalar(1 / fromCenter);
   const ground = groundRadius(body, _surfN);
-  const hz = body.cfg.hazard;
   const mult = ground / body.cfg.radius;
+  const h = hazardOf(body, _surfN, mult);
   return {
     alt: fromCenter - ground,            // TRUE altitude over terrain, not the datum
     mult,
-    hazard: hz && mult < hz.below ? hz : null,
+    hazard: h && h.hz,
+    level: h ? h.i : 0,
   };
 }
 
@@ -1601,6 +1760,9 @@ function buildBody(cfg) {
         });
       } else fallback();
       if (cfg.heightFile) loadHeightGrid(body, cfg.heightFile);
+      // a painted hazard mask in its own file (CINDER's lava). VERDANT's canopy
+      // rides inside its height json instead, so it needs no second fetch.
+      if (cfg.hazardFile) loadHazardGrid(body, cfg.hazardFile);
     } else {
       group.add(makeProceduralSurface(cfg));
     }
@@ -2098,15 +2260,31 @@ const RAM_FREE_SPD = 25;    // closing speed under this is a nudge, not a hit
 const RAM_DMG_SIZE = 0.16;  // hull per unit of junk radius, per 100 u/s closing
 const RAM_DMG_CAP = 60;     // nothing one-shots a full hull — a lesson, not a reset
 const HULL_REPAIR = 12.5;   // hull/sec while parked — a landing is a pit stop
+/* Ditching (v62): a hazard surface isn't ground, so you don't park on it — you
+   go IN. Two ways it goes: hit it hard and the entry alone hurts, or hit it soft
+   and you're swimming while the hull floods. Throttle out and you live, damaged.
+   Sit in it and you don't.
+   TIME is the margin here, not depth — build_earth.py bakes the sea floor
+   perfectly flat at exactly 1.0, so this world has no shallow/deep gradient to
+   read. The fair warning is the SURFACE readout you had on the way down (v61). */
+const DITCH_DPS = 22;       // hull/sec in the drink — ~4.5s of grace on a stock hull
+const DITCH_SLAM = 70;      // entry speed above which the splash itself does damage
+const DITCH_SLAM_MUL = 0.55;   // hull per u/s over that, capped like a ram below
+const DITCH_SKIN = 3;       // how far above a hazard's surface still counts as "in it"
 const FLASH_WHITE = new THREE.Color(0xffffff);
 const killsEl = document.getElementById("kills");
 const hullFillEl = document.getElementById("hullfill");
 const hullPctEl = document.getElementById("hullpct");
 const breachEl = document.getElementById("breachtag");
+const ditchEl = document.getElementById("ditchtag");
 const dmgFlashEl = document.getElementById("damageflash");
 let junkKills = 0;
 let dmgFlash = 0;       // red vignette strength, decays each frame
 let breachUntil = 0;    // clock time the HULL BREACH tag hides (0 = hidden)
+let ditching = null;    // the hazard we're sitting in this frame (null = flying/parked)
+let wasDitching = null; // edge-detect, so the entry splash only bites once
+let ditchBody = null;   // the world we're ditched on — carried like a parked ship
+let ditchLevel = 0;     // how deep in it we are, 0..1 (a graded mask scales the burn)
 
 function shipDamage(amount) {
   ship.hull = Math.max(0, ship.hull - amount);
@@ -2124,6 +2302,10 @@ function shipBreach() {
   ship.throttle = 0;
   landedOn = null;
   liftoff = null;   // a tow-home mid-liftoff must not leave the autopilot pinning us to the old pad
+  // the tow pulls you out of whatever you were sitting in — drop the ditch state
+  // too, or the warning lingers a frame and the carry claim points at a world
+  // you're no longer anywhere near
+  ditching = null; wasDitching = null; ditchBody = null; ditchLevel = 0;
   const e = homeWorld();   // v60: the home PORT's world, not the body named "EARTH"
   if (e) {
     const r = e.cfg.radius;
@@ -6140,11 +6322,16 @@ function animate() {
   }
 
   /* ---- collisions (against the ship's position) ---- */
+  ditching = null;              // the hazard branch below re-arms this each frame
   const COLLIDE_BUFFER = 12;
   for (const b of liveBodies) {
     // parked? ride the planet's orbital travel (spin is handled in the
     // landed branch below)
-    if (landedOn === b) shipObj.position.add(b.orbitDelta);
+    // a ditched ship rides the world exactly like a parked one — carried BEFORE
+    // its up-vector is measured, which is the whole reason parked ships don't
+    // drift. Do it here or the clamp below bakes the planet's orbital travel
+    // (~8.6u/frame for Earth) into a slide across the surface.
+    if (landedOn === b || ditchBody === b) shipObj.position.add(b.orbitDelta);
     tmpNormal.subVectors(shipObj.position, b.group.position);
     let dist = tmpNormal.length();
     let minDist = b.cfg.radius + COLLIDE_BUFFER;
@@ -6158,7 +6345,8 @@ function animate() {
       tmpNormal.multiplyScalar(1 / dist);            // local "up"
       // (the liftoff branch below pins position absolutely and rides the
       // spin itself — the SOI carry and gravity tug would just fight it)
-      if (dist < b.cfg.radius * 3 && landedOn !== b && !(liftoff && liftoff.b === b)) {
+      if (dist < b.cfg.radius * 3 && landedOn !== b && ditchBody !== b
+          && !(liftoff && liftoff.b === b)) {
         /* sphere of influence (v19, widened + spin-carry v35): the planet
            orbits the sun at ~170 u/s AND spins, so braking near it lets the
            pad slide out from under you — which reads as gravity shoving you
@@ -6201,10 +6389,20 @@ function animate() {
           spinRideQ.setFromAxisAngle(SPIN_AXIS, dSpin);
           shipObj.quaternion.premultiply(spinRideQ);
         }
-        const ground = groundRadius(b, tmpNormal) + GEAR_HEIGHT;
+        const grP = groundRadius(b, tmpNormal);
+        const ground = grP + GEAR_HEIGHT;
         shipObj.position.copy(b.group.position).addScaledVector(tmpNormal, ground);
         ship.velocity.set(0, 0, 0);
-        if (ship.throttle > 0.05) {                  // takeoff → the autopilot rises first
+        /* You cannot be PARKED on a hazard — un-latch and let the ditch branch
+           have it next frame (v62). This is the safety net that makes the whole
+           thing robust: the height grid is one byte per cell, so a ship drifting
+           a fraction of a unit can read just above the hazard cut for a single
+           frame and latch. Without this, that one frame is permanent — the
+           parked branch runs INSTEAD of the ditch branch from then on, and you
+           sit on the open ocean repairing. */
+        if (hazardOf(b, tmpNormal, grP / b.cfg.radius)) {
+          landedOn = null;
+        } else if (ship.throttle > 0.05) {           // takeoff → the autopilot rises first
           landedOn = null;
           liftoff = { b, t: 0 };
         }
@@ -6237,8 +6435,15 @@ function animate() {
           liftoff = null;
         }
       } else {
-        const ground = groundRadius(b, tmpNormal) + GEAR_HEIGHT;
-        if (dist < ground) {
+        const gr = groundRadius(b, tmpNormal);
+        const ground = gr + GEAR_HEIGHT;
+        const hit = hazardOf(b, tmpNormal, gr / b.cfg.radius);
+        const hz = hit && hit.hz;
+        /* Ground is a surface you rest ON; a hazard is a volume you're IN, from
+           its surface down. Hence the skin: touchdown clamps the ship to exactly
+           `ground`, so a bare `dist < ground` reads false the very next frame —
+           you'd flicker in and out of the water and never actually flood. */
+        if (hz ? dist < ground + DITCH_SKIN : dist < ground) {
           shipObj.position.copy(b.group.position).addScaledVector(tmpNormal, ground);
           const into = ship.velocity.dot(tmpNormal);
           if (into < 0) {
@@ -6246,7 +6451,49 @@ function animate() {
             ship.velocity.addScaledVector(tmpNormal, -into);
           }
           ship.velocity.multiplyScalar(Math.pow(0.9, dt * 60));  // ground grip
-          if (ship.velocity.length() < 2.5) {
+          if (hz) {
+            /* IN THE DRINK (v62): a hazard has no deck to latch onto. No
+               landedOn — which is the whole point, since that flag is what
+               grants the free repair, the parked-ship exemption and a port's
+               rights. You just float there flooding until you fly out. */
+            ditching = hz;
+            ditchBody = b;
+            ditchLevel = hit.i;
+            /* Ride the spin the same way the parked branch does — swing the
+               anchor point (and the nose) at the surface's own rate. With the
+               orbit carry handled at the top of the loop, this is the other
+               half of "float where you fell" instead of sliding across it. */
+            if (b.cfg.spin) {
+              const dSpin = b.cfg.spin * dt * 10;      // must match the surface animation
+              tmpNormal.applyAxisAngle(SPIN_AXIS, dSpin);
+              spinRideQ.setFromAxisAngle(SPIN_AXIS, dSpin);
+              shipObj.quaternion.premultiply(spinRideQ);
+              shipObj.position.copy(b.group.position).addScaledVector(tmpNormal, ground);
+            }
+            let gone = false;
+            if (!wasDitching) {                        // entry, once per splash
+              thump(Math.max(120, -into));
+              if (hz.lethalSpeed != null && -into >= hz.lethalSpeed) {
+                // came in fat: the entry IS the end of it, no timer
+                shipDamage(ship.hull);
+                gone = true;
+              } else if (into < -DITCH_SLAM) {         // hard but survivable
+                shipDamage(Math.min(RAM_DMG_CAP, (-into - DITCH_SLAM) * DITCH_SLAM_MUL));
+              }
+            }
+            /* Severity, three ways, because the worlds mean different things.
+               `lethalSpeed` (above) kills on a fast entry — water. `lethalAt`
+               kills by INTENSITY regardless of speed — CINDER's molten core.
+               Everything else floods, and a graded mask scales the rate, so
+               lava crust is a burn you can power out of while the core is not. */
+            if (!gone) {
+              if (hz.lethalAt != null && hit.i >= hz.lethalAt) {
+                shipDamage(ship.hull);                 // straight to the breach + tow
+              } else {
+                shipDamage((hz.dps != null ? hz.dps : DITCH_DPS) * hit.i * dt);
+              }
+            }
+          } else if (ship.velocity.length() < 2.5) {
             landedOn = b;
             ship.velocity.set(0, 0, 0);
             ship.throttle = 0;
@@ -6623,6 +6870,21 @@ function animate() {
      surface type beside it so a hazard is something you watched coming.
      Appears inside half a radius of a landable world; stays up while parked so
      you can see what you set down on. */
+  /* the ditch warning (v62): name what you're in and count down the seconds the
+     hull has left, so pulling up is a decision with a number on it rather than a
+     vague sense of dread. Hidden the instant you're clear. */
+  if (ditching) {
+    const rate = (ditching.dps != null ? ditching.dps : DITCH_DPS) * Math.max(0.05, ditchLevel);
+    ditchEl.textContent = "◆ IN THE " + ditching.name + " — PULL UP · "
+                        + Math.max(0, Math.ceil(ship.hull / rate)) + "s ◆";
+    ditchEl.style.visibility = "visible";
+  } else {
+    ditchEl.style.visibility = "hidden";
+    ditchBody = null;          // clear the carry claim once we're actually out
+    ditchLevel = 0;
+  }
+  wasDitching = ditching;
+
   const surf = surfaceUnder(nearest);
   if (surf && surf.alt < nearest.cfg.radius * 0.5) {
     surfRowEl.style.display = "block";
