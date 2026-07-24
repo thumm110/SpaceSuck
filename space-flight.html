@@ -2247,6 +2247,55 @@ let shipMixer = null;
 let shipIdleAction = null, idleFloatW = 1;  // v55: the float's blend weight — eased to 0 while parked
 let gearHinges = [], gearDoors = [], gearT = 0;   // landing gear: 0 = stowed, 1 = deployed
 let shipLoadSeq = 0;   // stale-load guard: a fast picker flip outruns a slow fetch
+/* ---- shared hull material pass (v68) --------------------------------------
+   Four .glb load sites each carried a near-copy of this: "*Glow" materials
+   glow bright, plain hull gets a faint self-lit floor so it still reads out
+   past HELIOS, where the sun's inverse-square falloff would otherwise leave
+   the whole ship near-black.
+
+   Hoisted so the weathering shader has ONE place to hook instead of four.
+   This is a PURE REFACTOR — each site keeps its exact dialect via opts,
+   including the haulers' re-visit bump (see byEmissive). Behaviour verified
+   identical across all 303 loaded materials.
+
+     floor       non-glow self-lit intensity (0.15 player, 0.5 everyone else)
+     byEmissive  key on the authored emissive VALUE instead of the material
+                 NAME — the haulers' dialect, because build_hauler.py names
+                 its lights NavRed/MarkerAmber/Headlight/CabWindow, none of
+                 which end in "Glow"
+
+   NOTE: deliberately does NOT dedupe by material. One material can back 40+
+   mesh primitives, so byEmissive sites visit it repeatedly and ratchet the
+   floor up to 1.5 on the second pass. That is a live bug (83 of 90 hauler
+   materials sit at 1.5, not 0.5) — preserved here on purpose so this commit
+   changes nothing. Fix it on its own commit where the visual diff is legible. */
+function dressHullMats(model, opts) {
+  const floor = opts.floor;
+  model.traverse(o => {
+    if (!o.isMesh || !o.material) return;
+    const m = o.material;
+    if (!m.emissive) return;              // unlit material — skip, don't throw
+    if (opts.byEmissive) {
+      if (m.emissive.getHex() !== 0) {
+        m.emissiveIntensity = Math.max(m.emissiveIntensity || 1, 1.5);
+      } else {
+        m.emissive.copy(m.color);
+        m.emissiveIntensity = floor;
+      }
+    } else if (m.name.endsWith("Glow")) {
+      // pure-emission Blender materials export a BLACK base color with the
+      // real color in emissiveFactor — keep the loader's emissive, only
+      // falling back to base color if emissive came through empty
+      if (m.emissive.getHex() === 0) m.emissive.copy(m.color);
+      m.emissiveIntensity = 1.5;
+    } else {
+      m.emissive.copy(m.color);
+      m.emissiveIntensity = floor;
+    }
+    // weatherHullMat(m);   <- step 2: the plating shader hooks in right here
+  });
+}
+
 function loadPlayerShip(def) {
   if (!THREE.GLTFLoader) return;
   const seq = ++shipLoadSeq;
@@ -2263,19 +2312,7 @@ function loadPlayerShip(def) {
     // glows bright; the hull gets a faint self-lit floor so it still reads
     // out past HELIOS, where the sun's inverse-square falloff would
     // otherwise leave the whole ship near-black
-    model.traverse(o => {
-      if (!o.isMesh || !o.material) return;
-      if (o.material.name.endsWith("Glow")) {
-        // pure-emission Blender materials export a BLACK base color with the
-        // real color in emissiveFactor — keep the loader's emissive, only
-        // falling back to base color if emissive came through empty
-        if (o.material.emissive.getHex() === 0) o.material.emissive.copy(o.material.color);
-        o.material.emissiveIntensity = 1.5;
-      } else {
-        o.material.emissive.copy(o.material.color);
-        o.material.emissiveIntensity = 0.15;
-      }
-    });
+    dressHullMats(model, { floor: 0.15 });
 
     // swap hulls: strip everything that isn't a glow sprite — the primitive
     // placeholder on first load, the PREVIOUS fighter on a picker swap. The
@@ -3586,16 +3623,7 @@ if (THREE.GLTFLoader) {
       // gets a self-lit floor. The raider's gunmetal is near-black by
       // design, so it gets a higher floor than the player's 0.15 — the
       // dagger silhouette stays, the edges still catch
-      model.traverse(o => {
-        if (!o.isMesh || !o.material) return;
-        if (o.material.name.endsWith("Glow")) {
-          if (o.material.emissive.getHex() === 0) o.material.emissive.copy(o.material.color);
-          o.material.emissiveIntensity = 1.5;
-        } else {
-          o.material.emissive.copy(o.material.color);
-          o.material.emissiveIntensity = 0.5;
-        }
-      });
+      dressHullMats(model, { floor: 0.5 });   // AFTER the clone above
 
       // swap hulls: strip the primitives, KEEP the sprites the game loop
       // holds references to (strobe beacon + engine glow)
@@ -3767,15 +3795,7 @@ if (THREE.GLTFLoader) for (const h of haulers) {
     // material pass, generalized from the raider swap: anything the Blender
     // script authored as emissive (EngineGlow, ReeferGlow, nav + marker
     // lights) gets boosted; plain hull gets the self-lit floor
-    model.traverse(o => {
-      if (!o.isMesh || !o.material) return;
-      if (o.material.emissive && o.material.emissive.getHex() !== 0) {
-        o.material.emissiveIntensity = Math.max(o.material.emissiveIntensity || 1, 1.5);
-      } else if (o.material.emissive) {   // unlit materials have no emissive — skip, don't throw
-        o.material.emissive.copy(o.material.color);
-        o.material.emissiveIntensity = 0.5;
-      }
-    });
+    dressHullMats(model, { floor: 0.5, byEmissive: true });
     const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
     const hlen = h.def.len || HAULER_LEN;
     model.scale.setScalar(hlen / size.z);
@@ -4324,16 +4344,7 @@ if (THREE.GLTFLoader) for (const g of gunships) {
     const model = gltf.scene;
     // the raider's material pass: authored glows boosted, near-black gothic
     // hull gets the raider's brighter self-lit floor so it reads at range
-    model.traverse(o => {
-      if (!o.isMesh || !o.material) return;
-      if (o.material.name.endsWith("Glow")) {
-        if (o.material.emissive.getHex() === 0) o.material.emissive.copy(o.material.color);
-        o.material.emissiveIntensity = 1.5;
-      } else if (o.material.emissive) {
-        o.material.emissive.copy(o.material.color);
-        o.material.emissiveIntensity = 0.5;
-      }
-    });
+    dressHullMats(model, { floor: 0.5 });   // BEFORE the escort retint below
     // the escort retint: swap the four red foe-tells to ion blue. EMISSIVE,
     // never color — pure-emission mats export a BLACK base color; the visible
     // color lives in emissiveFactor. Refs kept for the live red-flip.
