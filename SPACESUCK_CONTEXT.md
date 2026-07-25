@@ -266,7 +266,7 @@ smoke test that boots the game and asserts on live globals.
 | Name | Style | Radius | Landable | Notes |
 |---|---|---|---|---|
 | **HELIOS** | star | 3300 | — | System centre |
-| **CINDER** | gltf | 900 | ✅ | Scorched. Graded **magma** hazard mask; two outposts; no pads |
+| **CINDER** | gltf | 900 | ✅ | Scorched. Graded **magma** hazard mask; two outposts; no pads. The only world with `impacts` (rocks reach the ground) and `vents` (The Maw erupts) |
 | **AZURE** | gltf | 1425 | ✅ | Archipelago. **Water kills.** Four island pads incl. FOLLY on pylons; one moon |
 | **KRONOS** | gas | 1950 | ❌ | Gas giant, rings, 1,000-rock belt. The only procedural planet left |
 | **EARTH** | gltf | 2500 | ✅ | **The flagship.** Charleston spaceport (dressed v72), lethal rivers, one moon |
@@ -293,7 +293,8 @@ smoke test that boots the game and asserts on live globals.
   (N = `JUNK_COUNT`), which rewrites shared junk scratch mid-call. Pirate/freight/
   capital code owns its own `pirTmp*` / `haulTmp*` / `gunTmp*` vectors — never
   `junkTmp*`. v75's `pointInTerrain` / `npcTerrainClamp` own `_solidN` / `_npcN`
-  for the same reason: they're called from inside those loops.
+  for the same reason: they're called from inside those loops, and so do v76/v77's
+  `burnUp` / `burnTan` / `burnTmp`, `impTmpA/B` and `_ventN/_ventP/_ventV/_ventJ`.
 - **Worlds are solid, and the test order is load-bearing (v75).** Every bolt pool
   kills on terrain via `pointInTerrain`, but ONLY after its own target sweep —
   `else if`, never before. Ordered the other way, a shot that reached the hull is
@@ -303,8 +304,39 @@ smoke test that boots the game and asserts on live globals.
   is re-run on every live piece each frame, because a parked ship rides its
   planet's `orbitDelta` (~150–215 u/s) while junk sits still in world space — the
   planet drives through the field. Exits go through `junkLeaveField()`, the hook
-  the planned atmosphere burn-up grows from. Moons are a known gap: they're not in
+  the atmosphere burn-up grew from in v76. Moons are a known gap: they're not in
   `liveBodies`, so bolts still pass through them.
+- **A junk slot has THREE states since v76**, not two: alive, dead-and-waiting, and
+  dead-but-burning (`j.burn > 0`, `alive === false`, still drawn). A burning rock is
+  scenery — not shootable, not rammable, worth no scrap — and it owns its own step,
+  so it does *not* tick `respawnIn`. `junkActivate()` clears `j.burn`; that one line
+  is what stops `junkSpawnFragments` (which picks slots by `!alive`, and a burning
+  rock matches) from resurrecting a meteor with a stale `burnBody`.
+- **Counted, never tracked.** `burningNow()` and `ambientEmber()`'s live count both
+  walk their arrays instead of keeping a tally, because every `++/--` pair here has
+  four or five unwind sites and one miss disables the effect silently, forever. The
+  first cut of v76 proved the point: a leftover `burningNow++` overwrote the function
+  itself with `NaN`.
+- **The ember pool's real limit is CONCURRENCY, not emission rate (v77).** It's a
+  260-sprite ring buffer shared with weapons FX. Continuous effects (meteor trails,
+  volcanic plumes) go through `ambientEmber()` and share a 70-slot live allowance;
+  one-shot events (kills, impacts, flares) call `emitEmber` directly. A per-*frame*
+  cap looks tight and isn't — 7/frame is 385 sprites a second, which owned the whole
+  pool and left a plume eating its own tail.
+- **Anything anchored to a planet must ride `orbitDelta` (v77).** Worlds *travel* —
+  CINDER does 216 u/s (`orbit.speed 0.006 × orbit.radius 36000`) — and near a world
+  the ship is carried with it, so the ground is stationary on screen while anything
+  in raw world space is not. Embers carry an optional `e.carry = body` for this;
+  set it on any sprite that claims to stand on terrain. Measured without it: THE
+  MAW's plume ended 505u downrange having risen 256, lying ~78° off vertical. Its
+  *spin* (22.5 u/s at the surface) is deliberately **not** carried — that's the
+  downwind lean. The old one-shot FX never showed the bug because they live 0.2s.
+- **Worlds where rocks LAND are a config flag.** `cfg.impacts` (CINDER only) is what
+  turns a burn-up into a `surfaceImpact()`. `cfg.vents` is baked lat/lon, spun into
+  world space each frame by `fromBakedFrame()` — the exact inverse of `toBakedFrame`,
+  and it has to stay that way or the volcano slides across the ground as the world
+  turns. Vent coordinates are hand-copied from `build_cinder.py` (same staleness rule
+  as pads).
 - **`hitR` is not only a hull radius.** The PACKRAT's salvage gap reads it as a
   half-*length*. v70 added `capR`/`capHalf` beside it rather than redefining it.
 - **fleet.json sizes are a FORWARD spec**, not live values — the game runs ~0.44–

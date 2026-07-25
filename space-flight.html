@@ -727,6 +727,29 @@ const BODIES = [
        0.75 is the core. */
     hazardFile: "planets/cinder_hazard.json",
     hazard: { name: "MAGMA", color: "#ff6a1e", at: 0.1255, dps: 34, lethalAt: 0.7529 },
+    /* v77: THE WORLD WHERE ROCKS LAND. Every world burns incoming junk up in its
+       air (v76); this flag is what says "not here — it makes it all the way down."
+       CINDER's air is the thin, ash-choked kind: it LIGHTS a rock without eating
+       it. Mechanically it's the one knob that turns a burn-up into an impact, so
+       any future airless moon or thin-air world gets craters by adding one line. */
+    impacts: true,
+    /* v77: THE MAW IS AWAKE. Lat/lon in degrees, same convention as the pads and
+       the height grid — build_cinder.py's CALDERA_LAT/LON (5.0, 30.0) verbatim,
+       so the eruption comes out of the caldera you can fly into rather than a
+       number I made up. The two flank vents sit ~10° off, which is outside the
+       0.13-rad lava lake but well inside the 0.30-rad shield, so they vent on the
+       slope. The fourth is down in The Scar (build_cinder.py's GRABEN_M, 41/177)
+       on the far side, so the volcano isn't the only thing worth flying to.
+         gap    — seconds between eruptions, [min, max]
+         power  — column height/rate/loudness, 0..1
+         simmer — the between-times trickle (the Maw has a lava lake, so it never
+                  fully goes out; a dry fissure does) */
+    vents: [
+      { name: "THE MAW",   lat:  5.0, lon:  30.0, gap: [16, 34], power: 1.0,  simmer: 1.0  },
+      { name: "NORTH VENT", lat: 13.5, lon: 21.0, gap: [24, 58], power: 0.45, simmer: 0.18 },
+      { name: "SPILLWAY",  lat: -3.0, lon:  39.0, gap: [28, 64], power: 0.40, simmer: 0.14 },
+      { name: "THE SCAR",  lat: 41.0, lon: 177.0, gap: [34, 78], power: 0.55, simmer: 0    },
+    ],
     gravity: 0.6,                   // small world, light pull — forgiving
     // NO pads. The whole surface is landable off the height grid, and both
     // outposts sit on leveled pans, so you just set down on the open apron
@@ -1746,6 +1769,19 @@ function toBakedFrame(body, n, out) {
   return out.set(n.x * cy - n.z * sy, n.y, n.x * sy + n.z * cy);
 }
 
+/* The other direction (v77): take a direction that was BAKED at a fixed lat/lon
+   — a volcano's mouth — and spin it forward into where that spot is now. Exact
+   inverse of toBakedFrame, and it has to stay that way: a vent that used the
+   wrong sign would sit still while the world turned underneath it, and on a
+   world spinning at 0.0025 rad/s that reads as a plume sliding across the ground.
+   Same explicit `out` for the same reason. */
+function fromBakedFrame(body, b, out) {
+  const yaw = body.surface ? body.surface.rotation.y : (body.cfg.yaw || 0);
+  if (!yaw) return out.copy(b);
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  return out.set(b.x * cy + b.z * sy, b.y, -b.x * sy + b.z * cy);
+}
+
 /* Bilinear sample of ANY lat/lon uint8 grid, in the as-baked frame → 0..255.
    Split out of groundRadius (v63): the height grid and the hazard masks are
    separate grids at separate resolutions, so w/h has to come off the grid
@@ -1973,6 +2009,9 @@ function buildBody(cfg) {
       // trunk/crown collision manifest (VERDANT) — fire-and-forget like the rest;
       // body.trees is undefined for a frame or two, and every consumer null-checks.
       if (cfg.treeFile) loadTrees(body, cfg.treeFile);
+      // v77: volcanic vents. No fetch — they're four lines of config, baked into
+      // unit directions once here so the per-frame path is a rotate and a scale.
+      if (cfg.vents) buildVents(body);
     } else {
       group.add(makeProceduralSurface(cfg));
     }
@@ -2949,6 +2988,9 @@ for (let i = 0; i < JUNK_COUNT; i++) {
     vel: new THREE.Vector3(), spin: new THREE.Vector3(),
     radius: 1, hp: 1, maxHp: 1, flash: 0, alive: false, respawnIn: 0,
     ramCool: 0,   // seconds until this piece can hurt us again — see updateJunk
+    // v76 burn-up state. burn > 0 IS the "this slot is a meteor right now" flag;
+    // everything else here is only meaningful while it is.
+    burn: 0, burnMax: 1, burnBody: null, burnScale0: 1, emberCool: 0,
     phase: rand() * 6.28,
   });
 }
@@ -2972,12 +3014,19 @@ const junkTmpA = new THREE.Vector3(), junkTmpB = new THREE.Vector3();
    EVICTING a piece that's already alive wants a TIGHTER one, or a rock sitting
    exactly on the spawn boundary flickers in and out every frame as it drifts.
    The gap between the two numbers is the hysteresis. */
-function junkPointBlocked(p, mul = 1.25, pad = 200) {
+/* v76 split this in two. The evict sites now need to know WHICH world a rock
+   blundered into — a burn-up has to know whose air it's in and which way is
+   down. The four spawn-side callers only ever asked yes/no, so they keep the
+   cheap wrapper and nothing about them changes. */
+function junkBlockingBody(p, mul = 1.25, pad = 200) {
   for (const b of liveBodies) {
     const clear = b.cfg.radius * mul + pad;
-    if (p.distanceToSquared(b.group.position) < clear * clear) return true;
+    if (p.distanceToSquared(b.group.position) < clear * clear) return b;
   }
-  return false;
+  return null;
+}
+function junkPointBlocked(p, mul = 1.25, pad = 200) {
+  return junkBlockingBody(p, mul, pad) !== null;
 }
 /* The evict shell. 1.18R + 100 clears the tallest terrain in the game (CINDER
    peaks at 1.1407R) with room to spare, and sits comfortably inside the 1.25R
@@ -3085,7 +3134,14 @@ function junkRespawn(j, first) {
             .addScaledVector(junkTmpA, JUNK_NEAR + Math.random() * (JUNK_FAR - JUNK_NEAR));
     if (!junkPointBlocked(junkTmpB)) { j.group.position.copy(junkTmpB); placed = true; }
   }
-  if (!placed) { j.alive = false; j.group.visible = false; j.respawnIn = 1.5; return; }
+  /* v76: this was an inlined `alive = false; visible = false; respawnIn = 1.5`,
+     and it has to be the hook instead. shipBreach() respawns every slot, burning
+     ones included, and five failed placement tries land here WITHOUT reaching
+     junkActivate below — so the inline version left j.burn set with a burnBody
+     pointing at the world the rock was falling into before you died. The dead
+     branch of updateJunk would then keep stepping an invisible meteor and
+     dribbling embers out of empty space. junkLeaveField clears the burn. */
+  if (!placed) { junkLeaveField(j, 1.5); return; }
 
   junkActivate(j);
   randUnit(junkTmpA);
@@ -3102,8 +3158,140 @@ function junkRespawn(j, first) {
    moment with a visual on it, and it wants exactly one call site to grow from. */
 function junkLeaveField(j, delay) {
   j.alive = false;
+  j.burn = 0;             // v76: whatever it was doing, it isn't doing it any more
   j.group.visible = false;
   j.respawnIn = delay;
+}
+
+/* ---- v76: ATMOSPHERIC BURN-UP -------------------------------------------
+   The visual the v75 hook was built for. Same moment — a rock has no business
+   where it is — but instead of winking out it does what a rock actually does
+   when it meets air: goes white, throws a trail, eats itself, and is gone.
+
+   It hangs off the EVICT shell, not a new one, and that's deliberate. The evict
+   shell is the fix; adding a second, higher "atmosphere" trigger would mean junk
+   that SPAWNS legitimately inside a big world's visible sky (EARTH's spawn shell
+   is 3325 from centre, its drawn sky reaches 3900) lights up the instant it's
+   born. Reusing the eviction means exactly the rocks that were already being
+   thrown away are the ones that burn, so this costs nothing and can't fire on a
+   rock that's behaving.
+
+   THE ROCK GOES `alive = false` IMMEDIATELY. It is scenery from here on — not
+   shootable, not rammable, not worth scrap. That matters: a burning rock you
+   could still ram would be a hitbox in the middle of a light show, and one you
+   could shoot would pay out for hitting something that was already dead. */
+const BURN_LIFE_MIN = 1.15, BURN_LIFE_MAX = 2.0;
+const BURN_DIVE = 430;        // u/s straight down — a drifting rock "entering the
+                              // atmosphere" at its own 3-29 u/s just hangs there
+const BURN_TANGENT = 165;     // sideways run, kept from its old heading so no two
+                              // meteors trace the same line
+const BURN_SEE_R = 9000;      // past this it's a sub-pixel: pop it silently, as before
+const BURN_MAX_AT_ONCE = 4;   // the bubble can evict a dozen pieces on one descent;
+                              // four is a sprinkle, twelve is a fireworks display
+const BURN_EMBER_GAP = 0.045;
+const BURN_WHITE = new THREE.Color(0xfff2d8);
+const burnUp = new THREE.Vector3(), burnTan = new THREE.Vector3(), burnTmp = new THREE.Vector3();
+
+/* COUNTED, never tracked. A `burningNow++/--` pair would have to be unwound on
+   every exit a burning slot has — burn-out, ground contact, junkLeaveField, and
+   junkSpawnFragments quietly borrowing the slot mid-streak because it reads as
+   dead. Miss one and the counter ratchets up and the feature switches itself off
+   forever, silently, hours into a session. Walking 32 slots on an eviction (which
+   happens a few times a second at worst) costs nothing and cannot drift. */
+function burningNow() {
+  let n = 0;
+  for (const j of junk) if (j.burn > 0) n++;
+  return n;
+}
+
+/* Can this eviction afford to be pretty? Cheap tests first. */
+function junkCanBurn(j, body) {
+  if (!body) return false;
+  // air (or a star's plasma) is what does the burning — an airless rock just
+  // eats the piece, and there's nothing to see
+  if (!body.cfg.atmosphere && body.cfg.type !== "star") return false;
+  if (j.group.position.distanceToSquared(shipObj.position) >= BURN_SEE_R * BURN_SEE_R) return false;
+  return burningNow() < BURN_MAX_AT_ONCE;
+}
+
+function junkBurnUp(j, body) {
+  j.alive = false;              // scenery from here on — see the note above
+  j.burnBody = body;
+  j.burn = j.burnMax = BURN_LIFE_MIN + Math.random() * (BURN_LIFE_MAX - BURN_LIFE_MIN);
+  j.burnScale0 = j.group.scale.x;
+  j.emberCool = 0;
+  j.group.visible = true;
+
+  // aim it down the gravity well, keeping whatever sideways run it had
+  burnUp.subVectors(j.group.position, body.group.position);
+  const d = burnUp.length();
+  if (d < 1e-3) burnUp.set(0, 1, 0); else burnUp.multiplyScalar(1 / d);
+  burnTan.copy(j.vel).addScaledVector(burnUp, -j.vel.dot(burnUp));   // strip the radial part
+  if (burnTan.lengthSq() < 1e-4) {
+    // it was falling dead-straight (or not moving) — pick any tangent
+    randUnit(burnTan);
+    burnTan.addScaledVector(burnUp, -burnTan.dot(burnUp));
+    if (burnTan.lengthSq() < 1e-4) burnTan.set(burnUp.y, -burnUp.x, 0);   // still parallel: hard fallback
+  }
+  j.vel.copy(burnTan).setLength(BURN_TANGENT).addScaledVector(burnUp, -BURN_DIVE);
+  j.spin.multiplyScalar(3.5);   // it's tumbling now, not drifting
+}
+
+function junkBurnStep(j, dt) {
+  const body = j.burnBody;
+  j.burn -= dt;
+  j.group.position.addScaledVector(j.vel, dt);
+  j.group.rotation.x += j.spin.x * dt;
+  j.group.rotation.y += j.spin.y * dt;
+  j.group.rotation.z += j.spin.z * dt;
+
+  const k = 1 - Math.max(0, j.burn) / j.burnMax;    // 0 fresh → 1 spent
+  burnUp.subVectors(j.group.position, body.group.position);
+  const d = burnUp.length() || 1;
+  burnUp.multiplyScalar(1 / d);
+  const floor = body.cfg.landable ? groundRadius(body, burnUp) : body.cfg.radius;
+
+  /* GROUND CONTACT, and it fires on EVERY world, not just the impacts one — the
+     dive is 430 u/s over a 1.15-2.0s life (495-860u) against 262u of air on
+     CINDER and 825u on EARTH, so a long burn reaches the deck even where nothing
+     is supposed to land. That's deliberate, not a leak: the alternative is a rock
+     coasting under the crust, which is the exact v75 bug. Impacts worlds crater;
+     everywhere else it's a flare, which reads as the last of it going out on
+     the deck. */
+  if (d <= floor + j.radius * 0.5) {
+    if (body.cfg.impacts) surfaceImpact(body, j.group.position, burnUp, j.radius);
+    else emitEmber(j.group.position, SPARK_STILL, j.radius * 2.0, 0.2, true);
+    junkLeaveField(j, 2 + Math.random() * 3);
+    return;
+  }
+
+  // white-hot, and hottest in the middle of the burn — a rock that's mostly gone
+  // isn't glowing brighter, it's glowing LESS because there's less of it
+  const heat = Math.min(1, k * 3) * (1 - k * 0.55);
+  for (const m of j.mats) m.emissive.copy(m.userData.baseEmissive).lerp(BURN_WHITE, heat);
+
+  /* ABLATION — it eats itself. On an impacts world it only sheds a chunk of
+     its mass, because the whole point of that world is that something LANDS. */
+  const shrink = body.cfg.impacts ? 1 - k * 0.5 : 1 - k * 0.92;
+  j.group.scale.setScalar(j.burnScale0 * Math.max(0.04, shrink));
+
+  // the trail: embers dropped behind it, drifting backward off the track
+  j.emberCool -= dt;
+  if (j.emberCool <= 0) {
+    j.emberCool = BURN_EMBER_GAP;
+    randUnit(burnTmp).multiplyScalar(22);
+    burnTmp.addScaledVector(j.vel, -0.12);         // lag behind the rock = a tail
+    ambientEmber(j.group.position, burnTmp,
+                 Math.max(2.5, j.radius * (0.5 + Math.random() * 0.5)),
+                 0.35 + Math.random() * 0.45, false);
+  }
+
+  if (j.burn <= 0) {
+    // the last flare. Even on an impacts world: this is the rock that didn't
+    // make it, and something has to end the streak or it just stops.
+    emitEmber(j.group.position, SPARK_STILL, Math.max(6, j.radius * 2.2), 0.24, true);
+    junkLeaveField(j, 1 + Math.random() * 2);
+  }
 }
 
 // wake a slot up wherever it already sits — respawning into the field and
@@ -3112,6 +3300,14 @@ function junkActivate(j) {
   j.alive = true;
   j.group.visible = true;
   j.flash = 0;
+  /* v76: the one line that makes the burn state safe. Every way a slot comes
+     back into play funnels through here — a normal respawn, and junkSpawnFragments
+     borrowing a slot it thinks is dead (a burning rock IS alive=false, so it's a
+     candidate). Without this, that borrowed slot carries j.burn > 0 into its new
+     life and re-enters the burn step against a stale burnBody the moment it dies
+     again. The emissive reset below is the other half — a rock recycled mid-burn
+     would otherwise come back white-hot. */
+  j.burn = 0;
   j.ramCool = 0;
   for (const m of j.mats) m.emissive.copy(m.userData.baseEmissive);
   j.group.rotation.set(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28);
@@ -3124,7 +3320,14 @@ function junkActivate(j) {
 /* ---- embers: one pool serves both the muzzle-sized spark of a glancing
    hit and the full kill blast. A "flash" is just an ember that's huge,
    short-lived, and set to grow instead of shrink. ---- */
-const EMBER_COUNT = 190;
+/* v77: 190 -> 260. The ambient FX below (meteor trails, volcanic plumes) hold a
+   standing population of sprites for SECONDS at a time, which is a different
+   demand than the one-shot bursts this pool was sized for, and at 190 they were
+   simply recycling each other — a plume emitted 20 embers a second with a 2.5s
+   life and never showed more than a handful, because the ring buffer came round
+   and took them back. The extra 70 slots are exactly the ambient allowance
+   below, so combat FX keep the headroom they always had. */
+const EMBER_COUNT = 260;
 const EMBER_HOT = new THREE.Color(0xfff4cc), EMBER_MID = new THREE.Color(0xff8a2b),
       EMBER_COLD = new THREE.Color(0x8c1c0c);
 const embers = [];
@@ -3133,12 +3336,16 @@ for (let i = 0; i < EMBER_COUNT; i++) {
     map: boltGlowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   });
   const s = new THREE.Sprite(mat); s.visible = false; scene.add(s);
-  embers.push({ s, mat, vel: new THREE.Vector3(), life: 0, maxLife: 1, size: 1, grow: false });
+  embers.push({ s, mat, vel: new THREE.Vector3(), life: 0, maxLife: 1, size: 1, grow: false,
+                ambient: false,      // v77 — see ambientEmber
+                carry: null });      // v77 — see the carry note in updateEmbers
 }
 let emberCursor = 0;
 function emitEmber(pos, vel, size, life, grow) {
   const e = embers[emberCursor];
   emberCursor = (emberCursor + 1) % EMBER_COUNT;
+  e.ambient = false;   // whatever this slot was, it's a one-shot now
+  e.carry = null;      // …and it isn't standing on anything until someone says so
   e.s.position.copy(pos); e.vel.copy(vel);
   e.size = size; e.life = e.maxLife = life; e.grow = !!grow;
   e.s.scale.setScalar(size); e.s.visible = true;
@@ -3166,11 +3373,181 @@ function burstSparks(pos, baseVel, radius) {
               Math.max(1.2, radius * 0.12), 0.18 + Math.random() * 0.25, false);
   }
 }
+/* ---- v76/v77: AMBIENT FX ALLOWANCE --------------------------------------
+   Everything below draws out of the same ember pool as the muzzle flashes and
+   the kill blasts, and it's a ring buffer — over-emitting doesn't break, it just
+   recycles. What it recycles is the blast you were looking at.
+
+   The thing to limit is CONCURRENCY, not emission rate. That's not obvious and I
+   got it wrong first: a per-frame cap of 7 sounds tight and is actually 385
+   sprites a second, so the continuous effects quietly owned the entire pool and
+   spent most of their time eating their own tails. What matters is how many
+   sprites are STANDING at once — an ember lives 0.35s as a meteor's tail and up
+   to 3.2s as a lump of ash — so the allowance is a live headcount.
+
+   CONTINUOUS effects (meteor trails, a venting volcano) come through here and
+   share these 70 slots. EVENTS — an impact, a kill, a burn-out flare — call
+   emitEmber directly, same as burstKill always has: they're one-shot, they're
+   over in a fifth of a second, and they're the thing you're meant to be looking
+   at. Counted, not tracked, for the same reason as burningNow(): a hand-kept
+   tally has to be unwound every time a combat burst overwrites an ambient slot,
+   and one miss switches the ambience off for the rest of the session. */
+const AMBIENT_EMBER_CAP = 70;    // of EMBER_COUNT — the 70 added in v77
+function ambientEmber(pos, vel, size, life, grow) {
+  let live = 0;
+  for (const e of embers) if (e.ambient && e.life > 0 && ++live >= AMBIENT_EMBER_CAP) return null;
+  const e = emitEmber(pos, vel, size, life, grow);
+  e.ambient = true;
+  return e;
+}
+
+/* ---- v77: SURFACE IMPACTS ------------------------------------------------
+   What a rock does when a world's air doesn't stop it (cfg.impacts — CINDER).
+   Three layers, because one ball of sparks reads as a firework and a firework
+   is the wrong shape: a FLASH, a low EJECTA cone folded into the upper
+   hemisphere so it throws off the ground instead of through it, and a slow fat
+   ASH COLUMN that's still standing there a couple of seconds later — the part
+   you can see from up high, which is the whole point of an impact you might
+   witness from orbit. `up` must be the outward unit normal at `at`. */
+const impTmpA = new THREE.Vector3(), impTmpB = new THREE.Vector3();
+function surfaceImpact(body, at, up, radius) {
+  const dist = shipObj.position.distanceTo(at);
+  const scale = Math.max(6, Math.min(60, radius));
+
+  // every sprite here is anchored to `body` — see the carry note in updateEmbers
+  emitEmber(at, SPARK_STILL, scale * 3.4, 0.22, true).carry = body;       // the flash
+
+  const n = Math.min(14, 6 + Math.round(scale / 6));
+  for (let i = 0; i < n; i++) {
+    randUnit(impTmpA);
+    // fold the lower half up: ejecta leaves the ground, it doesn't enter it
+    const into = impTmpA.dot(up);
+    if (into < 0) impTmpA.addScaledVector(up, -2 * into);
+    impTmpA.addScaledVector(up, 0.3).normalize();     // and tilt the spray outward-and-up
+    emitEmber(at, impTmpB.copy(impTmpA).multiplyScalar(70 + Math.random() * 160),
+              scale * (0.18 + Math.random() * 0.3), 0.7 + Math.random() * 1.2, false).carry = body;
+  }
+
+  for (let i = 0; i < 4; i++) {                                           // the ash column
+    randUnit(impTmpA).multiplyScalar(14);
+    impTmpA.addScaledVector(up, 40 + Math.random() * 50);
+    emitEmber(at, impTmpA, scale * (0.9 + Math.random() * 0.8),
+              1.6 + Math.random() * 1.4, true).carry = body;
+  }
+
+  junkBoomSound(dist, radius * 1.8);
+  /* ONE rumble, not two. thump() opens with a padRumble of its own and
+     playEffect REPLACES whatever is running, so a padRumble here followed by a
+     thump would throw away the distance curve it just computed. Near = the shake
+     through the hull (thump rumbles as part of that); far = rumble only. */
+  if (dist < 1400) thump(Math.min(300, 40000 / Math.max(120, dist)));
+  else if (dist < 2600) padRumble(Math.min(0.55, 0.5 * (700 / Math.max(200, dist))), 130);
+}
+
+/* ---- v77: VOLCANIC VENTS -------------------------------------------------
+   The ambient, junk-independent half of the same surface-FX system: same ember
+   pool, same cone maths, driven by a timer instead of a falling rock. Vents are
+   baked lat/lon (cfg.vents) turned into unit directions ONCE, then rotated
+   forward each frame by fromBakedFrame so the plume stays bolted to the ground
+   as the world turns.
+
+   The clocks tick even when you're nowhere near, and only the DRAWING is
+   distance-gated. That's on purpose: gate the clocks too and every vent on the
+   world fires the instant you arrive, because they'd all have been sitting at
+   zero waiting for you. Arriving mid-eruption is the point. */
+const VENT_SEE_R = 5200;        // past this the column is a pixel — skip the embers
+const VENT_BURST_MIN = 2.2, VENT_BURST_MAX = 4.5;
+const _ventN = new THREE.Vector3(), _ventP = new THREE.Vector3(),
+      _ventV = new THREE.Vector3(), _ventJ = new THREE.Vector3();
+
+function buildVents(body) {
+  body.vents = body.cfg.vents.map(v => {
+    const la = v.lat * Math.PI / 180, lo = v.lon * Math.PI / 180;
+    return {
+      cfg: v,
+      // the pad/height-grid convention: (cos·cos, sin, -cos·sin). Getting this
+      // wrong puts the volcano on the wrong side of the world, silently.
+      dir: new THREE.Vector3(Math.cos(la) * Math.cos(lo), Math.sin(la), -Math.cos(la) * Math.sin(lo)),
+      // stagger the first eruption across the whole gap — four vents all going
+      // off on frame one is a joke, and it's the frame you fly in on
+      next: v.gap[0] + Math.random() * (v.gap[1] - v.gap[0]),
+      burst: 0, cool: 0,
+    };
+  });
+}
+
+function updateVents(dt) {
+  for (const b of liveBodies) {
+    if (!b.vents) continue;
+    const far = shipObj.position.distanceTo(b.group.position) > b.cfg.radius + VENT_SEE_R;
+    for (const v of b.vents) {
+      if (v.burst > 0) v.burst -= dt;
+      else if ((v.next -= dt) <= 0) {
+        v.burst = VENT_BURST_MIN + Math.random() * (VENT_BURST_MAX - VENT_BURST_MIN);
+        v.next = v.cfg.gap[0] + Math.random() * (v.cfg.gap[1] - v.cfg.gap[0]);
+        if (!far) {
+          // a mountain clearing its throat. Big radius = the low end of
+          // junkBoomSound's filter sweep, which is what makes it read as
+          // distance and mass rather than as a nearby explosion.
+          fromBakedFrame(b, v.dir, _ventN);
+          _ventP.copy(b.group.position).addScaledVector(_ventN, groundRadius(b, _ventN));
+          junkBoomSound(shipObj.position.distanceTo(_ventP), 120 * v.cfg.power);
+        }
+      }
+      if (far) continue;
+
+      /* Two knobs, one job each, or they multiply into nothing: POWER is how big
+         a vent is (column speed, ember size, loudness), SIMMER is how often it
+         burps between eruptions. Fold simmer into the size too and the little
+         0.45-power / 0.18-simmer flank vent emits 3-unit sprites nobody can see. */
+      const erupting = v.burst > 0;
+      if (!erupting && !(v.cfg.simmer > 0)) continue;   // a dry fissure is dark between blows
+      if ((v.cool -= dt) > 0) continue;
+      /* FEWER AND FATTER, not more and smaller. Ash is lumps, and inside a 70-slot
+         allowance a stream of little sparks is a stream of little sparks whereas
+         eight big soft puffs a second is a column. 0.12s at full power = ~8/s,
+         which at a 1.4-3.2s life stands ~20 sprites up over the caldera. */
+      v.cool = erupting ? 0.12 / Math.max(0.3, v.cfg.power)
+                        : 0.9 / Math.max(0.15, v.cfg.simmer);
+
+      fromBakedFrame(b, v.dir, _ventN);
+      _ventP.copy(b.group.position).addScaledVector(_ventN, groundRadius(b, _ventN));
+
+      const p = v.cfg.power * (erupting ? 1 : 0.4);
+      randUnit(_ventJ).multiplyScalar(34 * p);                 // the spread
+      _ventV.copy(_ventN).multiplyScalar((70 + Math.random() * 130) * p).add(_ventJ);
+      /* Embers fly straight — there's no gravity on them — so the COLUMN HEIGHT
+         is speed x life and nothing else. 70-200 u/s over 1.4-3.2s tops out
+         around 640u, which sits under CINDER's 900u sky and in the same band as
+         the plume geometry the GLB already draws over the caldera. Tune the
+         speed, not the life, if it ever pokes through the sky again (v65). */
+      const puff = ambientEmber(_ventP, _ventV, (16 + 34 * Math.random()) * (0.45 + 0.55 * p),
+                                1.4 + Math.random() * 1.8, true);
+      // the plume stands on the volcano and travels with it (updateEmbers). Without
+      // this the column lies over sideways and slides off the mountain at 216 u/s.
+      if (puff) puff.carry = b;
+    }
+  }
+}
+
 function updateEmbers(dt) {
   for (const e of embers) {
     if (e.life <= 0) continue;
     e.life -= dt;
     if (e.life <= 0) { e.s.visible = false; continue; }
+    /* v77: RIDE THE PLANET, if you're standing on one. Embers have always moved
+       in pure world space, which was fine for the 0.2s sparks this pool was
+       built for. It is NOT fine for a volcanic plume or an impact's ash column:
+       CINDER travels 216 u/s (orbit.speed 0.006 x orbit.radius 36000), and near
+       a world the ship is carried along with it, so the ground is stationary on
+       your screen while an un-carried sprite is not. Measured before this line
+       existed: THE MAW's plume ended 505 units downrange having risen 256, and
+       the ash column was 530 out against 11 up — the column lay over sideways
+       and slid off the mountain. Same orbitDelta the ship rides, applied to
+       anything that claims to be anchored to a body.
+       NOT the planet's SPIN: 22.5 u/s at CINDER's surface is ~50u over a plume's
+       life, which reads as the column drifting downwind, and that's a feature. */
+    if (e.carry) e.s.position.add(e.carry.orbitDelta);
     e.s.position.addScaledVector(e.vel, dt);
     const k = 1 - e.life / e.maxLife;                 // 0 fresh → 1 spent
     e.mat.color.copy(EMBER_HOT).lerp(EMBER_MID, Math.min(1, k * 2));
@@ -3617,8 +3994,17 @@ const FRAG_BORROW_R = 1200;   // only borrow rocks at least this far out
 function junkSpawnFragments(parent) {
   const want = 2 + ((Math.random() * 2) | 0);
   const distSq = f => f.group.position.distanceToSquared(shipObj.position);
+  /* v76: `f.burn <= 0` is not paranoia, it's the WORST case. A burning rock is
+     alive === false, so it passed the old filter — and then it sorted to the very
+     FRONT of the pool, because the sort is dead-slots-first and then furthest-
+     first, and a meteor is out at a planet's keep-out shell while ordinary dead
+     slots sit inside the 450-3000u field. So shooting any big rock stole the
+     meteor you were watching first, teleported it to the wreck, and cost one of
+     the four burn slots. junkActivate keeps the STATE clean either way; this is
+     about the visual, and it's the same "everybody notices a mountain vanish
+     without a trace" rule the borrow pool was written to obey. */
   const pool = junk
-    .filter(f => f !== parent && f.type === "asteroid" &&
+    .filter(f => f !== parent && f.type === "asteroid" && f.burn <= 0 &&
                  (!f.alive || distSq(f) > FRAG_BORROW_R * FRAG_BORROW_R))
     .sort((a, b) => (a.alive ? 1 : 0) - (b.alive ? 1 : 0) || distSq(b) - distSq(a));
   let made = 0;
@@ -3631,8 +4017,12 @@ function junkSpawnFragments(parent) {
     // v75: shoot a big rock low over a world and its chunks were landing INSIDE
     // the terrain. Same evict shell as updateJunk — park the slot, don't count
     // it as made, and let the loop try the next candidate in the pool.
-    if (junkPointBlocked(f.group.position, JUNK_KEEP_MUL, JUNK_KEEP_PAD)) {
-      junkLeaveField(f, 1.5);
+    const fragInto = junkBlockingBody(f.group.position, JUNK_KEEP_MUL, JUNK_KEEP_PAD);
+    if (fragInto) {
+      // v76: shoot a big rock over a world and the chunks that would have landed
+      // inside it now burn up on the way down instead of blinking out
+      if (junkCanBurn(f, fragInto)) junkBurnUp(f, fragInto);
+      else junkLeaveField(f, 1.5);
       continue;
     }
     f.vel.copy(parent.vel).addScaledVector(junkTmpA, 30 + Math.random() * 55);
@@ -3697,6 +4087,11 @@ function junkTestBolt(p0, p1, boltVel) {
 function updateJunk(dt) {
   for (const j of junk) {
     if (!j.alive) {
+      /* v76: a burning slot is dead-but-drawn. It owns its own step and does NOT
+         tick respawnIn — the burn re-arms that itself when it ends, through
+         junkLeaveField, so a mistuned life can't respawn a rock that's still
+         visibly streaking across the sky. */
+      if (j.burn > 0) { junkBurnStep(j, dt); continue; }
       j.respawnIn -= dt;
       if (j.respawnIn <= 0) junkRespawn(j, false);
       continue;
@@ -3714,8 +4109,11 @@ function updateJunk(dt) {
        now inside a world. Costs one distanceToSquared per body per piece — no
        height-grid sample, no allocation. Placed after the drift so a piece is
        judged on where it actually IS this frame. */
-    if (junkPointBlocked(j.group.position, JUNK_KEEP_MUL, JUNK_KEEP_PAD)) {
-      junkLeaveField(j, 1.5);
+    const intoBody = junkBlockingBody(j.group.position, JUNK_KEEP_MUL, JUNK_KEEP_PAD);
+    if (intoBody) {
+      // v76: same eviction, with a visual on it when you're near enough to see
+      if (junkCanBurn(j, intoBody)) junkBurnUp(j, intoBody);
+      else junkLeaveField(j, 1.5);
       continue;
     }
 
@@ -4277,6 +4675,12 @@ function salvageDrop(h) {
   if (t && h.eatT > 0) {             // mid-bite → regurgitate: full size, honest radius
     t.group.scale.setScalar(h.eatScale0);
     t.radius = t.baseR * h.eatScale0;
+    /* v76: and if the thing it was chewing got lit on the way past a world this
+       same frame, hand the meteor its real size back too. updateJunk runs before
+       updateHaulers, so junkBurnUp captured the CHEWED scale — without this the
+       rock renders full-size for one frame (this one) and then snaps down to a
+       third of itself for the whole burn. */
+    if (t.burn > 0) t.burnScale0 = h.eatScale0;
   }
   if (h.beam) for (const s of h.beam) s.visible = false;
   h.target = null; h.eatT = 0;
@@ -7849,6 +8253,10 @@ function animate() {
 
   /* ---- junk drifts first, so the bolt tests below hit where it IS ---- */
   updateJunk(dt);
+  // v77: the volcanoes. AFTER updateJunk on purpose — the two share the ambient
+  // ember allowance, and a meteor burning across your canopy should win it over
+  // a plume half a world away.
+  updateVents(dt);
   updateScrap(dt);    // reel in salvage from kills (may be created by the bolts below, next frame)
   updateEnemies(dt);  // pirates move before the bolt tests below, same reason as the junk
   updateHaulers(dt);  // freight too — same ordering rule
