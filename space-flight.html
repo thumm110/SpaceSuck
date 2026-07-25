@@ -2443,6 +2443,102 @@ const JUNK_NEAR = 450;      // closest a piece may spawn — no pop-in on your n
 const JUNK_FAR = 3000;      // spawn shell, still inside the ~3750u bolt range
 const JUNK_CULL = 4200;     // drifted past this? recycle it to the front
 const SHIP_HIT_R = 12;      // hull radius, for ramming
+
+/* ---- HULL CAPSULES (v70) ------------------------------------------------
+   Every NPC ram test used to be ONE SPHERE of radius len/2 — half the ship's
+   LENGTH. That's honest for a fighter (USS THUMM measures 10.3 across against
+   10.0 nose-to-tail, so a ball genuinely fits it — though note the 10.0 is
+   definitional, not evidence: the loader divides by size.z, so a ship's Z
+   extent is always exactly its def.len), but freight is ~3.3:1: SS
+   OVERTIME is 52 long and 15.6 wide. Its 26u sphere therefore stood 18u proud
+   of the flanks, and with your own SHIP_HIT_R stacked on top you bounced at
+   38u from the centreline — thirty units of empty space before the hull. You
+   could never get near enough for a truck to read as a truck. (Tanner,
+   2026-07-25: "when a fighter flies up close to a hauler, the hauler appears
+   to be small and not big like I want it to be.")
+
+   So: a CAPSULE — a segment down the hull's long axis, with a radius equal to
+   the hull's real half-width. Both numbers are measured off the model's own
+   bounding box at load time, so they can't drift from what Blender exported;
+   rebuild a ship bigger and its capsule follows for free.
+
+   The capsule is deliberately a strict SUBSET of the old sphere:
+
+       capHalf + capR === len/2 === the old hitR
+
+   so nose-and-tail reach is EXACTLY unchanged and nothing anywhere can become
+   harder to avoid than it is today. Only the flanks tighten. OVERTIME's flank
+   bounce goes 38 -> 19.8, CANARY's 46 -> 26.5.
+
+   Scope, deliberately narrow:
+   - RAM tests only. Player bolts still use the old sphere — see haulerTestBolt.
+   - Freight + capitals only. Fighters keep their spheres: the raider's real
+     half-width is 3.8 against a PIRATE_HIT_R of 12, and that 12 is a tuned
+     player-parity aim assist, not an accident.
+   - `hitR` itself is UNTOUCHED. It is not only a hull radius: the PACKRAT's
+     swallow range reads it as a half-LENGTH ("in the throat", block 10f), and
+     that reading is still correct. The capsule adds fields beside it. */
+const capAxis = new THREE.Vector3(), capToPt = new THREE.Vector3();  // capsule-only scratch
+
+/* Closest point on an NPC's hull axis to `pt`, written into `out`.
+   The hulls export nose-at -Z and nothing rotates the model inside its group,
+   so the group's own forward axis IS the hull's long axis. The sign doesn't
+   matter — a capsule is symmetric — so this uses getWorldDirection raw, without
+   the .negate() the thrust code needs. Leaves `capAxis` holding that axis, which
+   the dead-centre guards below rely on. */
+function capsuleNear(out, group, capHalf, pt) {
+  group.getWorldDirection(capAxis);            // always set: the guards read it
+  if (!(capHalf > 0)) return out.copy(group.position);   // degenerate = a sphere
+  const along = THREE.MathUtils.clamp(
+    capAxis.dot(capToPt.subVectors(pt, group.position)), -capHalf, capHalf);
+  return out.copy(group.position).addScaledVector(capAxis, along);
+}
+
+/* A unit vector square to `axis`. Needed because the capsule is thin enough
+   that flying exactly down a truck's spine is now reachable in a way it never
+   was against a 26u ball — and there, ship-minus-closest-point is zero. A zero
+   normal would mean no bounce AND no shove, leaving you parked inside the hull
+   taking a damage tick every frame: precisely the sticky overlap the shove
+   exists to prevent. (-y, x, 0) is square to any axis, and degenerates only
+   when the axis is world Z, where (1,0,0) serves. */
+function perpTo(out, axis) {
+  out.set(-axis.y, axis.x, 0);
+  if (out.lengthSq() < 1e-9) out.set(1, 0, 0);
+  return out.normalize();
+}
+
+/* The ship's position at the TOP of this frame, before the flight integrator
+   moved it. Written once per frame next to that integration; the NPC ram tests
+   run later in the same frame, so this pair brackets the frame's travel. */
+const prevShipPos = new THREE.Vector3();
+const ramSub = new THREE.Vector3();   // a sample point along that travel
+
+/* How many points to sample along this frame's travel when ram-testing against
+   a target of reach `rr`.
+
+   The ram has always tested the ship's post-move position ONLY — never swept —
+   which was survivable while every NPC wore a fat sphere: SS OVERTIME's
+   broadside catch window was 2 x 38 = 76 units. The capsule cuts that window to
+   2 x 19.8 = 40, so a boosted pass on a hitched frame (dt clamps at 0.05) can
+   now step clean over a truck and register nothing at all — you fly THROUGH the
+   thing whose solidity is the entire point of this change.
+
+   Sampling at intervals no larger than the target's own reach closes it, and
+   costs nothing in the common case: below one reach of travel this returns 1,
+   which is exactly the old single-point test.
+
+   The 16 cap is a cost ceiling, and it does bound the envelope — past it the
+   samples spread wider than the target and tunnelling returns. 16 covers a
+   frame's travel of 16*rr, which on the narrowest target in the game (a truck
+   at rr 19.8) is 317 units. Even on a badly hitched frame (dt clamps at 0.05)
+   that is 6340 u/s, comfortably past USS CHAR's ~3000 u/s boosted terminal, so
+   nothing you can actually fly gets through. Raise it if ships ever get faster
+   or capsules thinner — and don't quietly let it stand if they do. */
+function ramSweepSteps(rr) {
+  const travel = prevShipPos.distanceTo(shipObj.position);
+  return travel <= rr ? 1 : Math.min(16, Math.ceil(travel / rr));
+}
+
 /* Ramming is a PUNISHMENT, never a payday. If a hit paid out, the best play
    would be to hold boost and never touch the trigger — which retires the
    blasters. So a ram costs hull and credits nothing.
@@ -3647,9 +3743,19 @@ if (THREE.GLTFLoader) {
    hold: ramming one pays NOTHING — and the truck is the wall in that
    collision, you bounce. Self-contained on purpose: own slots, own scratch
    vectors, own update — three hooks total (bolt test, update call, radar). */
-const HAULER_LEN = 52;             // world-units nose→tail — 4x the raider's 13 (Tanner's floor:
-                                   // "min 4x the fighters — it's a hauler, not a personal craft")
-const HAULER_HIT_R = 26;           // one junk-style sphere over the container stack (LEN/2, as before)
+const HAULER_LEN = 52;             // world-units nose→tail. Tanner's floor: "min 4x the
+                                   // fighters — it's a hauler, not a personal craft".
+                                   // This comment used to read "4x the raider's 13" — the
+                                   // raider is not 13. It normalizes to exactly 10 (see the
+                                   // setScalar in the raider loader: (10/PIRATE_SCALE)/size.z
+                                   // then a 1.3 group scale = 10.0, deliberate player parity).
+                                   // So 52 is 5.2x a fighter, not 4x — comfortably over the
+                                   // floor, but don't derive new sizes from the old "13".
+const HAULER_HIT_R = 26;           // DEAD as of v70 — nothing reads it. Every hauler takes its
+                                   // radius from `hitR: (def.len || HAULER_LEN) / 2` below, and
+                                   // its ram shape from capR/capHalf. Left as documentation of
+                                   // the original base truck; do NOT reintroduce it as a shared
+                                   // radius — the trucks are 52/65/68 now, not one size.
 const HAULER_SPD = 70;             // cruise — slower than everything, on purpose
 const HAULER_FLEE_SPD = 150;       // panic throttle. Still no match for you: piracy stays easy, that's the point
 const HAULER_ACCEL = 90, HAULER_GRIP = 1.2;
@@ -3695,7 +3801,14 @@ const HAULER_DEFS = [
   { file: "npc/ss-overtime.glb",         name: "SS OVERTIME",        hp: 4, bits: 10, val: 6,   // 60 — the everyday truck
     first: 70,  firstRnd: 40,  rMin: 110, rMax: 220 },
   { file: "npc/ss-double-overtime.glb",     name: "SS DOUBLE OVERTIME", hp: 9, bits: 20, val: 8,   // 160 — the loot piñata,
-    first: 300, firstRnd: 120, rMin: 420, rMax: 720, escort: true },               // priced by its rarity — and
+    // len 65 (v70). This entry had NO len at all, so it fell through to
+    // HAULER_LEN 52 and the "double" truck flew at exactly the same size as the
+    // everyday one — a bug, not a choice: fleet.json specs it at 125 against
+    // OVERTIME's 100. 65 applies the same old-scale conversion CANARY documents
+    // below (125/100 × 52 = 65), which lands it correctly BETWEEN the everyday
+    // truck (52) and CANARY (68). hitR follows to 32.5, and the hull capsule
+    // re-measures itself off the model at load.
+    first: 300, firstRnd: 120, rMin: 420, rMax: 720, len: 65, escort: true },      // priced by its rarity — and
                                                                                    // most shifts it hires security (v57, 10i)
   { file: "npc/ss-packrat.glb",      name: "SS PACKRAT",         hp: 6, bits: 14, val: 7,   // ~100 — the salvage collector,
     first: 150, firstRnd: 90,  rMin: 200, rMax: 420, len: 22, thruster: "ThrusterL",       // mid-size (2x a fighter), its own class
@@ -3714,6 +3827,8 @@ const HAULER_DEFS = [
 
 const haulTmpA = new THREE.Vector3(), haulTmpB = new THREE.Vector3(), haulTmpC = new THREE.Vector3();
 const haulSeg = new THREE.Vector3(), haulToC = new THREE.Vector3(), haulNearPt = new THREE.Vector3();
+const haulCap = new THREE.Vector3();   // v70 ram capsule's closest point — freight's own
+                                       // scratch, never junkTmp*/scrapTmp* (breach reentrancy)
 const haulAimObj = new THREE.Object3D();
 
 /* v57 convoys: three extra DOUBLE OVERTIME slots ride at the end of the
@@ -3744,6 +3859,12 @@ for (let si = 0; si < haulerSlotDefs.length; si++) {
   haulers.push({
     def, group: g, engineGlow, beacon,
     hitR: (def.len || HAULER_LEN) / 2,   // collision sphere scales with the ship (PACKRAT ~11, trucks 26)
+                                         // NOT the hull radius — the salvage "throat" gap below reads
+                                         // this as a half-LENGTH. The ram capsule uses capR/capHalf.
+    // hull capsule (v70) — real values land when the GLB does. Until then these
+    // reproduce today's sphere exactly (capHalf 0 => capsuleNear returns the centre).
+    capR: (def.len || HAULER_LEN) / 2, capHalf: 0,
+    ramCool: 0,   // seconds until this truck can hurt us again — see updateHaulers
     model: null,                   // set when the GLB lands — no model, no spawns (no primitive stand-in)
     mixer: null, mats: [],
     vel: new THREE.Vector3(), wanderPt: new THREE.Vector3(),
@@ -3780,9 +3901,30 @@ for (let si = 0; si < haulerSlotDefs.length; si++) {
 if (THREE.GLTFLoader) for (const h of haulers) {
   new THREE.GLTFLoader().load(h.def.file + ASSET_V, gltf => {
     const model = gltf.scene;
-    const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+    const bbox = new THREE.Box3().setFromObject(model);
+    const size = bbox.getSize(new THREE.Vector3());
     const hlen = h.def.len || HAULER_LEN;
-    model.scale.setScalar(hlen / size.z);
+    const hscale = hlen / size.z;
+    model.scale.setScalar(hscale);
+    /* hull capsule (v70). Measured off the RAW bbox and multiplied by the same
+       factor we just applied, so it matches the hull you can see. Two traps,
+       both of which the first pass fell into:
+
+       - Use the bbox MIN/MAX, not extent/2. The capsule axis runs through the
+         group ORIGIN and no model is ever re-centred, so the radius has to be
+         the larger of |min| and max, not half the span. SS TIMECLOCK's origin
+         sits 6.4u BELOW its bbox centre: extent/2 said 12.6 where the hull
+         really reaches 19.1, which put the capsule inside the ship it exists
+         to cover — the exact failure this rule was written to prevent.
+
+       - Clamp to hlen/2, or a hull taller than it is long produces a ram volume
+         BIGGER than the sphere it replaced and the strict-subset guarantee the
+         whole design rests on quietly stops being true. With the clamp a chunky
+         hull degenerates to exactly today's sphere (capHalf 0) — correct, since
+         a capsule buys nothing on a ship that isn't long. */
+    h.capR = Math.min(hlen / 2, hscale * Math.max(
+      Math.abs(bbox.min.x), bbox.max.x, Math.abs(bbox.min.y), bbox.max.y));
+    h.capHalf = hlen / 2 - h.capR;
     // shared material pass. build_hauler.py names its lamps NavRed/NavGreen/
     // MarkerAmber/Headlight rather than *Glow, but authors them pure-emission,
     // so the black-albedo half of the LIGHT test picks them up.
@@ -4061,7 +4203,21 @@ function haulerTestBolt(p0, p1, boltVel) {
     haulToC.subVectors(h.group.position, p0);
     const t = segLen2 > 0 ? THREE.MathUtils.clamp(haulToC.dot(haulSeg) / segLen2, 0, 1) : 0;
     haulNearPt.copy(p0).addScaledVector(haulSeg, t);
-    if (haulNearPt.distanceToSquared(h.group.position) <= h.hitR * h.hitR) {
+    /* Still a SPHERE, on purpose (v70) — bolts were never the complaint, and
+       tightening them to the hull would roughly double freight time-to-kill and
+       reprice the loot economy. Generous bolt hitboxes are already house style
+       (PIRATE_HIT_R is 12 around a 10u fighter).
+
+       But it MUST NOT out-reach the ram. The ram parks you at capR + SHIP_HIT_R
+       + 1 from the hull axis — 20.8 on a truck — while this sphere was still
+       26 wide. That gap is a position you can hold, alongside the hull, INSIDE
+       the bolt volume: every shot fired there, in any direction including
+       straight away, registered an instant hit on a target no bolt ever
+       reached. Free freight kills, and it provoked the escort too. Clamping to
+       ram reach restores containment: the ram guarantees you sit at least rr
+       from the axis, and distance-to-centre is never less than that. */
+    const bR = Math.min(h.hitR, h.capR + SHIP_HIT_R);
+    if (haulNearPt.distanceToSquared(h.group.position) <= bR * bR) {
       haulerDamage(h, haulNearPt, boltVel);
       return true;
     }
@@ -4071,6 +4227,7 @@ function haulerTestBolt(p0, p1, boltVel) {
 
 function updateHaulers(dt) {
   for (const h of haulers) {
+    if (h.ramCool > 0) h.ramCool -= dt;   // v70 ram cooldown — see the ram block below
     if (!h.alive) {
       h.respawnIn -= dt;
       if (h.respawnIn <= 0) {
@@ -4138,18 +4295,46 @@ function updateHaulers(dt) {
     /* ---- ram: the truck is the WALL in this collision — you bounce off,
        it rolls on rattled. Rams never pay (house rule 10c), and damage goes
        last for the same load-bearing reason as the junk and pirate rams. ---- */
-    const rr = h.hitR + SHIP_HIT_R;
-    if (!landedOn && shipObj.position.distanceToSquared(h.group.position) < rr * rr) {
-      haulTmpB.subVectors(shipObj.position, h.group.position).normalize();
+    /* v70: tested against the hull CAPSULE, not a len/2 ball. Everything
+       downstream — normal, bounce, shove — now hangs off the closest point on
+       the hull axis instead of the truck's centre, so clipping CANARY's nose
+       pushes you out of the NOSE rather than sideways off a point 34u away. */
+    const rr = h.capR + SHIP_HIT_R;
+    let ramHit = false;
+    if (!landedOn) {
+      const nSteps = ramSweepSteps(rr);
+      for (let s = 1; s <= nSteps; s++) {
+        ramSub.lerpVectors(prevShipPos, shipObj.position, s / nSteps);
+        capsuleNear(haulCap, h.group, h.capHalf, ramSub);
+        if (ramSub.distanceToSquared(haulCap) < rr * rr) { ramHit = true; break; }
+      }
+    }
+    if (ramHit) {
+      haulTmpB.subVectors(ramSub, haulCap);
+      if (haulTmpB.lengthSq() < 1e-6) perpTo(haulTmpB, capAxis);   // dead on the spine
+      haulTmpB.normalize();
       haulTmpC.subVectors(ship.velocity, h.vel);
       const relSpd = haulTmpC.length();
       const into = haulTmpC.dot(haulTmpB);                                  // negative = closing
       if (into < 0) ship.velocity.addScaledVector(haulTmpB, -1.5 * into);   // bounce, a little restitution
-      shipObj.position.copy(h.group.position).addScaledVector(haulTmpB, rr + 1);  // shove clear — no sticky overlap
-      const dmg = Math.min(RAM_DMG_CAP, (Math.max(0, relSpd - RAM_FREE_SPD) / 100) * HAULER_RAM_HURT);
-      thump(Math.min(360, 140 + relSpd * 0.5));
-      haulerFlee(h);       // insured, not brave
-      gunshipWardHit(h);   // v57: but a ram is still a provocation — security disagrees
+      shipObj.position.copy(haulCap).addScaledVector(haulTmpB, rr + 1);  // shove clear — no sticky overlap
+      /* Cooldown, ported from the junk ram (block 10c) — and the capsule is
+         what makes it necessary. Against a SPHERE a graze self-resolved:
+         distance from a POINT strictly grows under tangential motion, so the
+         shove ended it in a frame or two. Distance to a SEGMENT does not — slide
+         along a truck's flank and you stay exactly rr from the axis frame after
+         frame, billing full ram damage and a cargo spill every one of them.
+         The physics still runs every frame or you'd sink in; only the HURT
+         waits. */
+      const hurt = h.ramCool <= 0;
+      const dmg = hurt ? Math.min(RAM_DMG_CAP,
+        (Math.max(0, relSpd - RAM_FREE_SPD) / 100) * HAULER_RAM_HURT) : 0;
+      if (hurt) {
+        h.ramCool = 0.4;
+        thump(Math.min(360, 140 + relSpd * 0.5));
+        haulerFlee(h);       // insured, not brave
+        gunshipWardHit(h);   // v57: but a ram is still a provocation — security disagrees
+      }
       if (dmg > 0) {
         spillCargo(dmg);   // knock loose cargo BEFORE shipDamage — same reason as the junk ram
         shipDamage(dmg);
@@ -4233,6 +4418,7 @@ const SHRINK_FIRST = 300, SHRINK_FIRST_RND = 240;        // same first-contact w
 
 // own scratch — NEVER pirTmp*/haulTmp*/junkTmp* (breach re-entrancy, see 10g's warning)
 const gunTmpA = new THREE.Vector3(), gunTmpB = new THREE.Vector3(), gunTmpC = new THREE.Vector3();
+const gunCap = new THREE.Vector3();   // v70 ram capsule's closest point — capitals' own scratch
 const gunSeg = new THREE.Vector3(), gunToC = new THREE.Vector3(), gunNearPt = new THREE.Vector3();
 const gunAimObj = new THREE.Object3D();
 let gunshipFlash = 0;              // "CAPITAL SHIP CONTACT" toast timer (the jobFlash pattern)
@@ -4266,6 +4452,9 @@ for (let i = 0; i < 4; i++) {
     muzzles: null,
     // per-ship spec — data-driven so a second capital rides the same brain (v58)
     glb: "enemies/ss-timeclock.glb", len: GUNSHIP_LEN, hitR: GUNSHIP_HIT_R,
+    // hull capsule (v70) — replaced with real measurements when the GLB lands;
+    // capHalf 0 reproduces today's sphere exactly until then
+    capR: GUNSHIP_HIT_R, capHalf: 0, ramCool: 0,
     maxHp: GUNSHIP_HP, bits: role === "foe" ? GUNSHIP_BITS : ESCORT_BITS,
     val: role === "foe" ? GUNSHIP_VAL : ESCORT_VAL,
     respawnMin: GUNSHIP_RESPAWN_MIN, respawnMax: GUNSHIP_RESPAWN_MAX,
@@ -4313,6 +4502,7 @@ for (let i = 0; i < 4; i++) {
     model: null, mixer: null, mats: [], tellMats: [],
     muzzles: null,
     glb: "enemies/ss-shrinkage.glb", len: SHRINK_LEN, hitR: SHRINK_HIT_R,
+    capR: SHRINK_HIT_R, capHalf: 0, ramCool: 0,   // hull capsule (v70), real values at GLB load
     maxHp: SHRINK_HP, bits: SHRINK_BITS, val: SHRINK_VAL,
     respawnMin: SHRINK_RESPAWN_MIN, respawnMax: SHRINK_RESPAWN_MAX,
     muzzleNames: ["GunTipLanceL0", "GunTipLanceL1", "GunTipLanceR0", "GunTipLanceR1"],
@@ -4350,8 +4540,17 @@ if (THREE.GLTFLoader) for (const g of gunships) {
         }
       });
     }
-    const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
-    model.scale.setScalar(g.len / size.z);
+    const bbox = new THREE.Box3().setFromObject(model);
+    const size = bbox.getSize(new THREE.Vector3());
+    const gscale = g.len / size.z;
+    model.scale.setScalar(gscale);
+    // hull capsule (v70) — identical rule to freight; see the long note there.
+    // Min/max off the origin (TIMECLOCK's hull is 6.4u off-centre in Y) and
+    // clamped to len/2. TIMECLOCK's true reach is 19.1 against a len/2 of 15,
+    // so it clamps to a plain sphere: correct, it's tall, not long.
+    g.capR = Math.min(g.len / 2, gscale * Math.max(
+      Math.abs(bbox.min.x), bbox.max.x, Math.abs(bbox.min.y), bbox.max.y));
+    g.capHalf = g.len / 2 - g.capR;
     // an NPC never lands — pin the gear legs to their stowed angle if the
     // hinges carry one (the doors export closed already)
     for (const nm of ["GearHingeNose", "GearHingeMainL", "GearHingeMainR"]) {
@@ -4507,7 +4706,11 @@ function gunshipTestBolt(p0, p1, boltVel) {
     gunToC.subVectors(g.group.position, p0);
     const t = segLen2 > 0 ? THREE.MathUtils.clamp(gunToC.dot(gunSeg) / segLen2, 0, 1) : 0;
     gunNearPt.copy(p0).addScaledVector(gunSeg, t);
-    if (gunNearPt.distanceToSquared(g.group.position) <= g.hitR * g.hitR) {
+    // clamped to ram reach for the same containment reason as freight (see
+    // haulerTestBolt): a bolt volume wider than the ram volume is a position
+    // you can park in and fire from for free hits
+    const bR = Math.min(g.hitR, g.capR + SHIP_HIT_R);
+    if (gunNearPt.distanceToSquared(g.group.position) <= bR * bR) {
       gunshipDamage(g, gunNearPt, boltVel);
       return true;
     }
@@ -4563,6 +4766,7 @@ function spawnGunshipBolt(pos, dir, srcVel) {
 function updateGunships(dt) {
   const harbor = pirateInHarbor();
   for (const g of gunships) {
+    if (g.ramCool > 0) g.ramCool -= dt;   // v70 ram cooldown — see the ram block below
     if (!g.alive) {
       if (g.role !== "foe") continue;              // escorts wait for 10f, not a timer
       g.respawnIn -= dt;
@@ -4700,17 +4904,33 @@ function updateGunships(dt) {
     /* ---- ram: freight's wall, not the fighter's shatter — a mini-boss is
        never rammed to death. You bounce, you bleed, it rolls on. A ram on a
        sleeping escort is a provocation. Damage LAST (breach re-entrancy). ---- */
-    const rr = g.hitR + SHIP_HIT_R;
-    if (!landedOn && shipObj.position.distanceToSquared(g.group.position) < rr * rr) {
-      gunTmpB.subVectors(shipObj.position, g.group.position).normalize();
+    const rr = g.capR + SHIP_HIT_R;                              // v70: hull capsule
+    let ramHit = false;
+    if (!landedOn) {
+      const nSteps = ramSweepSteps(rr);
+      for (let s = 1; s <= nSteps; s++) {
+        ramSub.lerpVectors(prevShipPos, shipObj.position, s / nSteps);
+        capsuleNear(gunCap, g.group, g.capHalf, ramSub);
+        if (ramSub.distanceToSquared(gunCap) < rr * rr) { ramHit = true; break; }
+      }
+    }
+    if (ramHit) {
+      gunTmpB.subVectors(ramSub, gunCap);
+      if (gunTmpB.lengthSq() < 1e-6) perpTo(gunTmpB, capAxis);   // dead on the spine
+      gunTmpB.normalize();
       gunTmpC.subVectors(ship.velocity, g.vel);
       const relSpd = gunTmpC.length();
       const into = gunTmpC.dot(gunTmpB);
       if (into < 0) ship.velocity.addScaledVector(gunTmpB, -1.5 * into);
-      shipObj.position.copy(g.group.position).addScaledVector(gunTmpB, rr + 1);
-      const dmg = Math.min(RAM_DMG_CAP, (Math.max(0, relSpd - RAM_FREE_SPD) / 100) * GUNSHIP_RAM_HURT);
-      thump(Math.min(360, 150 + relSpd * 0.5));
-      gunshipProvoke(g);
+      shipObj.position.copy(gunCap).addScaledVector(gunTmpB, rr + 1);
+      const hurt = g.ramCool <= 0;   // same cooldown reasoning as freight, above
+      const dmg = hurt ? Math.min(RAM_DMG_CAP,
+        (Math.max(0, relSpd - RAM_FREE_SPD) / 100) * GUNSHIP_RAM_HURT) : 0;
+      if (hurt) {
+        g.ramCool = 0.4;
+        thump(Math.min(360, 150 + relSpd * 0.5));
+        gunshipProvoke(g);
+      }
       if (dmg > 0) {
         spillCargo(dmg);   // knock loose cargo BEFORE shipDamage — same reason as every other ram
         shipDamage(dmg);
@@ -6628,6 +6848,7 @@ function animate() {
   // depth² so the tall upper atmosphere is scenic cruising, not mud —
   // the real grip lives in the bottom third
   if (entryDepth > 0) ship.velocity.multiplyScalar(Math.pow(1 - 0.028 * entryDepth * entryDepth, dt * 60));
+  prevShipPos.copy(shipObj.position);   // v70: the NPC ram tests sweep this→new
   shipObj.position.addScaledVector(ship.velocity, dt);
 
   /* ---- heliocentric motion: planets orbit the sun (v17) ----
