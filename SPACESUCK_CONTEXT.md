@@ -356,6 +356,25 @@ smoke test that boots the game and asserts on live globals.
   the stick zone and the button cluster leave no room — computed off the live button
   rects and cached on resize, never per frame (4 `getBoundingClientRect` calls
   inside the render loop force a layout flush 60×/sec).
+- **`#navhud` MUST carry an explicit CSS `width`/`height`.** A `<canvas>` is a
+  *replaced* element: with `width: auto` an absolutely-positioned one resolves to its
+  **intrinsic** size — the `width`/`height` **attributes** — and the over-constrained
+  `right`/`bottom` from `inset: 0` are dropped. `sizeNavHud()` sets those attributes to
+  `innerWidth × dpr`, so without the CSS the canvas laid out at **2× the viewport** on
+  any retina screen: every label and reticle drew at twice its offset from the top-left
+  and the radar fell off the bottom-right corner. Invisible at dpr 1, which is why it
+  shipped. The WebGL canvas never had it — three.js writes an explicit `style.width`.
+- **`body.docked` is a MODE, not a panel.** Parked at a real port on glass hides the
+  flight HUD and raises a two-column sheet. Gated on `canShop || canJobs`, so landing on
+  an empty plain keeps the normal HUD. The columns are flex: a hidden panel isn't a flex
+  item, so a port with only one of the two gets a single centred column with no JS branch.
+- **The docked-panel media query keyed on the wrong AXIS.** It stacked the board below
+  the shop under `max-width: 1024px`, but a landscape phone has 844px of width spare and
+  only 390 of **height** — stacking is backwards there. Short → side by side, narrow →
+  stacked.
+- **`layoutAssistPill()` derives the pop-up's `bottom` from `navRadarUp`.** It used to
+  carry its own CSS constant and the two drifted the moment the radar started moving.
+  One number, one owner.
 - **The stick's THROW is read off the elements** (`base − knob` radius), not
   hardcoded, so the short/narrow-screen media query retunes the feel with no second
   constant to fall out of sync. Its response is *curved* (`STICK_CURVE`): a contained

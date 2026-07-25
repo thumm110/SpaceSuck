@@ -356,7 +356,16 @@
   }
   /* nav HUD overlay (edge markers + radar) — its own 2D canvas below the
      text HUD, above the 3D scene. Pointer-events off so it never eats clicks. */
-  #navhud { position: fixed; inset: 0; pointer-events: none; }
+  /* width/height are NOT optional here, and leaving them off is a real bug that
+     hid on every dpr-1 desktop. A <canvas> is a REPLACED element: with
+     `width: auto` an absolutely-positioned one resolves to its INTRINSIC size —
+     the width/height ATTRIBUTES — and the over-constrained `right`/`bottom` from
+     inset:0 are simply dropped. sizeNavHud() sets those attributes to
+     innerWidth × dpr, so on a retina screen the canvas laid out at 2× the
+     viewport, anchored top-left, and every label/reticle drew at twice its
+     correct offset while the radar fell off the bottom-right corner entirely.
+     (The WebGL canvas never had this — three.js writes an explicit style.width.) */
+  #navhud { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 
   /* controls: a tuck-away menu instead of a wall of text in the corner */
   #ctrlmenu { position: absolute; top: 12px; left: 14px; pointer-events: auto; }
@@ -426,6 +435,8 @@
      side full-time — a pop-up that exists only in the two moments it does
      something (aligned over a deck / parked). Centred above the radar, where
      neither thumb rests and no panel lives while you're still flying. */
+  /* `bottom` here is only the pre-JS fallback — layoutAssistPill() owns it at
+     runtime so the pill can't drift away from the scope it sits above. */
   #btnLand {
     left: 50%; bottom: 158px; transform: translateX(-50%);
     width: auto; height: auto; border-radius: 22px;
@@ -483,12 +494,95 @@
   @media (max-height: 460px), (max-width: 500px) {
     #stickbase { width: 116px; height: 116px; }
     #stickknob { width: 48px; height: 48px; }
-    #btnLand { bottom: 150px; }
   }
   @media (max-height: 460px) {
     body.touch #throttlewrap { bottom: 208px; }
     body.touch #throttlebar { height: 74px; }
   }
+  /* ==== the dock sheet (v79) ==========================================
+     A pad is a different MODE, so on glass it gets a different screen. The
+     old behaviour stacked the outfitter and the dispatch board down the
+     centreline and let the LAUNCH pill land on both: measured at 844x390 the
+     two panels overlapped by 13,414px² and the pill sat on top of the pile.
+
+     The root cause was a wrong AXIS. The rule that stacked the board below
+     the shop keyed on `max-width: 1024px`, but a landscape phone has 844px of
+     width going spare and only 390px of HEIGHT. Stacking is exactly backwards
+     there; portrait (narrow and tall) is the case that rule was written for.
+
+     `body.docked` is set only when you're parked at a real PORT on glass —
+     landing on an empty plain keeps the normal flight HUD, because there'd be
+     nothing to put in the sheet. Everything the pad can't use goes away: the
+     stick and FIRE are literally dead while landed (firing is gated on
+     `!landedOn`), so they were renting the best glass on the screen to do
+     nothing. */
+  #dock { display: none; }
+  body.docked #dock {
+    display: flex; align-items: center; justify-content: space-between;
+    position: fixed; inset: 0; pointer-events: auto;
+    padding: 14px 20px; align-content: flex-start;
+    background: linear-gradient(rgba(3,10,12,.93), rgba(3,14,14,.88));
+    font-size: 12px; letter-spacing: 3px; color: #6ee7d8;
+  }
+  body.docked #dock > * { align-self: flex-start; }
+  #dockport { text-shadow: 0 0 10px rgba(110,231,216,.7); }
+  #dockbank { color: #ffd34d; text-shadow: 0 0 8px rgba(255,211,77,.6); }
+  /* everything the pad has no use for */
+  body.docked #flightdata, body.docked #throttlewrap, body.docked #crosshair,
+  body.docked #gunsight, body.docked #nearest, body.docked #viewtag,
+  body.docked #navhud, body.docked #stick, body.docked .bracket,
+  body.docked #landtag, body.docked #assisttag,
+  body.docked #btnFire, body.docked #btnThrust, body.docked #btnRev,
+  body.docked #btnBrake, body.docked #btnView { display: none !important; }
+  /* CONTROLS ▾ is the only in-game help affordance on a phone, so it stays
+     while you're FLYING — but on the pad it lands right on the port name, and
+     the sheet's whole point is that it's uncluttered. Read it in flight. */
+  body.docked #ctrlmenu { display: none; }
+
+  /* The columns. A hidden panel is not a flex item at all, so a port that
+     sells gear but posts no work (or the reverse) gets ONE centred column for
+     free — no JS branch, no second layout to keep in sync. */
+  body.docked #dockcols {
+    position: fixed; left: 0; right: 0; top: 46px; bottom: 78px;
+    display: flex; gap: 16px; justify-content: center; align-items: stretch;
+    padding: 0 20px; pointer-events: none;
+  }
+  body.docked #shop, body.docked #dispatchboard {
+    position: static; transform: none; flex: 1 1 0; max-width: 430px;
+    min-width: 0; white-space: normal; overflow-y: auto;
+    padding: 10px 14px 12px; font-size: 13px;
+  }
+  body.docked #shop .title, body.docked #dispatchboard .title {
+    font-size: 12px; margin-bottom: 10px;
+  }
+  /* 44px targets — the flight-sized 20px rows were unhittable with a thumb */
+  /* 44px targets — the flight-sized 20px rows were unhittable with a thumb.
+     The price is a `float: right` in flight, which on a 390px-wide portrait
+     panel gets pushed onto its own line as soon as the label is long ("+30 MAX
+     HULL" did exactly that). Flex puts the label and the price on one row with
+     the price pinned right, and lets the label shrink instead of wrap. */
+  body.docked .shopRow, body.docked .jobRow {
+    padding: 14px 8px; border-bottom: 1px solid rgba(110,231,216,.10);
+    display: flex; align-items: center; gap: 7px;
+  }
+  body.docked .shopRow .price, body.docked .jobRow .price {
+    float: none; margin-left: auto; padding-left: 10px;
+  }
+  body.docked .jobRow { border-bottom-color: rgba(192,125,255,.12); }
+  body.docked .jobHint { max-width: none; }
+  /* !important because layoutAssistPill() writes an INLINE bottom, and on the
+     sheet the pill belongs at the foot of the screen, not above a hidden scope */
+  body.docked #btnLand { bottom: 20px !important; }
+  /* Portrait is the case the ORIGINAL rule was right about: narrow but tall,
+     so the columns stack and the sheet scrolls as one. */
+  @media (max-width: 560px) {
+    body.docked #dockcols { flex-direction: column; align-items: center;
+                            overflow-y: auto; gap: 12px; }
+    body.docked #shop, body.docked #dispatchboard {
+      flex: 0 0 auto; width: 100%; max-width: 460px; overflow-y: visible;
+    }
+  }
+
   /* the readout used to sit exactly where the stick now lives — lift and
      tighten it so the two never share pixels. (#hud is pointer-events:none,
      so this was always cosmetic, but the hull bar makes the block taller
@@ -554,6 +648,8 @@
 <canvas id="navhud"></canvas>
 <div id="damageflash"></div>
 <div id="hud">
+  <!-- dock backdrop — FIRST child so it paints behind everything else in #hud -->
+  <div id="dock"><span id="dockport">—</span><span id="dockbank"></span></div>
   <div class="bracket tl"></div><div class="bracket tr"></div>
   <div class="bracket bl"></div><div class="bracket br"></div>
   <div id="crosshair"></div>
@@ -628,14 +724,20 @@
        Counts down the seconds you have left so pulling up is a decision. -->
   <div id="ditchtag">◆ IN THE WATER — PULL UP ◆</div>
   <div id="treetag">◆ SCRAPING THE CANOPY ◆</div>
-  <div id="shop">
-    <div class="title">◆ OUTFITTER ◆ pay from the <b>BANK</b></div>
-    <div class="shopRow"></div>
-    <div class="shopRow"></div>
-    <div class="shopRow"></div>
-  </div>
-  <div id="dispatchboard">
-    <div class="title">◆ DISPATCH ◆</div>
+  <!-- The two docked panels share a wrapper ONLY so the mobile dock sheet can
+       flex them into columns. While flying it is completely inert: both panels
+       are position:absolute and #dockcols is static, so their containing block
+       is still #hud and nothing about the desktop layout changes. -->
+  <div id="dockcols">
+    <div id="shop">
+      <div class="title">◆ OUTFITTER ◆ pay from the <b>BANK</b></div>
+      <div class="shopRow"></div>
+      <div class="shopRow"></div>
+      <div class="shopRow"></div>
+    </div>
+    <div id="dispatchboard">
+      <div class="title">◆ DISPATCH ◆</div>
+    </div>
   </div>
   <div id="flightdata">
     <span id="pilotrow" style="display:none"><span class="dim">PILOT</span> <span id="pilot"></span><br></span>
@@ -6694,6 +6796,9 @@ function saveJob() { try { localStorage.setItem("spacesuck.job", JSON.stringify(
 addEventListener("pagehide", saveJob);
 
 const dispatchEl = document.getElementById("dispatchboard");
+const dockPortEl = document.getElementById("dockport");
+const dockBankEl = document.getElementById("dockbank");
+let docked = false;      // v79: the mobile dock sheet is up (parked at a port, on glass)
 const jobEl = document.getElementById("jobline");
 
 /* three fresh bounty offers on three different raiders (shuffle the roster so
@@ -6915,18 +7020,36 @@ function layoutNavHud() {
   if (clashes) navRadarUp = Math.max(92, innerHeight - (top - 78));
 }
 
+/* The landing pop-up rides directly above the scope, WHEREVER the scope ended
+   up. It used to carry its own hardcoded `bottom` in CSS, and the two drifted
+   apart the moment the radar started moving: in portrait the radar climbs to
+   dodge the button cluster and the pill stayed put, straight through STOP.
+   One number, one owner. (`btnLandEl` is declared further down the file, so
+   this looks the element up rather than trip its TDZ on the boot call.) */
+function layoutAssistPill() {
+  const pill = document.getElementById("btnLand");
+  pill.style.bottom = document.body.classList.contains("touch")
+    ? (navRadarUp + 52 + 14 + 18) + "px"   // scope radius + its label + a gap
+    : "";
+}
+
 stickRest();
 layoutNavHud();
-addEventListener("resize", () => { stickRest(); layoutNavHud(); });   // orientation flip moves both
+layoutAssistPill();
+// an orientation flip moves the corner, the scope AND the pill that rides it
+addEventListener("resize", () => { stickRest(); layoutNavHud(); layoutAssistPill(); });
 
 /* Does this touch belong to the stick? Anything you can PRESS keeps its own
    touch (buttons, the controls menu, the docked panels), the pause menu keeps
    all of them, and the right side of the glass is the button thumb's. */
 function stickClaims(t) {
+  // the pause menu and the dock sheet are whole-screen modes — no steering in
+  // either, and while docked the stick isn't even drawn
   if (document.body.classList.contains("menu")) return false;
+  if (document.body.classList.contains("docked")) return false;
   const el = t.target;
   if (el && el.closest &&
-      el.closest(".touchbtn, #ctrlmenu, #shop, #dispatchboard, #startscreen, #settings"))
+      el.closest(".touchbtn, #ctrlmenu, #shop, #dispatchboard, #startscreen, #settings, #dock"))
     return false;
   return t.clientX < innerWidth * STICK_ZONE;
 }
@@ -8657,6 +8780,23 @@ function animate() {
   const canJobs = !!(onPort && onPort.dispatch);
   dispatchEl.style.display = canJobs ? "block" : "none";
   if (canJobs && jobDirty) { refreshDispatch(); jobDirty = false; }
+
+  /* dock sheet (v79) — parked at a real PORT on glass is its own mode. Gated on
+     canShop||canJobs so setting down on an empty plain keeps the flight HUD:
+     there'd be nothing to put in the sheet. Toggled only on CHANGE — a
+     classList write every frame is a style recalc every frame for nothing. */
+  const wantDock = !!(landedOn && (canShop || canJobs) &&
+                      document.body.classList.contains("touch"));
+  if (wantDock !== docked) {
+    docked = wantDock;
+    document.body.classList.toggle("docked", docked);
+  }
+  if (docked) {
+    const pName = onPort.name || landedOn.cfg.name;
+    if (dockPortEl.textContent !== pName) dockPortEl.textContent = pName;
+    const bTxt = "BANK " + banked;
+    if (dockBankEl.textContent !== bTxt) dockBankEl.textContent = bTxt;
+  }
   const hullPct = ship.hull / ship.hullMax;
   const hullCol = hullPct > 0.5 ? "#6ee7d8" : hullPct > 0.25 ? "#ffb066" : "#ff5544";
   hullFillEl.style.width = (hullPct * 100) + "%";
