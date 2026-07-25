@@ -160,18 +160,18 @@
     color: #6ee7d8; text-shadow: 0 0 6px rgba(110,231,216,.6);
     user-select: none; -webkit-user-select: none;
   }
+  /* v71.2: a DOT, not a cross (Tanner's call). It no longer sits at 50/50
+     either — the render loop drives left/top every frame to keep it on the
+     gun line; these are just the starting values. The translate(-50%,-50%)
+     is what makes those coordinates mean "centre of the pip". */
   #crosshair {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
-    width: 34px; height: 34px; opacity: .8;
+    width: 7px; height: 7px; opacity: .85; border-radius: 50%;
+    background: #6ee7d8;
+    box-shadow: 0 0 6px rgba(110,231,216,.9), 0 0 2px rgba(255,255,255,.7);
   }
-  #crosshair::before, #crosshair::after {
-    content:""; position:absolute; background:#6ee7d8;
-    box-shadow: 0 0 5px rgba(110,231,216,.8);
-  }
-  #crosshair::before { left: 50%; top: 0; width: 1px; height: 100%; transform: translateX(-50%); }
-  #crosshair::after  { top: 50%; left: 0; height: 1px; width: 100%; transform: translateY(-50%); }
-  /* cockpit gunsight (v39): a ring around a shrunk crosshair, first-person only */
-  body.cockpit #crosshair { width: 18px; height: 18px; opacity: .95; }
+  /* cockpit gunsight (v39): a ring around a smaller pip, first-person only */
+  body.cockpit #crosshair { width: 5px; height: 5px; opacity: .95; }
   #gunsight {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
     width: 92px; height: 92px; border-radius: 50%; display: none; pointer-events: none;
@@ -5646,6 +5646,49 @@ const LOOKBACK_OFFSET = new THREE.Vector3(0, 4.5, -17); // v44: off the nose, lo
 const tmpOffset = new THREE.Vector3();
 const viewTag = document.getElementById("viewtag");
 
+/* ---- CROSSHAIR ON THE GUN LINE (v71.2) ---------------------------------
+   The pip used to be pinned to screen centre by CSS, and centre is only where
+   the bolts go at INFINITE range. The guns fire PARALLEL to the nose (both
+   barrels take the same boltDir, they don't toe in) from muzzles that sit
+   below the lens, so at every range you actually shoot at, the shots pass
+   UNDER the crosshair. Measured on a 1080-tall screen, flying straight:
+
+       range      chase      chase-far
+        50u     -0.109 (53px)  -0.164 (80px)
+       200u     -0.035 (17px)  -0.058 (28px)
+       600u     -0.013  (6px)  -0.021 (10px)
+       inf       0              0
+
+   Cockpit was always exact, because there the camera sits on the ship and
+   there is no parallax to have. (Tanner: "when flying straight the guns
+   should meet the crosshair.")
+
+   So project a point CROSSHAIR_RANGE down the barrel and put the pip there.
+   That is right by construction at that range, and it stays right through
+   the things a fixed centre could never follow: camera easing lag, the frame
+   guarantee catching a hard turn, and head-look — glance off with the look
+   stick now and the pip slides with your guns instead of lying about them. */
+const crosshairEl = document.getElementById("crosshair");
+const CROSSHAIR_RANGE = 500;   // where the pip is exactly true. Junk gets shot
+                               // between ~200 and ~1500; this splits it, and the
+                               // residual either side is a few pixels.
+const aimDir = new THREE.Vector3(), aimA = new THREE.Vector3(),
+      aimB = new THREE.Vector3(), aimPt = new THREE.Vector3();
+
+function aimCrosshair() {
+  if (!crosshairEl || !retroGlows[0] || !retroGlows[1]) return;
+  shipObj.getWorldDirection(aimDir).negate();          // nose forward (-Z), as the bolts use
+  retroGlows[0].getWorldPosition(aimA);
+  retroGlows[1].getWorldPosition(aimB);
+  aimPt.addVectors(aimA, aimB).multiplyScalar(0.5)     // between the barrels
+       .addScaledVector(aimDir, CROSSHAIR_RANGE)
+       .project(camera);
+  if (aimPt.z > 1) { crosshairEl.style.visibility = "hidden"; return; }  // behind us
+  crosshairEl.style.visibility = "";
+  crosshairEl.style.left = ((aimPt.x * 0.5 + 0.5) * 100).toFixed(3) + "%";
+  crosshairEl.style.top = ((-aimPt.y * 0.5 + 0.5) * 100).toFixed(3) + "%";
+}
+
 let bank = 0;                        // current cosmetic lean, radians
 const MAX_BANK = 0.35;               // ~20° at a full-rate turn
 const bankQ = new THREE.Quaternion();
@@ -7844,6 +7887,7 @@ function animate() {
     }
   }
 
+  aimCrosshair();   // put the pip where the guns actually shoot, then draw
   renderer.render(scene, camera);
   drawNavHud(dt);   // edge markers + radar + landing reticle, on the 2D overlay
 }
