@@ -289,9 +289,22 @@ smoke test that boots the game and asserts on live globals.
   collision can't disagree.
 - **Pad lat/lon in BODIES is a hand-copy** of the build script and goes stale if
   platforms move in Blender. Re-emit from `build_<planet>.py`.
-- **Scratch-vector reentrancy.** A lethal ram runs `shipBreach → junkRespawn ×44`,
-  which rewrites shared junk scratch mid-call. Pirate/freight/capital code owns
-  its own `pirTmp*` / `haulTmp*` / `gunTmp*` vectors — never `junkTmp*`.
+- **Scratch-vector reentrancy.** A lethal ram runs `shipBreach → junkRespawn ×N`
+  (N = `JUNK_COUNT`), which rewrites shared junk scratch mid-call. Pirate/freight/
+  capital code owns its own `pirTmp*` / `haulTmp*` / `gunTmp*` vectors — never
+  `junkTmp*`. v75's `pointInTerrain` / `npcTerrainClamp` own `_solidN` / `_npcN`
+  for the same reason: they're called from inside those loops.
+- **Worlds are solid, and the test order is load-bearing (v75).** Every bolt pool
+  kills on terrain via `pointInTerrain`, but ONLY after its own target sweep —
+  `else if`, never before. Ordered the other way, a shot that reached the hull is
+  eaten by the rock behind it and flying low makes you bulletproof. Review caught
+  exactly that in the first cut; `tests/planet-solidity.js` now guards it.
+- **Junk is evicted, not just spawn-checked (v75).** `junkPointBlocked(p, mul, pad)`
+  is re-run on every live piece each frame, because a parked ship rides its
+  planet's `orbitDelta` (~150–215 u/s) while junk sits still in world space — the
+  planet drives through the field. Exits go through `junkLeaveField()`, the hook
+  the planned atmosphere burn-up grows from. Moons are a known gap: they're not in
+  `liveBodies`, so bolts still pass through them.
 - **`hitR` is not only a hull radius.** The PACKRAT's salvage gap reads it as a
   half-*length*. v70 added `capR`/`capHalf` beside it rather than redefining it.
 - **fleet.json sizes are a FORWARD spec**, not live values — the game runs ~0.44–

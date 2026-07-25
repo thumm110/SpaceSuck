@@ -2563,22 +2563,32 @@ function blasterSound() {
 
 /* ============ 10c. SPACE JUNK (v22) ============
    Shootable clutter: rocks, dead satellites, and loose debris. None of it
-   is placed in world space — a pool of 44 pieces lives in a bubble that
+   is placed in world space — a pool of 32 pieces lives in a bubble that
    travels WITH you. Drift past the cull radius and a piece respawns on the
    far side of the bubble, biased into the hemisphere you're flying toward,
    so junk always arrives from ahead and you can neither outrun the field
    nor strip it bare. Kill one and its slot comes back a few seconds later.
 
    Each slot keeps the shape it was born with; only position, scale, spin,
-   and hp re-roll on respawn. That's what lets 44 slots read as endless
-   variety — the rock you just killed returns from a new heading at a new
-   size and you'd never place it. */
-const JUNK_COUNT = 44;
+   and hp re-roll on respawn. That's what lets a few dozen slots read as
+   endless variety — the rock you just killed returns from a new heading at
+   a new size and you'd never place it.
+
+   v75: a live piece is also re-tested against the worlds every frame and
+   quietly evicted if one has moved over it — see updateJunk. */
+/* v75: 44 -> 32. Tanner, playtest 2026-07-25: "tone down the amount of space
+   junk." Taking the count is what the v33 note below already recommended, and
+   it's the honest knob — 32 is -27% pieces for -26% field value, where 30 would
+   cost 44% of the value for 32% of the count. Stops at 32 because the slot TYPE
+   is seeded per index (mulberry32(i*7919+13) below), so truncating the pool
+   shifts the rock/satellite/debris mix, and 32 still leaves 17 asteroid slots —
+   above the floor junkSpawnFragments needs to borrow from when a big rock dies. */
+const JUNK_COUNT = 32;
 /* v33: the bubble stretched ~2x by volume (FAR 2400→3000, CULL 3400→4200)
-   — same 44 slots, roomier field, less windshield crowding. FAR stays
-   inside the ~3750u bolt range so a fresh spawn is already a target, and
-   the count stays 44 so the scrap economy doesn't starve. If the field
-   still feels busy, trim JUNK_COUNT before touching the shell again. */
+   — roomier field, less windshield crowding. FAR stays inside the ~3750u
+   bolt range so a fresh spawn is already a target. The advice that closed
+   this note ("if the field still feels busy, trim JUNK_COUNT before touching
+   the shell again") is exactly what v75 did: 44 → 32, shell untouched. */
 const JUNK_NEAR = 450;      // closest a piece may spawn — no pop-in on your nose
 const JUNK_FAR = 3000;      // spawn shell, still inside the ~3750u bolt range
 const JUNK_CULL = 4200;     // drifted past this? recycle it to the front
@@ -2956,15 +2966,103 @@ function junkSetScale(j, scale) {
 // don't hang junk inside a planet or the sun — the bubble follows you, and it
 // follows you down to the deck too
 const junkTmpA = new THREE.Vector3(), junkTmpB = new THREE.Vector3();
-function junkPointBlocked(p) {
+/* v75: `mul`/`pad` used to be hardcoded 1.25/200. They're arguments now because
+   the same test does two different jobs. SPAWNING wants the loose shell (the
+   four other callers — haulers, capitals, pirates — all keep the default).
+   EVICTING a piece that's already alive wants a TIGHTER one, or a rock sitting
+   exactly on the spawn boundary flickers in and out every frame as it drifts.
+   The gap between the two numbers is the hysteresis. */
+function junkPointBlocked(p, mul = 1.25, pad = 200) {
   for (const b of liveBodies) {
-    const clear = b.cfg.radius * 1.25 + 200;
+    const clear = b.cfg.radius * mul + pad;
     if (p.distanceToSquared(b.group.position) < clear * clear) return true;
   }
   return false;
 }
+/* The evict shell. 1.18R + 100 clears the tallest terrain in the game (CINDER
+   peaks at 1.1407R) with room to spare, and sits comfortably inside the 1.25R
+   + 200 spawn shell so nothing can be born already-evicted. */
+const JUNK_KEEP_MUL = 1.18, JUNK_KEEP_PAD = 100;
+
+/* ---- v75: WORLDS ARE SOLID (shared by bolts and NPCs) -------------------
+   Two questions the rest of the game never used to ask. Both walk liveBodies,
+   both gate on a cheap sphere test BEFORE touching the height grid, so the
+   common case (deep space, nothing near) costs one distanceToSquared per body.
+
+   KNOWN GAP, deliberate: moons aren't in liveBodies — they're children carrying
+   userData.orbit (built at 2056, collided against the ship separately at 7454).
+   So a bolt still passes through a moon. Fixing that means teaching both helpers
+   to walk each body's moon children; worth doing if it ever reads as wrong,
+   not worth the per-frame cost today. */
+const _solidN = new THREE.Vector3();
+function pointInTerrain(p) {
+  for (const b of liveBodies) {
+    _solidN.subVectors(p, b.group.position);
+    /* Gate on the SQUARED distance and only pay for the sqrt on the rare body
+       we're actually near. Up to 72 bolts are in the air at once (48 yours + 16
+       raider + 8 capital), so this loop runs ~500 times a frame — a sqrt per
+       body per bolt would be 500 of them for nothing. */
+    const d2 = _solidN.lengthSq();
+    if (d2 < 1e-6) return true;                      // dead centre: inside anything
+    const gate = b.cfg.landable ? b.cfg.radius * 1.35 : b.cfg.radius;
+    if (d2 > gate * gate) continue;
+    if (!b.cfg.landable) return true;                // no height grid — the sphere IS the surface
+    const d = Math.sqrt(d2);
+    if (d < groundRadius(b, _solidN.multiplyScalar(1 / d))) return true;
+  }
+  return false;
+}
+
+/* Push an NPC back out to the surface if it flew into one, and kill the part of
+   its velocity that was heading down. Deliberately a FLOOR, not a bounce: the
+   raider keeps its tangential run and just stops sinking, so a strafing pass
+   over a mountain range reads as terrain-following instead of a crash. Returns
+   true if it had to intervene. Own scratch — called from inside the pirate and
+   gunship loops, which have their own live pirTmp / gunTmp vectors. */
+const _npcN = new THREE.Vector3();
+function npcTerrainClamp(group, vel, margin) {
+  for (const b of liveBodies) {
+    _npcN.subVectors(group.position, b.group.position);
+    const d = _npcN.length();
+    if (d < 1e-3 || d > b.cfg.radius * 1.35) continue;
+    _npcN.multiplyScalar(1 / d);
+    const floor = (b.cfg.landable ? groundRadius(b, _npcN) : b.cfg.radius) + margin;
+    if (d < floor) {
+      group.position.copy(b.group.position).addScaledVector(_npcN, floor);
+      /* Cancel the dive, then RESTORE the speed. Removing the radial component
+         alone is a brake, not a slide: a raider whose flight target sits under
+         the floor points its nose down, gets the whole vector eaten every frame
+         and settles into a 4 u/s hover over the ridge — a sitting duck that
+         reads as broken. Re-length it and the same raider rides the floor at
+         its real speed cap and the state machine extends it away on its own.
+         The lengthSq guard is for the pure vertical dive, where nothing
+         tangential survives and setLength would only produce a zero vector. */
+      const into = vel.dot(_npcN);
+      if (into < 0) {
+        const spd = vel.length();
+        vel.addScaledVector(_npcN, -into);
+        if (vel.lengthSq() > 1e-6) vel.setLength(spd);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+const NPC_GROUND_MARGIN = 45;   // fighter-sized clearance; capitals pass their own
 
 function junkRespawn(j, first) {
+  /* v75: no field over a parked ship. Every other spawner in the game already
+     refuses to work over a landing (haulers, capitals, pirates all bail on
+     `landedOn`) — junk was the one that didn't, so ~2 fresh rocks a second kept
+     materialising around a ship sitting on the deck.
+
+     The `!first &&` is load-bearing, not style: `landedOn` is declared with
+     `let` much further down the file, and the world-build pass below runs at
+     top level BEFORE that line. Reading it there is a temporal-dead-zone
+     ReferenceError. `first` is true only on that pass, so && short-circuits
+     before `landedOn` is ever touched. Don't "tidy" this into a bare check. */
+  if (!first && landedOn) { junkLeaveField(j, 3); return; }
+
   const scale = j.type === "asteroid"  ? 13 + Math.random() * 52
               : j.type === "satellite" ?  5 + Math.random() * 6
               :                           4 + Math.random() * 8;
@@ -2976,7 +3074,12 @@ function junkRespawn(j, first) {
   let placed = false;
   for (let tries = 0; tries < 5 && !placed; tries++) {
     randUnit(junkTmpA);
-    if (!first && spd > 25 && Math.random() < 0.7)
+    /* v75: 0.7 -> 0.5. This bias, more than the raw count, is why the field
+       read as relentless — at 0.7 seven of every ten pieces came at you head-on
+       through the windscreen. At 0.5 junk arrives from all sides, which reads
+       as calmer without removing a single rock or a single credit from the
+       economy. Cheapest "less junk" in the file: it costs nothing. */
+    if (!first && spd > 25 && Math.random() < 0.5)
       junkTmpA.addScaledVector(junkTmpB.copy(ship.velocity).divideScalar(spd), 1.1).normalize();
     junkTmpB.copy(shipObj.position)
             .addScaledVector(junkTmpA, JUNK_NEAR + Math.random() * (JUNK_FAR - JUNK_NEAR));
@@ -2987,6 +3090,20 @@ function junkRespawn(j, first) {
   junkActivate(j);
   randUnit(junkTmpA);
   j.vel.copy(junkTmpA).multiplyScalar(3 + Math.random() * 26);   // slow drift
+}
+
+/* v75: take a piece out of the field with NO bang — the quiet sibling of
+   junkDestroy. Used wherever a rock has no business being where it is
+   (inside a world, over a parked ship) rather than having been shot: a
+   burstKill from inside a mountain is a flash you'd see through the terrain.
+
+   This is deliberately a HOOK, not an inlined `j.alive = false`. The planned
+   atmosphere burn-up (heat white, streak, shed embers, then go) is the same
+   moment with a visual on it, and it wants exactly one call site to grow from. */
+function junkLeaveField(j, delay) {
+  j.alive = false;
+  j.group.visible = false;
+  j.respawnIn = delay;
 }
 
 // wake a slot up wherever it already sits — respawning into the field and
@@ -3038,6 +3155,10 @@ function burstKill(pos, radius, baseVel) {
               radius * (0.16 + Math.random() * 0.32), 0.5 + Math.random() * 1.1, false);
   }
 }
+/* v75: a terrain splash carries NO base velocity. Handed a bolt's own vel, every
+   ember inherits 850 u/s straight into the ground and the puff is gone under the
+   crust before a frame draws. Shared const — burstSparks only ever reads it. */
+const SPARK_STILL = new THREE.Vector3();
 function burstSparks(pos, baseVel, radius) {
   for (let i = 0; i < 5; i++) {
     randUnit(junkTmpA);
@@ -3507,6 +3628,13 @@ function junkSpawnFragments(parent) {
     junkActivate(f);
     randUnit(junkTmpA);
     f.group.position.copy(parent.group.position).addScaledVector(junkTmpA, parent.radius * 0.45);
+    // v75: shoot a big rock low over a world and its chunks were landing INSIDE
+    // the terrain. Same evict shell as updateJunk — park the slot, don't count
+    // it as made, and let the loop try the next candidate in the pool.
+    if (junkPointBlocked(f.group.position, JUNK_KEEP_MUL, JUNK_KEEP_PAD)) {
+      junkLeaveField(f, 1.5);
+      continue;
+    }
     f.vel.copy(parent.vel).addScaledVector(junkTmpA, 30 + Math.random() * 55);
     made++;
   }
@@ -3575,6 +3703,22 @@ function updateJunk(dt) {
     }
     if (j.ramCool > 0) j.ramCool -= dt;
     j.group.position.addScaledVector(j.vel, dt);
+
+    /* v75: THE FIX for junk sinking into the ground. junkPointBlocked used to
+       be a spawn-time promise only — checked once, then never again — and the
+       promise decays two ways. A piece drifts 3-29 u/s under no gravity, and
+       far worse, a PARKED ship rides its planet's orbital travel (~150-215 u/s,
+       see the orbitDelta carry in the collision loop) while junk sits still in
+       world space. The planet drives through the field and you're on the bumper.
+       So: re-test every live piece, every frame, and quietly evict any that is
+       now inside a world. Costs one distanceToSquared per body per piece — no
+       height-grid sample, no allocation. Placed after the drift so a piece is
+       judged on where it actually IS this frame. */
+    if (junkPointBlocked(j.group.position, JUNK_KEEP_MUL, JUNK_KEEP_PAD)) {
+      junkLeaveField(j, 1.5);
+      continue;
+    }
+
     j.group.rotation.x += j.spin.x * dt;
     j.group.rotation.y += j.spin.y * dt;
     j.group.rotation.z += j.spin.z * dt;
@@ -4471,6 +4615,12 @@ function updateHaulers(dt) {
                  : HAULER_SPD;
     if (h.vel.length() > maxSpd) h.vel.setLength(maxSpd);
     h.group.position.addScaledVector(h.vel, dt);
+    /* v75: freight is solid to worlds too, sized by the truck's own hull capsule
+       like the capitals'. Missing this was worse than it looks: updateHaulers
+       runs BEFORE updateGunships, and a floored escort holding station on a ward
+       that ignored terrain would have been fighting the ground to guard a truck
+       flying through it. Lifting the ward first resolves that on its own. */
+    npcTerrainClamp(h.group, h.vel, h.capR + NPC_GROUND_MARGIN);
 
     /* ---- ram: the truck is the WALL in this collision — you bounce off,
        it rolls on rattled. Rams never pay (house rule 10c), and damage goes
@@ -5060,6 +5210,9 @@ function updateGunships(dt) {
                  : g.state === "GUARD"  ? g.formCap : GUNSHIP_MAX_SPD;
     if (g.vel.length() > maxSpd) g.vel.setLength(maxSpd);
     g.group.position.addScaledVector(g.vel, dt);
+    // v75: same terrain floor as the raiders, but a capital is a much bigger
+    // hull — clear it by its own measured half-width instead of the fighter const.
+    npcTerrainClamp(g.group, g.vel, g.capR + NPC_GROUND_MARGIN);
 
     /* ---- fire: paired spinal cannons, L then R, once the nose comes around ---- */
     if (g.state === "ATTACK" && !landedOn) {
@@ -5142,7 +5295,10 @@ function updateGunships(dt) {
     if (b.life <= 0) { b.mesh.visible = false; continue; }
     gunTmpA.copy(b.mesh.position);
     b.mesh.position.addScaledVector(b.vel, dt);
-    if (landedOn) continue;                  // parked ships don't get shelled
+    // v75: parked ships don't get shelled — but the bolt used to keep FLYING and
+    // RENDERING, so heavy fire visibly raked the ground around a parked ship
+    // doing nothing. Retire it instead of waving it through.
+    if (landedOn) { b.life = 0; b.mesh.visible = false; continue; }
     gunSeg.subVectors(b.mesh.position, gunTmpA);
     const segLen2 = gunSeg.lengthSq();
     gunToC.subVectors(shipObj.position, gunTmpA);
@@ -5153,6 +5309,17 @@ function updateGunships(dt) {
       thump(190);
       padRumble(0.6, 90);
       shipDamage(GUNSHIP_BOLT_DMG);   // no spillCargo — spilling stays ram-only (10g's rule)
+    }
+    /* v75: worlds are solid — but this is tested LAST, in the same order as the
+       player's own bolts. Ordered the other way (and it was, until review caught
+       it) a shot that reaches your hull gets retired on the rock BEHIND you
+       first, so hugging the deck made you bulletproof: the exact one-sided cover
+       the player-side comment swears this must never become. The window was one
+       bolt-step wide — up to 35u at the dt clamp — which is precisely the
+       altitude band the landing flare, the [G] assist and canyon runs live in. */
+    else if (pointInTerrain(b.mesh.position)) {
+      b.life = 0; b.mesh.visible = false;
+      burstSparks(gunTmpA, SPARK_STILL, 4);   // splash at the last point OUTSIDE the rock
     }
   }
   // gunship bolts skip junk for the same reason pirate bolts do:
@@ -5591,6 +5758,13 @@ function updateEnemies(dt) {
                  : p.state === "FORM"   ? p.formCap : PIRATE_MAX_SPD;
     if (p.vel.length() > maxSpd) p.vel.setLength(maxSpd);
     p.group.position.addScaledVector(p.vel, dt);
+    /* v75: a raider's flight target IS your position, and nothing in its brain
+       ever knew terrain existed — so it would happily fly a pursuit line
+       straight through a world to reach you. A floor, not a bounce: it gets
+       pushed back to the surface and its DOWNWARD velocity is cancelled, but
+       the tangential run survives, so a pass over a mountain range reads as
+       terrain-following rather than a crash. */
+    npcTerrainClamp(p.group, p.vel, NPC_GROUND_MARGIN);
 
     /* ---- fire: bursts of 4, only once the nose has actually come around ---- */
     if (p.state === "ATTACK" && !landedOn) {
@@ -5683,7 +5857,11 @@ function updateEnemies(dt) {
     if (b.life <= 0) { b.mesh.visible = false; continue; }
     pirTmpA.copy(b.mesh.position);
     b.mesh.position.addScaledVector(b.vel, dt);
-    if (landedOn) continue;                  // parked ships don't get shelled (junk-ram parity)
+    // v75: parked ships don't get shelled (junk-ram parity) — and now the bolt
+    // is actually RETIRED rather than left flying and drawing. This is the one
+    // Tanner was watching: red bolts streaking across the ground past a parked
+    // ship, harmless, looking exactly like fire passing through the planet.
+    if (landedOn) { b.life = 0; b.mesh.visible = false; continue; }
     pirSeg.subVectors(b.mesh.position, pirTmpA);
     const segLen2 = pirSeg.lengthSq();
     pirToC.subVectors(shipObj.position, pirTmpA);
@@ -5698,6 +5876,13 @@ function updateEnemies(dt) {
          A lethal bolt breaches mid-loop and teleports the ship; the bolts
          still in flight this frame miss at 20000u and expire — leave it. */
       shipDamage(PIRATE_BOLT_DMG);
+    }
+    // v75: worlds are solid — tested LAST, same order as the player's bolts, so
+    // terrain is cover for both sides and for neither of you more than the
+    // other. See the long note in the gunship loop for why the order matters.
+    else if (pointInTerrain(b.mesh.position)) {
+      b.life = 0; b.mesh.visible = false;
+      burstSparks(pirTmpA, SPARK_STILL, 3);   // splash at the last point OUTSIDE the rock
     }
   }
   /* Pirate bolts deliberately DON'T test junk: routing them through
@@ -7690,6 +7875,15 @@ function animate() {
         enemyTestBolt(boltPrev, b.mesh.position, b.vel) ||
         haulerTestBolt(boltPrev, b.mesh.position, b.vel) ||
         gunshipTestBolt(boltPrev, b.mesh.position, b.vel)) { b.life = 0; b.mesh.visible = false; }
+    /* v75: worlds are solid, and that has to cut BOTH ways — if a mountain
+       stops their fire it stops yours, or terrain becomes a one-sided cheat you
+       shoot straight through. Tested last so anything standing in front of a
+       cliff still eats the bolt; the target chain above owns the segment sweep,
+       this only asks whether the bolt ended the frame inside rock. */
+    else if (pointInTerrain(b.mesh.position)) {
+      b.life = 0; b.mesh.visible = false;
+      burstSparks(boltPrev, SPARK_STILL, 3);   // splash at the last point OUTSIDE the rock
+    }
   }
   for (const s of muzzleFlashes)     // fast fade after each shot
     if (s.scale.x > 0.002) s.scale.setScalar(Math.max(0.001, s.scale.x * Math.pow(0.00004, dt)));
