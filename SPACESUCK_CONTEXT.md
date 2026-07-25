@@ -214,7 +214,12 @@ when a *hostile* is on radar. **M** mutes music only.
   **E** hire, **G** landing assist / launch / abort, **V** cycle view, **M** music,
   **H** controls panel, **P** or **ESC** pause + settings, **1/2/3** buy upgrade,
   **4/5/6** accept contract.
-- **Touch:** on-screen thrust/brake/reverse, FIRE button, drag steering.
+- **Touch (v78):** a FLOATING flight stick on the left — a visible ring, but the
+  base re-anchors under wherever your thumb lands in the left 42% of the glass,
+  so you can't miss it. Right thumb gets FIRE / THRUST / REVERSE / STOP; VIEW is
+  a small button top-right. Landing assist is a **pop-up**, not a permanent
+  button: it appears only when a deck is on offer (or you're parked) and taps
+  through to the same `tryAssist()` as **G**.
 - **Gamepad:** left stick flight, right stick head-look, RT/LT thrust, A fire,
   B boost (or landing assist when one is offered), LB/RB rudder, Y views, R3
   look-back, D-pad drives the shop and job board.
@@ -337,6 +342,24 @@ smoke test that boots the game and asserts on live globals.
   and it has to stay that way or the volcano slides across the ground as the world
   turns. Vent coordinates are hand-copied from `build_cinder.py` (same staleness rule
   as pads).
+- **Touch layout must be MEASURED at phone sizes, never eyeballed.** The pre-v78
+  layout looked fine at 1280×800 and put THRUST 314px up a 390px-tall landscape
+  phone with REVERSE drawn through the throttle bar. `tests/mobile-controls.js`
+  checks every control's rect against the viewport, the other controls, the flight
+  readout, the throttle bar and the radar at three sizes. Invariants: held controls
+  live in the bottom ~205px on the right, the left `STICK_ZONE` (42%) is the stick's
+  alone, and press-once controls (VIEW, the landing pop-up) leave the thumbs' area.
+- **The radar is drawn on a canvas, so no element test can catch it.** Its box has
+  to be reconstructed from `drawNavHud`'s own numbers (r=52, cx=W/2,
+  cy=H−`navRadarUp`, label +14). That omission is exactly how portrait shipped with
+  the scope under REVERSE. `navRadarUp` is 92 on desktop and *lifts* on glass when
+  the stick zone and the button cluster leave no room — computed off the live button
+  rects and cached on resize, never per frame (4 `getBoundingClientRect` calls
+  inside the render loop force a layout flush 60×/sec).
+- **The stick's THROW is read off the elements** (`base − knob` radius), not
+  hardcoded, so the short/narrow-screen media query retunes the feel with no second
+  constant to fall out of sync. Its response is *curved* (`STICK_CURVE`): a contained
+  knob only travels ~43px and a linear map over that can't hold a small correction.
 - **`hitR` is not only a hull radius.** The PACKRAT's salvage gap reads it as a
   half-*length*. v70 added `capR`/`capHalf` beside it rather than redefining it.
 - **fleet.json sizes are a FORWARD spec**, not live values — the game runs ~0.44–

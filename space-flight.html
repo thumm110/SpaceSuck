@@ -382,6 +382,16 @@
   .bracket.bl { bottom:8px; left:8px; border-bottom:1px solid #6ee7d8; border-left:1px solid #6ee7d8; }
   .bracket.br { bottom:8px; right:8px; border-bottom:1px solid #6ee7d8; border-right:1px solid #6ee7d8; }
 
+  /* ==== touch controls (v78) ==========================================
+     A landscape phone is about 390px TALL. The v5 layout stacked the right
+     column at bottom 60/150/240, which put THRUST 314px up that 390px screen
+     and ran REVERSE straight through the throttle bar — measured, not
+     guessed. Three rules now hold the layout together:
+       1. every HELD control (fire/thrust/reverse/stop) lives in the bottom
+          ~205px on the RIGHT, so it survives a short screen;
+       2. the LEFT third belongs to the flight stick and nothing else;
+       3. anything you press ONCE (view, landing assist) gets out of both
+          thumbs' way entirely instead of renting prime glass. */
   .touchbtn {
     position: fixed; pointer-events: auto;
     width: 74px; height: 74px; border-radius: 50%;
@@ -389,30 +399,103 @@
     background: rgba(10,25,25,.45);
     font-family: monospace; font-size: 12px; letter-spacing:1px;
     display: none; align-items: center; justify-content: center;
-    touch-action: none;
+    touch-action: none; -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
   }
-  #btnThrust { right: 24px; bottom: 240px; }
-  #btnBrake  { right: 24px; bottom: 150px; }
-  /* landing-assist button (v68): left thumb's side, above the steering area.
-     Hidden unless a landing/launch is actually available (toggled in JS). */
-  #btnLand   { left: 24px; bottom: 240px; border-color: rgba(125,255,168,.7); color: #7dffa8; }
-  #btnRev    { right: 24px; bottom: 60px; border-color: rgba(255,176,102,.6); color: #ffb066; }
-  /* FIRE is the biggest target on the glass because it's the one control a
-     shooting game presses constantly. Inboard of REVERSE and sharing its row
-     (both centers land 97px up), with a 26px gap — close enough to reach,
-     far enough that a mis-tap doesn't throw you into reverse mid-fight. Red,
-     to keep it clearly apart from REVERSE's orange. */
-  #btnFire   { right: 124px; bottom: 54px; width: 86px; height: 86px;
+  body.touch .touchbtn { display: flex; }
+  .touchbtn:active { background: rgba(110,231,216,.22); }
+  /* FIRE is the biggest target on the glass and owns the corner, because
+     it's the one control a shooting game presses constantly. THRUST stacks
+     directly above it, REVERSE inboard, and STOP tucks small on the diagonal
+     between them — it's the rarest of the four and the only one you'd regret
+     hitting by accident, so it gets the smallest target on purpose. */
+  #btnFire   { right: 20px; bottom: 20px; width: 96px; height: 96px; font-size: 13px;
                border-color: rgba(255,90,80,.75); color: #ff6a5c;
                background: rgba(35,10,10,.5); }
-  #btnFire:active { background: rgba(255,90,80,.3); }
-  #btnView   { left: 24px; bottom: 60px; width: 60px; height: 60px; font-size: 11px; }
-  body.touch .touchbtn { display: flex; }
-  /* VIEW sits at bottom 60-120 on the left, right where the flight readout
-     wants to be — lift the readout clear of it on phones. (#hud is
-     pointer-events:none, so this was only ever cosmetic, but the hull bar
-     makes the block taller and the collision worse.) */
-  body.touch #flightdata { bottom: 130px; }
+  #btnFire:active { background: rgba(255,90,80,.32); }
+  #btnThrust { right: 29px; bottom: 126px; width: 78px; height: 78px; }
+  #btnRev    { right: 126px; bottom: 24px; width: 70px; height: 70px; font-size: 11px;
+               border-color: rgba(255,176,102,.6); color: #ffb066; }
+  #btnBrake  { right: 132px; bottom: 104px; width: 54px; height: 54px;
+               font-size: 11px; opacity: .82; }
+  /* VIEW is a toggle you press once an hour. Park it in the top-right strip
+     beside the VIEW: readout it actually changes, where no thumb rests. */
+  #btnView   { right: 18px; top: 36px; width: 50px; height: 50px; font-size: 10px; }
+
+  /* landing assist (v78): no longer a button squatting on the left thumb's
+     side full-time — a pop-up that exists only in the two moments it does
+     something (aligned over a deck / parked). Centred above the radar, where
+     neither thumb rests and no panel lives while you're still flying. */
+  #btnLand {
+    left: 50%; bottom: 158px; transform: translateX(-50%);
+    width: auto; height: auto; border-radius: 22px;
+    padding: 11px 24px; font-size: 12px; letter-spacing: 3px;
+    border-color: rgba(125,255,168,.8); color: #7dffa8;
+    background: rgba(6,32,18,.74);
+    box-shadow: 0 0 14px rgba(125,255,168,.25);
+    animation: assistpulse 1.9s ease-in-out infinite;
+  }
+  #btnLand:active { background: rgba(125,255,168,.3); }
+  @keyframes assistpulse {
+    50% { box-shadow: 0 0 24px rgba(125,255,168,.6); border-color: rgba(125,255,168,1); }
+  }
+
+  /* ---- the flight stick: a circle in a circle, left thumb -------------
+     v5 steering was "drag from wherever you happened to touch" — invisible,
+     and it fought the flight readout for the same glass. Same rate-based
+     input, now with a face on it. It FLOATS: the ring at rest is a hint, not
+     a target; the base re-anchors under wherever your thumb lands in the left
+     third, so a miss is impossible (see the touchstart handler in §11b).
+     #stick is inset:0 so its children's left/top are plain viewport
+     coordinates — the JS does no offset-parent arithmetic. */
+  #stick { position: fixed; inset: 0; display: none; pointer-events: none; z-index: 6; }
+  body.touch #stick { display: block; }
+  #stickbase {
+    position: absolute; width: 144px; height: 144px; border-radius: 50%;
+    border: 1px solid rgba(110,231,216,.42);
+    background: radial-gradient(circle, rgba(10,32,32,.44) 55%, rgba(10,32,32,.12) 100%);
+    transform: translate(-50%,-50%); opacity: .58;
+    transition: opacity .18s linear;
+  }
+  #stickknob {
+    position: absolute; width: 58px; height: 58px; border-radius: 50%;
+    border: 1px solid rgba(110,231,216,.8); background: rgba(22,70,66,.6);
+    box-shadow: 0 0 10px rgba(110,231,216,.3);
+    transform: translate(-50%,-50%);
+    transition: left .12s ease-out, top .12s ease-out;   /* the spring back to centre */
+  }
+  #stick.live #stickbase { opacity: .95; border-color: rgba(110,231,216,.68); }
+  /* while a thumb is on it the knob must track 1:1 — a transition here reads
+     as lag on every correction */
+  #stick.live #stickknob { transition: none; box-shadow: 0 0 18px rgba(110,231,216,.6); }
+  /* The throttle bar has lived at the bottom-right corner since v1 — which is
+     now FIRE's corner. It's a readout, not a control, so it moves: same right
+     edge, lifted clear above the cluster (THRUST tops out at bottom 204). On a
+     390px-tall landscape phone that strip also has to hold the VIEW button, so
+     the short-screen rule below shortens the bar rather than let them collide. */
+  body.touch #throttlewrap { bottom: 214px; }
+
+  /* A phone is small in whichever direction it's held. Landscape is SHORT
+     (~390px tall) and portrait is NARROW (~390px wide) — a 144px ring simply
+     does not fit a 164px-wide stick zone. Both cases get the small rig. The JS
+     reads the rendered sizes back, so the THROW retunes with it and there is
+     no second constant here to fall out of sync. */
+  @media (max-height: 460px), (max-width: 500px) {
+    #stickbase { width: 116px; height: 116px; }
+    #stickknob { width: 48px; height: 48px; }
+    #btnLand { bottom: 150px; }
+  }
+  @media (max-height: 460px) {
+    body.touch #throttlewrap { bottom: 208px; }
+    body.touch #throttlebar { height: 74px; }
+  }
+  /* the readout used to sit exactly where the stick now lives — lift and
+     tighten it so the two never share pixels. (#hud is pointer-events:none,
+     so this was always cosmetic, but the hull bar makes the block taller
+     and the collision worse.) */
+  body.touch #flightdata { bottom: 182px; font-size: 11px; line-height: 1.5; }
+  body.touch #flightdata .big { font-size: 21px; }
+  body.touch #hullbar { width: 112px; }
 </style>
 </head>
 <body>
@@ -492,7 +575,11 @@
       <b>A</b> fire · <b>B</b> boost · <b>X</b> stop · <b>Y</b> view · <b>Start</b> pause<br>
       <b>D-pad</b> ↑/↓ pick upgrade · <b>A</b> buy (docked at the outfitter)
       <div class="grp">TOUCH</div>
-      <b>Drag</b> to steer · on-screen THRUST / REVERSE / STOP / FIRE / VIEW
+      <b>Left thumb</b> flight stick — touch anywhere on the left of the glass,
+      the stick comes to you<br>
+      <b>Right thumb</b> FIRE / THRUST / REVERSE / STOP · <b>VIEW</b> top-right<br>
+      <b>LANDING ASSIST</b> pops up over a deck — tap it to set down, tap
+      <b>LAUNCH</b> to leave
       <div class="grp">SALVAGE</div>
       Shoot junk for scrap, then fly through the wreck — it reels in on its
       own. Ease off the throttle to collect; a boosting ship outruns the beam.
@@ -572,12 +659,16 @@
   </div>
 </div>
 
+<!-- touch controls. The stick is drawn, not pressed (pointer-events:none on
+     the whole layer) — the touchstart handler owns the left third of the
+     glass and just moves these two circles to match your thumb. -->
+<div id="stick"><div id="stickbase"></div><div id="stickknob"></div></div>
 <button class="touchbtn" id="btnThrust">THRUST</button>
 <button class="touchbtn" id="btnBrake">STOP</button>
-<button class="touchbtn" id="btnLand">LAND</button>
 <button class="touchbtn" id="btnRev">REVERSE</button>
 <button class="touchbtn" id="btnFire">FIRE</button>
 <button class="touchbtn" id="btnView">VIEW</button>
+<button class="touchbtn" id="btnLand">LANDING ASSIST</button>
 
 <!-- three.js lives NEXT TO this file now (no internet needed). If it's
      missing we fall back to the CDN; if both fail you get a real error
@@ -6753,24 +6844,118 @@ addEventListener("mousemove", e => {
   }
 });
 
-const steer = { x: 0, y: 0 };   // rate-based steering — still used by touch drag
+const steer = { x: 0, y: 0 };   // rate-based steering — the thumbstick writes here
 
 let touchThrust = false, touchBrake = false, touchRev = false, touchFire = false;
 if (matchMedia("(pointer: coarse)").matches) document.body.classList.add("touch");
 
-let steerTouchId = null, steerStart = null;
+/* ---- the floating flight stick (v78) --------------------------------------
+   Same rate-based steering v5 shipped, now with a face on it: a ring you can
+   see, that re-anchors under your thumb so you can never miss it.
+
+   Two things here are deliberate and easy to "tidy" into bugs:
+
+   • The THROW (px of thumb travel that means full deflection) is READ OFF THE
+     ELEMENTS every time — base radius minus knob radius. That's what lets the
+     short-screen media query shrink the ring without a second constant here
+     silently disagreeing with it.
+
+   • Deflection is CURVED, not linear. A contained knob can only travel ~43px,
+     and a linear map over 43px makes a small held correction impossible — the
+     old drag wanted 120px for the same range. STICK_CURVE buys the fine end
+     back without touching ship.turnSpeed, so the top turn rate is unchanged.
+
+   The base is NOT clamped to the screen. Clamping it would move the ring away
+   from the thumb, and since the ring's centre is the zero point, that would
+   read as deflection the instant you touched down near an edge. A ring that
+   hangs half off the corner is the correct, boring behaviour. */
+const stickEl = document.getElementById("stick");
+const stickBaseEl = document.getElementById("stickbase");
+const stickKnobEl = document.getElementById("stickknob");
+const STICK_CURVE = 1.45;    // >1 = gentle near centre, still full rate at the rim
+const STICK_ZONE = 0.42;     // fraction of the screen width the stick owns
+let stickAt = { x: 0, y: 0 };          // live base centre = the zero point
+
+const stickThrow = () =>
+  Math.max(18, (stickBaseEl.offsetWidth - stickKnobEl.offsetWidth) / 2);
+function placeStick(bx, by, kx, ky) {
+  stickBaseEl.style.left = bx + "px"; stickBaseEl.style.top = by + "px";
+  stickKnobEl.style.left = kx + "px"; stickKnobEl.style.top = ky + "px";
+}
+/* park the ghost ring in the bottom-left corner — a hint that this is where
+   the left thumb lives, never a target you have to hit */
+function stickRest() {
+  const pad = (stickBaseEl.offsetWidth || 144) / 2 + 20;
+  stickAt = { x: pad, y: innerHeight - pad };
+  placeStick(stickAt.x, stickAt.y, stickAt.x, stickAt.y);
+}
+/* Where the bottom-centre radar can live on glass. The stick owns the left of
+   the bottom strip and the button cluster owns the right; on a NARROW screen
+   (a phone held upright) they leave no room for a 104px scope between them and
+   it ends up drawn under REVERSE. So it climbs above the cluster instead.
+
+   Measured off the live buttons and cached on resize, not per frame: four
+   getBoundingClientRect calls inside drawNavHud would force a layout flush
+   sixty times a second for a number that only changes when the window does.
+   Measuring rather than hardcoding is what makes a CSS nudge to the cluster
+   move the radar with it instead of quietly re-creating the overlap. */
+let navRadarUp = 92;
+function layoutNavHud() {
+  navRadarUp = 92;
+  if (!document.body.classList.contains("touch")) return;
+  let top = Infinity, left = Infinity;
+  for (const id of ["btnFire", "btnThrust", "btnRev", "btnBrake"]) {
+    const r = document.getElementById(id).getBoundingClientRect();
+    if (!r.width) continue;                       // hidden — nothing to dodge
+    top = Math.min(top, r.top); left = Math.min(left, r.left);
+  }
+  if (!isFinite(top)) return;
+  const clashes = innerWidth / 2 - 52 < innerWidth * STICK_ZONE   // into the stick's zone
+               || innerWidth / 2 + 52 > left;                     // into the cluster
+  if (clashes) navRadarUp = Math.max(92, innerHeight - (top - 78));
+}
+
+stickRest();
+layoutNavHud();
+addEventListener("resize", () => { stickRest(); layoutNavHud(); });   // orientation flip moves both
+
+/* Does this touch belong to the stick? Anything you can PRESS keeps its own
+   touch (buttons, the controls menu, the docked panels), the pause menu keeps
+   all of them, and the right side of the glass is the button thumb's. */
+function stickClaims(t) {
+  if (document.body.classList.contains("menu")) return false;
+  const el = t.target;
+  if (el && el.closest &&
+      el.closest(".touchbtn, #ctrlmenu, #shop, #dispatchboard, #startscreen, #settings"))
+    return false;
+  return t.clientX < innerWidth * STICK_ZONE;
+}
+let steerTouchId = null;
 addEventListener("touchstart", e => {
   for (const t of e.changedTouches) {
-    if (t.target.classList && t.target.classList.contains("touchbtn")) continue;
-    if (steerTouchId === null) { steerTouchId = t.identifier; steerStart = { x: t.clientX, y: t.clientY }; }
+    if (steerTouchId !== null) break;
+    if (!stickClaims(t)) continue;
+    steerTouchId = t.identifier;
+    stickAt = { x: t.clientX, y: t.clientY };      // base jumps to the thumb
+    stickEl.classList.add("live");
+    placeStick(stickAt.x, stickAt.y, stickAt.x, stickAt.y);
+    steer.x = 0; steer.y = 0;                      // touchdown is always neutral
+    initAudio();
   }
 }, { passive: true });
 addEventListener("touchmove", e => {
   for (const t of e.changedTouches) {
-    if (t.identifier === steerTouchId) {
-      steer.x = Math.max(-1, Math.min(1, (t.clientX - steerStart.x) / 120));
-      steer.y = Math.max(-1, Math.min(1, (t.clientY - steerStart.y) / 120));
-    }
+    if (t.identifier !== steerTouchId) continue;
+    const R = stickThrow();
+    const dx = t.clientX - stickAt.x, dy = t.clientY - stickAt.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 0.001) { placeStick(stickAt.x, stickAt.y, stickAt.x, stickAt.y);
+                     steer.x = 0; steer.y = 0; continue; }
+    const ride = Math.min(1, R / d);               // knob rides the rim, never past it
+    placeStick(stickAt.x, stickAt.y, stickAt.x + dx * ride, stickAt.y + dy * ride);
+    // direction preserved, magnitude curved: |steer| = min(1, d/R) ** STICK_CURVE
+    const k = Math.pow(Math.min(1, d / R), STICK_CURVE) / d;
+    steer.x = dx * k; steer.y = dy * k;
   }
 }, { passive: true });
 /* touchcancel matters as much as touchend here. The OS steals touches —
@@ -6781,7 +6966,11 @@ addEventListener("touchmove", e => {
    no later touch can ever take the wheel back. A reload was the only cure. */
 const releaseSteerTouch = e => {
   for (const t of e.changedTouches) {
-    if (t.identifier === steerTouchId) { steerTouchId = null; steer.x = 0; steer.y = 0; }
+    if (t.identifier !== steerTouchId) continue;
+    steerTouchId = null;
+    steer.x = 0; steer.y = 0;
+    stickEl.classList.remove("live");   // restores the knob's spring-back transition
+    stickRest();
   }
 };
 addEventListener("touchend", releaseSteerTouch);
@@ -7317,7 +7506,9 @@ function drawNavHud(dt) {
   }
 
   // --- C: proximity radar, bottom-centre. Nose = up. LOCAL contacts only. ---
-  const r = 52, cx = W / 2, cy = H - 92;
+  // (navRadarUp is 92 on a desktop and lifts on glass when the thumbs need
+  // the bottom strip — see layoutNavHud.)
+  const r = 52, cx = W / 2, cy = H - navRadarUp;
   _nFwd.set(0, 0, -1).applyQuaternion(shipObj.quaternion);
   _nRight.set(1, 0, 0).applyQuaternion(shipObj.quaternion);
   c.save();
@@ -8578,25 +8769,30 @@ function animate() {
     landTagEl.style.visibility = "hidden";
   }
 
-  /* landing-assist prompt (v68): one contextual line + one mobile button.
-       auto-landing   → "AUTO-LANDING"      (button hidden — abort is [G])
-       parked         → "[G] LAUNCH"        (button reads LAUNCH)
-       aligned in range→ "[G] LAND"         (button reads LAND)
-       otherwise      → nothing */
+  /* landing-assist prompt (v68): one contextual line, plus the mobile pop-up.
+       auto-landing   → "AUTO-LANDING"      (no pop-up — abort is [G] / a re-tap)
+       parked         → "[G] LAUNCH"        (pop-up reads LAUNCH)
+       aligned in range→ "[G] LAND"         (pop-up reads LANDING ASSIST)
+       otherwise      → nothing
+     v78: on glass the keyboard line is suppressed for the two states the
+     pop-up covers — "[G]" is nonsense on a phone, and the pill says it
+     better and can be pressed. AUTO-LANDING still uses the text line: there
+     is nothing to tap there, it's a status. */
+  const onGlass = document.body.classList.contains("touch");
   let assistTxt = null, btnTxt = null;
   if (landing) {
     assistTxt = "◆ AUTO-LANDING — "
       + (landing.pad.port ? landing.pad.port.name.split(" ")[0] : landing.b.cfg.name) + " ◆";
   } else if (landedOn) {
-    assistTxt = "◆ [G] LAUNCH ◆"; btnTxt = "LAUNCH";
+    btnTxt = "LAUNCH";          assistTxt = onGlass ? null : "◆ [G] LAUNCH ◆";
   } else if (landingTarget()) {
-    assistTxt = "◆ [G] LAND ◆";   btnTxt = "LAND";
+    btnTxt = "LANDING ASSIST";  assistTxt = onGlass ? null : "◆ [G] LAND ◆";
   }
   if (assistTxt) { assistEl.textContent = assistTxt; assistEl.style.visibility = "visible"; }
   else assistEl.style.visibility = "hidden";
-  // the mobile button only exists while it does something (and never mid-approach)
-  btnLandEl.style.display = (btnTxt && document.body.classList.contains("touch")) ? "flex" : "none";
-  if (btnTxt) btnLandEl.textContent = btnTxt;
+  // the pop-up only exists while it does something (and never mid-approach)
+  btnLandEl.style.display = (btnTxt && onGlass) ? "flex" : "none";
+  if (btnTxt && btnLandEl.textContent !== btnTxt) btnLandEl.textContent = btnTxt;
 
   /* ---- atmospheric entry: the "middle path" — effects, not scenes ----
      Below a quarter-radius of altitude over any body with an atmosphere,
