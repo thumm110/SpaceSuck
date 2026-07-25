@@ -731,8 +731,15 @@ const BODIES = [
     // NO pads. The whole surface is landable off the height grid, and both
     // outposts sit on leveled pans, so you just set down on the open apron
     // next to them. No pad cylinder = no deck-vs-grid height mismatch.
-    atmosphere: 0xcc5522, atmoStrength: 0.5,
-    atmoAlt: 700,                   // v65: was 360 (radius × 0.4) — and the Plume
+    /* v71: 0.5 was the thinnest air in the system and it made CINDER the
+       TIGHTEST world to fly, despite a deeper sky than VERDANT's. Measured
+       full-throttle dive, sky-top to the deck: 0.9s, arriving at 337 u/s —
+       triple Earth's 114. It wasn't short, it was slippery: nothing slowed
+       you down, so the sky went by in under a second. 0.8 brings the arrival
+       speed into the same range as everywhere else. */
+    atmosphere: 0xcc5522, atmoStrength: 0.8,
+    atmoAlt: 900,                   // v71: 700 -> 900 (see the dive numbers above).
+                                    // v65: was 360 (radius × 0.4) — and the Plume
                                     // geometry DRAWS to 370u, so the volcanic plumes
                                     // were poking out through the top of the sky.
                                     // (They collide at 120u; drawn ≠ hit, see below.)
@@ -878,7 +885,15 @@ const BODIES = [
     ],
     clouds: true,
     atmosphere: 0x77ffaa, atmoStrength: 0.9,
-    atmoAlt: 600,                   // v65: was 270 — the tightest sky in the system
+    /* v71: 600 -> 900. Tanner asked for a 500u floor for "room to manuver
+       within the atmosphere"; every world was already over it, so the floor
+       was a no-op and the real number is TIME, not depth. Measured dive from
+       sky-top to the deck was 1.0s here against Earth's 2.8s — a third of the
+       flying room on the world that most needs it, since 95% of the surface
+       is closed canopy and finding a pad is the whole challenge. 900 is the
+       most that still reads as a planet with a sky rather than a marble in a
+       glow ball: the shell sits at 1.33x the radius, against Earth's 1.56x. */
+    atmoAlt: 900,                   // v65: was 270 — the tightest sky in the system
                                     // and the reason this change exists. Smallest
                                     // world, so radius × 0.4 gave it the least air,
                                     // while the canopy you must fly over is drawn
@@ -2293,6 +2308,10 @@ function loadPlayerShip(def) {
       Math.max(Math.abs(bbox.min.x), bbox.max.x),
       Math.max(Math.abs(bbox.min.y), bbox.max.y),
       Math.max(Math.abs(bbox.min.z), bbox.max.z));
+    // chase framing (v71): the silhouette this hull presents to a camera
+    // sitting behind it — the WIDER of width and height, not the length
+    chaseFrame = THREE.MathUtils.clamp(
+      (Math.max(size.x, size.y) * sscale) / CHASE_REF_SIL, 0.85, 1.12);
 
     // any "*Glow" material (thrusters, wing conduits, nav lights, canopy)
     // glows bright; the hull gets a faint self-lit floor so it still reads
@@ -5573,8 +5592,43 @@ function updateEnemies(dt) {
 
 const VIEW_COCKPIT = 0, VIEW_CHASE = 1, VIEW_CHASE_FAR = 2, VIEW_CINEMATIC = 3;
 let viewMode = VIEW_COCKPIT;                      // start in the cockpit
-const CHASE_OFFSET = new THREE.Vector3(0, 4.5, 17); // behind & above, in ship-local space
-const CHASE_FAR_OFFSET = new THREE.Vector3(0, 7, 30); // v44: same chase brain, wider stage
+const CHASE_OFFSET = new THREE.Vector3(0, 4.2, 15.5); // behind & above, in ship-local space
+const CHASE_FAR_OFFSET = new THREE.Vector3(0, 6.4, 27); // v44: same chase brain, wider stage
+
+/* ---- PER-VIEW FIELD OF VIEW (v71) --------------------------------------
+   The camera ran one 70-degree vertical FOV for every view. At 16:9 that is
+   about 102 degrees HORIZONTAL — wide, and wide FOV is what makes mass read
+   small: on-screen size is true size over (2 * distance * tan(fov/2)), so
+   every degree you add shrinks everything in frame.
+
+   One number can't serve all four views, because they want opposite things.
+   The cockpit needs peripheral vision — junk arrives from every direction and
+   raiders fly attack passes, and you catch those in the corners. The chase
+   views exist to look AT your ship, and the cinematic director is composing
+   shots. So the cockpit keeps its wide 70 and the rest tighten. */
+const VIEW_FOV = [70, 64, 66, 56];   // cockpit / chase / chase-far / cinematic
+
+/* ---- PER-SHIP CHASE FRAMING (v71) --------------------------------------
+   The offsets above are a BASE, scaled per ship. A fixed camera distance
+   frames every hull the same way, but the hangar's hulls are not the same
+   size on screen — and, counter-intuitively, length is not what matters.
+   Seen from behind, what fills the frame is the SILHOUETTE: the wider of the
+   ship's width and height.
+
+       THUMM   10.3 wide  (big wings)       1.00
+       CHAR    11.7 wide                    1.14
+       SAMSAM   8.0 wide  (narrow gunboat)  0.78
+       BOO      7.9 wide                    0.77
+
+   SAMSAM is the LONGEST ship in the hangar at 11.5 units and still read as
+   the most distant, because from the chase seat you see 8 units of it where
+   THUMM shows you 10.3. (Tanner, playtest: "the chase cam can be moved
+   slightly close in to the ship, especially with the SAMSAM it really feels
+   far.") Framing off the silhouette pulls the camera in for the narrow hulls
+   and leaves the wide ones where they are. Clamped so it stays a correction,
+   not a rewrite. */
+const CHASE_REF_SIL = 10.3;   // USS THUMM's silhouette — the framing everything matches
+let chaseFrame = 1;           // real value lands with the model, like shipHullR
 const LOOKBACK_OFFSET = new THREE.Vector3(0, 4.5, -17); // v44: off the nose, looking back (R3 glance)
 const tmpOffset = new THREE.Vector3();
 const viewTag = document.getElementById("viewtag");
@@ -5677,6 +5731,10 @@ function cineCutNewShot() {
 function applyView() {
   const cockpit = viewMode === VIEW_COCKPIT;
   document.body.classList.toggle("cockpit", cockpit);   // ring on + crosshair shrinks
+  // v71: each view carries its own FOV. Set here rather than per frame so the
+  // resize handler's own updateProjectionMatrix() never fights it.
+  const fov = VIEW_FOV[viewMode] ?? 70;
+  if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix(); }
 }
 
 function toggleView() {
@@ -7274,6 +7332,7 @@ function animate() {
     shipMesh.rotation.z = bank;               // the model leans, the physics don't
     // desired camera spot: the view's offset rotated into the ship's frame
     tmpOffset.copy(viewMode === VIEW_CHASE_FAR ? CHASE_FAR_OFFSET : CHASE_OFFSET)
+             .multiplyScalar(chaseFrame)          // v71: frame by the hull's silhouette
              .applyQuaternion(shipObj.quaternion);
     tmpOffset.add(shipObj.position);
     // v64: ride the planet first. The physics step teleported the ship to keep
@@ -7292,7 +7351,9 @@ function animate() {
 
     // leash: at speed the lag grows with velocity — never let the ship
     // recede past the view's leash no matter how fast we're going
-    const leash = viewMode === VIEW_CHASE_FAR ? MAX_CHASE_FAR_DIST : MAX_CHASE_DIST;
+    // scaled with the same factor, or a pulled-in camera keeps a leash sized
+    // for a ship it is no longer sitting that far behind
+    const leash = (viewMode === VIEW_CHASE_FAR ? MAX_CHASE_FAR_DIST : MAX_CHASE_DIST) * chaseFrame;
     const gap = camera.position.distanceTo(shipObj.position);
     if (gap > leash) {
       camera.position.sub(shipObj.position)
