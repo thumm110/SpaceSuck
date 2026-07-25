@@ -2246,6 +2246,12 @@ const SHIPS = [
     accel: 260, boost: 2.2, turn: 1.25, grip: 2.0,
     hullMul: 1.5, beamMul: 1.15, spillMul: 0.8,
     muzzles: ["GunTipC", "GunTipC"],   // one chin cannon — both bolts, small spread
+    /* v72: colour and burner count are both DISCOVERED off the .glb now —
+       pink from its EngineGlow material, all four engines from its Thruster*
+       seats. Only the size tweak is a judgement call: the measured bells are
+       0.58 across outboard (x=+-4.16) against 0.51 in the centre, and the
+       centre pair sit under one unit apart so their blooms merge by design. */
+    glowScales: { ThrusterCL: 0.85, ThrusterCR: 0.85 },
     pips: { AGILITY: 2, THRUST: 4, HULL: 4, BEAM: 4 } },
   { file: "ship/uss-char.glb", name: "USS CHAR", len: 11,
     blurb: "OLIVE WARBIRD — ALL THROTTLE AND TEETH, SHORT ON REACH",
@@ -2266,9 +2272,9 @@ const SHIPS = [
     accel: 240, boost: 2.2, turn: 1.2, grip: 2.0,
     hullMul: 1.7, beamMul: 0.7, spillMul: 1.0,
     muzzles: ["GunTipL", "GunTipR"],   // twin boom gatlings — the heavy forward gun bank
-    glow: 0xff7420,                    // orange burners, not the default teal
-    thrusters: ["ThrusterL", "ThrusterR", "ThrusterQ0", "ThrusterQ1", "ThrusterQ2", "ThrusterQ3"],
-    glowScales: [1.0, 1.0, 0.5, 0.5, 0.5, 0.5],   // big nacelles + the smaller center quad
+    // v72: orange comes off the model's own EngineGlow (#ff6007) and all six
+    // seats are discovered. Only the centre quad's size is a judgement call.
+    glowScales: { ThrusterQ0: 0.5, ThrusterQ1: 0.5, ThrusterQ2: 0.5, ThrusterQ3: 0.5 },
     pips: { AGILITY: 2, THRUST: 3, HULL: 5, BEAM: 1 } },
 ];
 let shipSel = 0;   // which hangar row flies — picked on the start screen
@@ -2297,6 +2303,8 @@ function loadPlayerShip(def) {
     const model = gltf.scene;
 
     // scale to the hangar row's presence (nose to tail, in units)
+    // read the authored burner colour BEFORE dressHullMats touches emissives
+    const shipGlowHex = modelGlowHex(model, 0x6ee7d8);
     const bbox = new THREE.Box3().setFromObject(model);
     const size = bbox.getSize(new THREE.Vector3());
     const sscale = def.len / size.z;
@@ -2343,14 +2351,27 @@ function loadPlayerShip(def) {
     // most hulls light 2. The universal pair (0,1) always shows — keeping its
     // default seat if a hull lacks the node, matching the old behaviour — while
     // extra glows only appear when their thruster node actually exists.
-    const glowHex = def.glow ?? 0x6ee7d8;
-    const thrusterNames = def.thrusters ?? ["ThrusterL", "ThrusterR"];
-    const glowScales = def.glowScales ?? [];
+    /* v72: both of these are discovered, not declared. `def.glow` and
+       `def.thrusters` survive as overrides but no shipped hull needs either.
+       If a hull ever grows more burners than the sprite pool, light what we
+       can and say so rather than silently dropping the rest. */
+    const glowHex = def.glow ?? shipGlowHex;
+    const emitters = def.thrusters
+      ? def.thrusters.map(n => model.getObjectByName(n)).filter(Boolean)
+      : findEmitters(model);
+    if (emitters.length > engineGlows.length)
+      console.warn(`${def.name}: ${emitters.length} burners, only ${engineGlows.length} glow sprites`);
+    /* glowScales is keyed by NODE NAME, not by index (v72). It used to be an
+       array, which only worked while the thruster list was hand-written in a
+       matching order — discovery sorts alphabetically, so SAMSAM's index-based
+       [1,1,.5,.5,.5,.5] would have landed on L, Q0, Q1, Q2, Q3, R and made one
+       nacelle big and the other small. Names can't desync. */
+    const glowScales = def.glowScales ?? {};
     engineGlows.forEach((g, i) => {
       g.material.color.setHex(glowHex);
-      g.userData.gscale = glowScales[i] ?? 1;
-      const name = thrusterNames[i];
-      g.visible = name ? (i < 2 ? (anchor(name, g, 0.8), true) : anchor(name, g, 0.8)) : false;
+      const seat = emitters[i];
+      g.userData.gscale = seat ? (glowScales[seat.name] ?? 1) : 1;
+      g.visible = seat ? (anchor(seat.name, g, 0.8), true) : false;
     });
     // muzzles: bolts fire from the retro glows' world positions, so seating
     // the glows on the hangar row's muzzle nodes IS the armament wiring. A
@@ -2431,6 +2452,49 @@ const muzzleFlashes = [AQUA_BOLT, ORANGE_BOLT].map(c => {
   }));
   s.scale.setScalar(0.001); shipObj.add(s); return s;
 });
+/* ---- ENGINE BLOOM, READ OFF THE MODEL (v72) ----------------------------
+   The rule (Tanner, 2026-07-25): "each ship's bloom on the thrusters should
+   match the colour of the thruster, and every thruster on every ship should
+   glow." Both of those facts already live in the .glb, so neither is
+   hand-configured any more — and hand-configuring them had drifted:
+
+     USS CHAR   is the GREEN ship, and bloomed the fleet's default teal
+     SS PACKRAT is AMBER,          and bloomed hauler blue
+     USS BOO    is PINK,           and bloomed teal on 2 of its 4 engines
+
+   COLOUR: every hull in the fleet authors a material named exactly
+   `EngineGlow`, and its emissive IS the burner colour. Reading it means the
+   sprite can never disagree with the bells it sits on.
+
+   EMITTERS: nodes are `Thruster` + a short seat code. The naive /^Thruster/
+   match does NOT work and would look like it does — SAMSAM names its bell
+   sub-parts ThrusterLBell / LFloor / LInner / LThroat (30 matches for 6
+   engines), and BOO and CANARY carry ThrusterIn* INTAKES, which are holes,
+   not fires. The seat codes actually in use across all eleven hulls are
+   L / R / C, CL / CR, WL / WR, and E0-9 / Q0-9. Anything else is a sub-part.
+
+   Adding a burner to a ship is now a Blender-side act only: name the node to
+   the convention and it lights itself, in the right colour, on next load. */
+const EMITTER_RE = /^Thruster(?:[LRC]|C[LR]|W[LR]|[EQ]\d+)$/;
+
+function findEmitters(root) {
+  const out = [];
+  root.traverse(o => { if (EMITTER_RE.test(o.name)) out.push(o); });
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/* The hull's authored burner colour. Call BEFORE dressHullMats so this reads
+   what Blender exported rather than anything the loader has boosted. */
+function modelGlowHex(root, fallback) {
+  let hex = null;
+  root.traverse(o => {
+    if (hex !== null || !o.isMesh || !o.material) return;
+    for (const m of (Array.isArray(o.material) ? o.material : [o.material]))
+      if (m && m.name === "EngineGlow" && m.emissive) { hex = m.emissive.getHex(); break; }
+  });
+  return hex ?? fallback;
+}
+
 let fireCooldown = 0;
 const muzzleL = new THREE.Vector3(), muzzleR = new THREE.Vector3(),
       boltDir = new THREE.Vector3(), flashLocal = new THREE.Vector3();
@@ -3759,6 +3823,8 @@ if (THREE.GLTFLoader) {
       // re-anchor the engine glow between the twin thrusters, and hand the
       // fire block the wingtip gun tips as muzzles
       p.group.updateMatrixWorld(true);
+      // v72: bloom takes the hull's own EngineGlow colour, like every ship
+      p.engineGlow.material.color.setHex(modelGlowHex(model, 0xff6a4d));
       const tL = model.getObjectByName("ThrusterL"), tR = model.getObjectByName("ThrusterR");
       if (tL && tR) {
         const a = tL.getWorldPosition(new THREE.Vector3()), b = tR.getWorldPosition(new THREE.Vector3());
@@ -3972,6 +4038,9 @@ if (THREE.GLTFLoader) for (const h of haulers) {
          whole design rests on quietly stops being true. With the clamp a chunky
          hull degenerates to exactly today's sphere (capHalf 0) — correct, since
          a capsule buys nothing on a ship that isn't long. */
+    // v72: the bloom matches the burners the model actually draws. This is
+    // where SS PACKRAT stopped glowing hauler-blue over amber nozzles.
+    h.engineGlow.material.color.setHex(modelGlowHex(model, 0x55aaff));
     h.capR = Math.min(hlen / 2, hscale * Math.max(
       Math.abs(bbox.min.x), bbox.max.x, Math.abs(bbox.min.y), bbox.max.y));
     h.capHalf = hlen / 2 - h.capR;
@@ -4616,6 +4685,7 @@ if (THREE.GLTFLoader) for (const g of gunships) {
     // Min/max off the origin (TIMECLOCK's hull is 6.4u off-centre in Y) and
     // clamped to len/2. TIMECLOCK's true reach is 19.1 against a len/2 of 15,
     // so it clamps to a plain sphere: correct, it's tall, not long.
+    g.engineGlow.material.color.setHex(modelGlowHex(model, 0xff6a4d));   // v72
     g.capR = Math.min(g.len / 2, gscale * Math.max(
       Math.abs(bbox.min.x), bbox.max.x, Math.abs(bbox.min.y), bbox.max.y));
     g.capHalf = g.len / 2 - g.capR;
