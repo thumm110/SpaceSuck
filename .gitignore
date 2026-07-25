@@ -11,3 +11,9 @@
 
 # Blender/Python bytecode from the build scripts
 __pycache__/
+
+# Local convenience symlink into the Blender masters volume. It is an ABSOLUTE
+# path to one machine's disk, so committing it hands every clone a dangling
+# link — and it leaked into v79.1 via `git add -A`. The symlink itself stays on
+# disk; git just stops tracking it.
+masters
