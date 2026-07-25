@@ -587,9 +587,23 @@
      tighten it so the two never share pixels. (#hud is pointer-events:none,
      so this was always cosmetic, but the hull bar makes the block taller
      and the collision worse.) */
-  body.touch #flightdata { bottom: 182px; font-size: 11px; line-height: 1.5; }
-  body.touch #flightdata .big { font-size: 21px; }
-  body.touch #hullbar { width: 112px; }
+  /* v79.2 — the whole readout comes down a size on glass. Tanner: "make the HUD
+     slightly smaller on the mobile screen." It isn't only taste: the block is
+     bottom-anchored and grows UPWARD, so at 11px its eight lines reached the
+     CONTROLS button and drew HULL straight through it. Smaller text is what
+     stops that, not moving either one. */
+  body.touch #flightdata { bottom: 182px; font-size: 10px; line-height: 1.42; }
+  body.touch #flightdata .big { font-size: 18px; }
+  body.touch #hullbar { width: 92px; height: 6px; }
+  body.touch #cargo, body.touch #bank { font-size: 12px; }
+  body.touch #nearest { font-size: 10px; }
+  body.touch #nearest .name { font-size: 13px; }
+  body.touch #surfrow { font-size: 9px; }
+  body.touch #viewtag { font-size: 9px; top: 12px; }
+  body.touch #ctrlToggle { font-size: 9px; padding: 3px 9px; letter-spacing: 1.5px; }
+  body.touch #ctrlmenu { top: 8px; left: 10px; }
+  body.touch #landtag, body.touch #entrytag, body.touch #alarm,
+  body.touch #breachtag, body.touch #ditchtag, body.touch #treetag { font-size: 11px; }
 </style>
 </head>
 <body>
@@ -7040,13 +7054,20 @@ let navRadarUp = 92;
    disagree. It shrinks on glass because a 104px scope is a quarter of a
    390px-tall phone. */
 let navRadarR = 52;
+/* Horizontal centre of the scope, or -1 for "screen centre". On glass the ship
+   is drawn BIG and low — 104px tall and ~290px wide on an 844x390 phone — so a
+   bottom-CENTRED scope is painted straight through the hull no matter how the
+   heights are tuned. There is usually a clear lane between the stick and the
+   button cluster; when there is, the scope moves into it. */
+let navRadarCx = -1;
 function layoutNavHud() {
   // this reads shipRestFrac(), which reads the chase offsets — so it must own
   // that ordering rather than trust every caller to have done it first. It's
   // idempotent (recomputed from pristine bases), so calling it here is free.
   applyTouchFraming();
   const glass = document.body.classList.contains("touch");
-  navRadarR = glass ? 42 : 52;
+  navRadarR = glass ? 34 : 52;
+  navRadarCx = -1;
   if (!glass) { navRadarUp = 92; return; }
   let top = Infinity, left = Infinity;
   for (const id of ["btnFire", "btnThrust", "btnRev", "btnBrake"]) {
@@ -7069,13 +7090,26 @@ function layoutNavHud() {
                || innerWidth / 2 + navRadarR > left;                     // into the cluster
   navRadarUp = clashes ? Math.max(92, innerHeight - (top - 78)) : 92;
 
-  /* ...and it must not be drawn through the SHIP either. Dodging the buttons
-     alone lifted the scope in portrait until it sat exactly on the hull, which
-     is the thing Tanner reported. The ship's resting height is a FIXED fraction
-     of the screen (see shipRestFrac), so this is a real constraint we can solve
-     rather than a number to nudge: cap the lift so the scope's top edge clears
-     the hull. Only bites when the two constraints actually meet — portrait — and
-     floors at 92 rather than pretending there's room when there isn't. */
+  /* ...and it must not be drawn through the SHIP either — the thing Tanner
+     reported twice. Height alone can't fix it: measured on an 844x390 phone the
+     hull is 104px TALL and ~290px WIDE, so a bottom-centred scope is behind the
+     ship whatever you do with the lift. (The first attempt at this compared the
+     scope against the ship's ORIGIN and passed — the origin is mid-hull, and
+     52px of ship hangs below it. Assert on the footprint, never the anchor.)
+
+     So prefer moving it SIDEWAYS: the stick and the cluster leave a lane on the
+     left — measured 137px in chase, 216px in chase-far — and the scope is only
+     68px wide on glass. When that lane exists the scope lives in it, clear of
+     the hull entirely and clear of both thumbs.
+
+     Portrait has no lane at all (the hull projects WIDER THAN THE VIEWPORT
+     there, x -111..502 on a 390px screen), so it falls back to centred and
+     takes the height dodge instead — the honest best available, not a fix. */
+  const stickRight = (stickBaseEl.offsetWidth || 116) + 20;   // its parked position
+  if (left - stickRight >= navRadarR * 2 + 48) {
+    navRadarCx = stickRight + navRadarR + 18;
+    return;                       // out of the hull's column: no height dodge needed
+  }
   const shipLine = shipRestFrac() * innerHeight;
   navRadarUp = Math.max(92, Math.min(navRadarUp, innerHeight - shipLine - navRadarR - 10));
 }
@@ -7706,7 +7740,7 @@ function drawNavHud(dt) {
   // --- C: proximity radar, bottom-centre. Nose = up. LOCAL contacts only. ---
   // (navRadarUp is 92 on a desktop and lifts on glass when the thumbs need
   // the bottom strip — see layoutNavHud.)
-  const r = navRadarR, cx = W / 2, cy = H - navRadarUp;
+  const r = navRadarR, cx = navRadarCx < 0 ? W / 2 : navRadarCx, cy = H - navRadarUp;
   _nFwd.set(0, 0, -1).applyQuaternion(shipObj.quaternion);
   _nRight.set(1, 0, 0).applyQuaternion(shipObj.quaternion);
   c.save();
