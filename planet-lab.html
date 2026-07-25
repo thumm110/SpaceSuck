@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>SpaceSuck — Planet Lab</title>
+<link rel="icon" href="icon.png">
+
+<!-- ============================================================
+     SPACESUCK — PLANET LAB
+     Orbit-and-zoom inspector for the Blender-built worlds, so a detail
+     pass doesn't mean launching the game and flying 60,000 units.
+
+     WHY IT LOOKS RIGHT: this is the game's own renderer with the game's
+     own numbers. The BODIES config is READ OUT OF space-flight.html at
+     load time (see readGameConfig) rather than copied, so a retuned
+     atmoAlt or a new pad shows up here the moment you save the game —
+     there is nothing to keep in sync. The lighting rig, the atmosphere
+     shader and the cloud generator are mirrored from the same file and
+     noted where they came from.
+
+     WHAT THE GAME CAN'T SHOW YOU: the sidecar files. The height grid IS
+     the collision system (groundRadius samples it; nothing raycasts the
+     mesh), and you normally only discover a grid that disagrees with the
+     terrain by flying into it. GRID draws that surface over the model.
+     HAZARD paints the lava/water/canopy mask. SITES puts a marker on
+     every pad and vent at its baked lat/lon, which is exactly the bug
+     class that cost v68 (pad coords ~14u stale, so every landing aimed
+     beside the deck). TREES draws VERDANT's 588 damage volumes, which
+     are invisible in-game until you clip one.
+
+     NEEDS http:// — same as the game, for the same reason (fetch() is
+     blocked on file://). Run ./play.sh, then open
+     http://localhost:8123/planet-lab.html
+     SOURCE: GAME reads planets/ (what you'd fly); MASTER reads masters/,
+     a symlink to ~/Blender/spacesuck/planets, so you can look at a fresh
+     Blender build BEFORE copying it into the game.
+     ============================================================ -->
+
+<script src="lib/three.min.js"></script>
+<script>
+  // same fallback the game uses — local copy first so this works offline
+  if (typeof THREE === "undefined") {
+    document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>');
+  }
+</script>
+<script src="lib/GLTFLoader.js"></script>
+
+<style>
+  /* cockpit theme — same palette as fleet-registry.html so the tools match */
+  :root{
+    --void:#05090f; --panel:#0b131d; --panel2:#0f1a28; --raised:#12212f;
+    --line:#1b2c3e; --line2:#233a51; --ink:#d6e6f1; --dim:#7690a7; --dimmer:#48607a;
+    --accent:#33e6cd; --warn:#ffb020; --bad:#ff4a37; --orange:#ff8f42;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--void);color:var(--ink);
+    font-family:var(--mono);font-size:12px;overflow:hidden}
+  canvas{display:block}
+
+  /* ---- the panel ---- */
+  #hud{position:fixed;top:0;left:0;bottom:0;width:262px;z-index:5;
+    background:linear-gradient(180deg,var(--panel) 0%,var(--panel2) 100%);
+    border-right:1px solid var(--line2);overflow-y:auto;overscroll-behavior:contain;
+    padding:10px 12px 40px;transition:transform .18s ease}
+  #hud.hide{transform:translateX(-100%)}
+  #hud::-webkit-scrollbar{width:8px}
+  #hud::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
+
+  h1{font-size:12px;letter-spacing:.22em;margin:2px 0 2px;color:var(--accent);font-weight:600}
+  .sub{color:var(--dimmer);font-size:10px;letter-spacing:.1em;margin-bottom:12px}
+  .sec{border-top:1px solid var(--line);margin:12px -12px 8px;padding:8px 12px 0}
+  .sec>.lbl{color:var(--dimmer);font-size:9.5px;letter-spacing:.18em;margin-bottom:7px}
+
+  .row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:5px 0;min-height:22px}
+  .row>span:first-child{color:var(--dim);font-size:10.5px;letter-spacing:.06em;white-space:nowrap}
+
+  /* segmented button groups */
+  .seg{display:flex;gap:0;border:1px solid var(--line2);border-radius:3px;overflow:hidden}
+  .seg button{flex:1;background:var(--raised);color:var(--dim);border:0;border-left:1px solid var(--line2);
+    padding:4px 6px;font:inherit;font-size:10px;letter-spacing:.05em;cursor:pointer;white-space:nowrap}
+  .seg button:first-child{border-left:0}
+  .seg button:hover{color:var(--ink)}
+  .seg button.on{background:var(--accent);color:#04211d;font-weight:600}
+  .wide{width:100%}
+
+  select,button.act{background:var(--raised);color:var(--ink);border:1px solid var(--line2);
+    border-radius:3px;padding:4px 6px;font:inherit;font-size:11px;cursor:pointer}
+  select{width:100%}
+  button.act{flex:1;letter-spacing:.08em;color:var(--dim)}
+  button.act:hover{color:var(--ink);border-color:var(--accent)}
+
+  input[type=range]{flex:1;accent-color:var(--accent);height:16px}
+
+  /* readouts */
+  .read{display:flex;justify-content:space-between;gap:8px;margin:3px 0;font-size:10.5px}
+  .read>span:first-child{color:var(--dimmer);letter-spacing:.06em}
+  .read>span:last-child{color:var(--ink);text-align:right}
+  .big{font-size:15px;color:var(--accent);letter-spacing:.02em}
+  .haz{color:var(--bad)}
+  .ok{color:var(--accent)}
+  .miss{color:var(--warn)}
+
+  /* the little color key under the GRID toggle */
+  #ramp{height:7px;border-radius:2px;margin:5px 0 2px;
+    background:linear-gradient(90deg,#0b3a6b,#1d8fb0,#43b34a,#d8c840,#d0552a,#f2f2f2)}
+  .rampend{display:flex;justify-content:space-between;color:var(--dimmer);font-size:9px}
+
+  /* overlay messages */
+  #msg{position:fixed;inset:0;z-index:8;display:none;align-items:center;justify-content:center;
+    text-align:center;padding:40px;background:rgba(5,9,15,.86);line-height:1.7;font-size:13px}
+  #msg b{color:var(--accent)}
+  #msg .err{color:var(--bad)}
+  #hint{position:fixed;right:12px;bottom:10px;z-index:5;color:var(--dimmer);font-size:10px;
+    letter-spacing:.08em;text-align:right;line-height:1.7;pointer-events:none}
+  #hint b{color:var(--dim);font-weight:400}
+  #tab{position:fixed;top:10px;left:10px;z-index:6;display:none;
+    background:var(--raised);border:1px solid var(--line2);color:var(--dim);
+    border-radius:3px;padding:4px 9px;font:inherit;font-size:10px;cursor:pointer}
+  #hud.hide ~ #tab{display:block}
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <h1>PLANET LAB</h1>
+  <div class="sub">BLENDER WORLD INSPECTOR</div>
+
+  <div class="row"><span>WORLD</span></div>
+  <select id="pick"></select>
+  <div class="row" style="margin-top:7px"><span>SOURCE</span>
+    <div class="seg" style="width:132px">
+      <button data-src="planets" class="on">GAME</button>
+      <button data-src="masters">MASTER</button>
+    </div>
+  </div>
+
+  <div class="sec"><div class="lbl">VIEW</div>
+    <div class="seg wide" id="presets">
+      <button data-preset="orbit" class="on">ORBIT</button>
+      <button data-preset="sky">SKY</button>
+      <button data-preset="low">LOW</button>
+      <button data-preset="surf">SURF</button>
+    </div>
+    <div class="read" style="margin-top:8px"><span>ALT</span><span class="big" id="rAlt">—</span></div>
+    <div class="read"><span>OVER</span><span id="rOver">—</span></div>
+    <div class="read"><span>LAT / LON</span><span id="rLatLon">—</span></div>
+  </div>
+
+  <div class="sec"><div class="lbl">RENDER</div>
+    <div class="row"><span>SPIN</span>
+      <div class="seg" style="width:96px"><button data-t="spin">OFF</button><button data-t="spin" class="on">ON</button></div></div>
+    <div class="row"><span>ATMOSPHERE</span>
+      <div class="seg" style="width:96px"><button data-t="atmo">OFF</button><button data-t="atmo" class="on">ON</button></div></div>
+    <div class="row"><span>CLOUDS</span>
+      <div class="seg" style="width:96px"><button data-t="clouds">OFF</button><button data-t="clouds" class="on">ON</button></div></div>
+    <div class="row"><span>WIREFRAME</span>
+      <div class="seg" style="width:96px"><button data-t="wire" class="on">OFF</button><button data-t="wire">ON</button></div></div>
+    <div class="row"><span>SUN FOLLOW</span>
+      <div class="seg" style="width:96px"><button data-t="follow">OFF</button><button data-t="follow" class="on">ON</button></div></div>
+    <div class="row"><span id="sunLbl">SUN ±</span><input type="range" id="sun" min="-180" max="180" value="-40"></div>
+  </div>
+
+  <div class="sec"><div class="lbl">OVERLAYS — THE SIDECAR DATA</div>
+    <div class="row"><span>HEIGHT GRID</span>
+      <div class="seg" style="width:132px">
+        <button data-grid="off" class="on">OFF</button>
+        <button data-grid="wire">WIRE</button>
+        <button data-grid="solid">SOLID</button>
+      </div></div>
+    <div id="ramp"></div>
+    <div class="rampend"><span id="rampLo">—</span><span id="rampHi">—</span></div>
+    <div class="row"><span>RES</span>
+      <div class="seg" style="width:132px">
+        <button data-res="192">LOW</button><button data-res="384" class="on">MED</button><button data-res="768">HIGH</button>
+      </div></div>
+    <div class="row"><span>HAZARD MASK</span>
+      <div class="seg" style="width:96px"><button data-t="hazard" class="on">OFF</button><button data-t="hazard">ON</button></div></div>
+    <div class="row"><span>PADS / VENTS</span>
+      <div class="seg" style="width:96px"><button data-t="sites">OFF</button><button data-t="sites" class="on">ON</button></div></div>
+    <div class="row"><span>TREE VOLUMES</span>
+      <div class="seg" style="width:96px"><button data-t="trees" class="on">OFF</button><button data-t="trees">ON</button></div></div>
+  </div>
+
+  <div class="sec"><div class="lbl">DATA</div>
+    <div class="read"><span>MODEL</span><span id="dFile">—</span></div>
+    <div class="read"><span>TRIS</span><span id="dTris">—</span></div>
+    <div class="read"><span>GRID</span><span id="dGrid">—</span></div>
+    <div class="read"><span>RELIEF</span><span id="dRelief">—</span></div>
+    <div class="read"><span>SKY TOP</span><span id="dSky">—</span></div>
+    <div class="read"><span>SITES</span><span id="dSites">—</span></div>
+    <div class="read"><span>HAZARD</span><span id="dHaz">—</span></div>
+  </div>
+
+  <div class="sec">
+    <div class="row" style="gap:6px">
+      <button class="act" id="bReload">RELOAD</button>
+      <button class="act" id="bShot">SHOT</button>
+    </div>
+  </div>
+</div>
+<button id="tab">▸ PANEL</button>
+
+<div id="msg"></div>
+<div id="hint">
+  <b>drag</b> orbit &nbsp; <b>wheel</b> zoom &nbsp; <b>1-5</b> world<br>
+  <b>R</b> reload &nbsp; <b>G</b> grid &nbsp; <b>H</b> hazard &nbsp; <b>W</b> wire &nbsp;
+  <b>space</b> spin &nbsp; <b>tab</b> panel
+</div>
+
+<script>
+(function () {
+"use strict";
+
+const msgEl = document.getElementById("msg");
+function fail(html) { msgEl.innerHTML = html; msgEl.style.display = "flex"; }
+function busy(html) { msgEl.innerHTML = html; msgEl.style.display = "flex"; }
+function clear() { msgEl.style.display = "none"; }
+
+if (typeof THREE === "undefined")
+  return fail('<span class="err">three.js failed to load.</span><br>Expected <b>lib/three.min.js</b> next to this file.');
+if (location.protocol === "file:")
+  return fail('This page has to be served over <b>http://</b>.<br>' +
+    'Browsers block fetch() on file://, so nothing would load.<br><br>' +
+    'Run <b>./play.sh</b>, then open<br><b>http://localhost:8123/planet-lab.html</b>');
+
+/* ============ CONFIG — READ FROM THE GAME, NOT COPIED ============
+   Slices `const WATER = {…}` through the end of `const BODIES = [ … ];`
+   straight out of space-flight.html and evaluates it. Those declarations
+   only lean on Math and plain literals, so they run standalone. This is
+   the whole anti-drift story: retune atmoAlt or move a pad in the game
+   and the lab is already showing the new number — there is no second
+   copy of these values anywhere. If the slice ever fails we say so
+   loudly rather than fall back to stale guesses. */
+function readGameConfig(src) {
+  const wStart = src.indexOf("const WATER = {");
+  const bStart = src.indexOf("const BODIES = [", wStart);
+  if (wStart < 0 || bStart < 0) throw new Error("couldn't find WATER / BODIES");
+  const bEnd = src.indexOf("\n];", bStart);
+  if (bEnd < 0) throw new Error("couldn't find the end of BODIES");
+  const chunk = src.slice(wStart, bEnd + 3);
+  return new Function(chunk + "\nreturn BODIES;")();
+}
+
+/* ============ MIRRORED FROM space-flight.html ============
+   Small, stable render code the lab needs a copy of. Unlike the BODIES
+   numbers these have not moved in dozens of versions, so a copy is
+   honest — but if you change them in the game, change them here.
+     makeAtmosphere   space-flight.html §4 (~line 1408)
+     noise + genClouds space-flight.html §2/§3 (~1188 / ~1367)              */
+function makeAtmosphere(shellRadius, colorHex, strength) {
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { atmoColor: { value: new THREE.Color(colorHex) }, strength: { value: strength } },
+    vertexShader: `
+      varying vec3 vNormal; varying vec3 vView;
+      void main() {
+        vNormal = normalize(normalMatrix * normal);
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vView = normalize(-mv.xyz);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform vec3 atmoColor; uniform float strength;
+      varying vec3 vNormal; varying vec3 vView;
+      void main() {
+        float rim = pow(1.0 - abs(dot(vNormal, vView)), 2.5);
+        gl_FragColor = vec4(atmoColor, rim * strength);
+      }`,
+    transparent: true, side: THREE.BackSide, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  return new THREE.Mesh(new THREE.SphereGeometry(shellRadius, 64, 48), mat);
+}
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function makePerm(seed) {
+  const rand = mulberry32(seed), p = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) p[i] = i;
+  for (let i = 255; i > 0; i--) { const j = (rand() * (i + 1)) | 0; const t = p[i]; p[i] = p[j]; p[j] = t; }
+  const perm = new Uint8Array(512);
+  for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
+  return perm;
+}
+function makeNoise(perm) {
+  const fade = t => t * t * (3 - 2 * t);
+  const corner = (xi, yi, zi) => perm[(perm[(perm[xi & 255] + yi) & 255] + zi) & 255] / 255;
+  return function noise3(x, y, z) {
+    const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+    const xf = fade(x - xi), yf = fade(y - yi), zf = fade(z - zi);
+    const c000 = corner(xi, yi, zi),     c100 = corner(xi+1, yi, zi);
+    const c010 = corner(xi, yi+1, zi),   c110 = corner(xi+1, yi+1, zi);
+    const c001 = corner(xi, yi, zi+1),   c101 = corner(xi+1, yi, zi+1);
+    const c011 = corner(xi, yi+1, zi+1), c111 = corner(xi+1, yi+1, zi+1);
+    const x00 = c000 + (c100 - c000) * xf, x10 = c010 + (c110 - c010) * xf;
+    const x01 = c001 + (c101 - c001) * xf, x11 = c011 + (c111 - c011) * xf;
+    const y0 = x00 + (x10 - x00) * yf, y1 = x01 + (x11 - x01) * yf;
+    return y0 + (y1 - y0) * zf;
+  };
+}
+function makeFbm(noise3) {
+  return function fbm(x, y, z, octaves) {
+    let sum = 0, amp = 0.5, freq = 1, norm = 0;
+    for (let o = 0; o < octaves; o++) {
+      sum += noise3(x * freq, y * freq, z * freq) * amp;
+      norm += amp; amp *= 0.5; freq *= 2;
+    }
+    return sum / norm;
+  };
+}
+function canvasTex(data, w, h) {
+  const cnv = document.createElement("canvas");
+  cnv.width = w; cnv.height = h;
+  cnv.getContext("2d").putImageData(new ImageData(data, w, h), 0, 0);
+  const tex = new THREE.CanvasTexture(cnv);
+  tex.wrapS = THREE.RepeatWrapping;
+  return tex;
+}
+function genClouds(seed) {
+  const fbm = makeFbm(makeNoise(makePerm(seed + 1000)));
+  const W = 512, H = 256, data = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) {
+    const phi = (y + 0.5) / H * Math.PI, sinP = Math.sin(phi), cosP = Math.cos(phi);
+    for (let x = 0; x < W; x++) {
+      const theta = (x + 0.5) / W * Math.PI * 2;
+      const n = fbm(sinP * Math.cos(theta) * 3.5, cosP * 3.5, sinP * Math.sin(theta) * 3.5, 5);
+      let a = Math.max(0, Math.min(1, (n - 0.52) / 0.10));
+      a = a * a * (3 - 2 * a);
+      const i = (y * W + x) * 4;
+      data[i] = data[i+1] = data[i+2] = 255; data[i+3] = a * 230;
+    }
+  }
+  return canvasTex(data, W, H);
+}
+
+/* ============ GRID SAMPLING — VERBATIM FROM THE GAME ============
+   b64Bytes + sampleGrid are copied exactly (space-flight.html §6b). The
+   overlays call the SAME function the collision system calls, so what you
+   see drawn is by construction what groundRadius() would return. Change
+   the sampler in the game and these must change too — but as long as they
+   match, the overlay cannot lie about the collision surface.
+   Convention (from the game): Blender Z-up became glTF Y-up, so north is
+   +y and longitude is atan2(-z, x). Row 0 of every grid is the north pole. */
+function b64Bytes(s) {
+  const raw = atob(s), d = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) d[i] = raw.charCodeAt(i);
+  return d;
+}
+function sampleGrid(g, bx, by, bz) {
+  const lon = Math.atan2(-bz, bx);
+  const lat = Math.asin(Math.max(-1, Math.min(1, by)));
+  const u = (lon + Math.PI) / (2 * Math.PI) * g.w - 0.5;
+  const v = (Math.PI / 2 - lat) / Math.PI * g.h - 0.5;
+  const x0 = Math.floor(u), y0 = Math.floor(v);
+  const fx = u - x0, fy = v - y0;
+  const X0 = ((x0 % g.w) + g.w) % g.w, X1 = (X0 + 1) % g.w;
+  const Y0 = Math.max(0, Math.min(g.h - 1, y0));
+  const Y1 = Math.max(0, Math.min(g.h - 1, y0 + 1));
+  const s = (X, Y) => g.d[Y * g.w + X];
+  const top = s(X0, Y0) + (s(X1, Y0) - s(X0, Y0)) * fx;
+  const bot = s(X0, Y1) + (s(X1, Y1) - s(X0, Y1)) * fx;
+  return top + (bot - top) * fy;
+}
+// direction (baked frame) -> unit vector, the pad/tree convention
+function dirOf(latRad, lonRad) {
+  const c = Math.cos(latRad);
+  return new THREE.Vector3(c * Math.cos(lonRad), Math.sin(latRad), -c * Math.sin(lonRad));
+}
+
+/* ============ SCENE ============ */
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 1, 1e6);
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+// NOTE: no outputEncoding / toneMapping / physicallyCorrectLights set here,
+// on purpose — the game sets none either, so the defaults ARE the game's look.
+
+// same two lights the flight scene has: HELIOS' point light + the ambient lift
+scene.add(new THREE.AmbientLight(0x1c2836, 0.8));
+const sunLight = new THREE.PointLight(0xfff0d5, 2.4, 0, 2);
+scene.add(sunLight);
+const SUN_DIST = 68500;   // roughly EARTH's orbit radius — far enough to read as parallel
+
+// star shell, so screenshots don't sit in flat black
+(function stars() {
+  const N = 2500, pos = new Float32Array(N * 3);
+  const rnd = mulberry32(7);
+  for (let i = 0; i < N * 3; i += 3) {
+    const r = 90000, th = rnd() * Math.PI * 2, ph = Math.acos(2 * rnd() - 1);
+    pos[i] = r * Math.sin(ph) * Math.cos(th);
+    pos[i+1] = r * Math.sin(ph) * Math.sin(th);
+    pos[i+2] = r * Math.cos(ph);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+    color: 0xffffff, size: 1.4, sizeAttenuation: false,
+    transparent: true, opacity: 0.8, depthWrite: false,
+  }));
+  pts.renderOrder = -1;
+  scene.add(pts);
+})();
+
+/* root  = the planet group (atmosphere + cloud shell live here, as in the game)
+   holder= the SURFACE group: the GLB and every overlay, all in the baked frame,
+           so yaw and spin move the model and the overlays as one piece.        */
+const root = new THREE.Group();
+scene.add(root);
+let holder = null;
+
+/* ============ STATE ============ */
+const T = { spin: true, atmo: true, clouds: true, wire: false, follow: true,
+            hazard: false, sites: true, trees: false };
+let gridMode = "off", gridRes = 384;
+let sunOff = -40 * Math.PI / 180;
+
+let BODIES = [], cfg = null, source = "planets";
+let body = null;        // { height, hazardGrid, pads, trees, cfgs… } — mirrors the game's body
+let parts = {};         // { model, gridMesh, hazMesh, sites, trees, atmo, cloudShell, glbClouds }
+let loadSeq = 0, spinY = 0, cloudY = 0, loading = false;
+
+// camera orbit state
+let az = 0.6, el = 0.35, dist = 1;
+
+const $ = id => document.getElementById(id);
+
+/* ============ LOAD ============ */
+const bust = () => "?v=" + Date.now();
+
+function disposeAll(obj) {
+  obj.traverse(o => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) {
+      const list = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of list) { if (m.map) m.map.dispose(); m.dispose(); }
+    }
+  });
+}
+function clearPlanet() {
+  for (const c of root.children.slice()) { root.remove(c); disposeAll(c); }
+  holder = null; parts = {}; body = null;
+}
+
+async function loadPlanet(name) {
+  const seq = ++loadSeq;
+  loading = true;
+  cfg = BODIES.find(b => b.name === name);
+  $("pick").value = name;      // the panel must never disagree with the render
+  location.hash = name.toLowerCase();
+  clearPlanet();
+  busy("LOADING <b>" + name + "</b> …");
+
+  holder = new THREE.Group();
+  holder.rotation.y = cfg.yaw || 0;      // the game's body.surface
+  root.add(holder);
+  body = { cfg, height: null, hazardGrid: null, pads: null, trees: null };
+
+  // pads baked to unit dirs exactly as the game does (dx/dy/dz + cosAng)
+  if (cfg.pads) body.pads = cfg.pads.map(p => {
+    const la = p.lat * Math.PI / 180, lo = p.lon * Math.PI / 180, d = dirOf(la, lo);
+    return { dx: d.x, dy: d.y, dz: d.z, cosAng: Math.cos(p.ang), top: p.top, raw: p };
+  });
+
+  const glbURL = source + "/" + cfg.file.split("/").pop();
+  spinY = cloudY = 0;                     // so `yaw` reads true on a fresh world
+
+  // ---- sidecars first (small, and the overlays need them) ----
+  const side = (file) => file
+    ? fetch(source + "/" + file.split("/").pop() + bust()).then(r => r.ok ? r.json() : null).catch(() => null)
+    : Promise.resolve(null);
+  const [hj, zj, tj, headRes] = await Promise.all([
+    side(cfg.heightFile), side(cfg.hazardFile), side(cfg.treeFile),
+    fetch(glbURL + bust(), { method: "HEAD" }).catch(() => null),
+  ]);
+  if (seq !== loadSeq) return;
+
+  if (hj) {
+    body.height = { w: hj.w, h: hj.h, min: hj.min, max: hj.max, d: b64Bytes(hj.b64) };
+    // VERDANT rides its canopy mask inside the height json — same as the game
+    if (hj.canopy_b64)
+      body.hazardGrid = { w: hj.canopy_w, h: hj.canopy_h, d: b64Bytes(hj.canopy_b64) };
+  }
+  if (zj) body.hazardGrid = { w: zj.w, h: zj.h, d: b64Bytes(zj.b64) };
+  if (tj) body.trees = tj;
+
+  // ---- the model ----
+  await new Promise(res => {
+    new THREE.GLTFLoader().load(glbURL + bust(), gltf => {
+      if (seq !== loadSeq) return res();
+      const model = gltf.scene;
+      model.scale.setScalar(cfg.radius / 100);   // built at R=100, scaled here — as the game does
+      holder.add(model);
+      parts.model = model;
+      parts.glbClouds = model.getObjectByName("Clouds") || null;
+      res();
+    }, undefined, () => {
+      if (seq !== loadSeq) return res();
+      parts.model = null;
+      res();
+    });
+  });
+  if (seq !== loadSeq) return;
+
+  if (!parts.model) {
+    fail('<span class="err">Could not load <b>' + glbURL + '</b></span><br>' +
+      (source === "masters"
+        ? "No Blender master for this world yet — the game's copy is the only one.<br>Switch SOURCE back to <b>GAME</b>."
+        : "Check the file exists and you're on http://.") +
+      '<br><br><span style="color:var(--dim)">Overlays still work if the sidecars loaded.</span>');
+  } else clear();
+
+  buildShells();
+  rebuildOverlays();      // fresh world — build them all
+  applyWire();
+  frameWorld("orbit");
+  fillStats(headRes);
+  loading = false;
+}
+
+/* ---- atmosphere + cloud shell, straight off the game's rules ---- */
+function buildShells() {
+  if (cfg.atmosphere) {
+    parts.atmo = makeAtmosphere(cfg.radius + (cfg.atmoAlt != null ? cfg.atmoAlt : cfg.radius * 0.4),
+                                cfg.atmosphere, cfg.atmoStrength != null ? cfg.atmoStrength : 0.8);
+    parts.atmo.visible = T.atmo;
+    root.add(parts.atmo);
+  }
+  if (cfg.clouds) {
+    parts.cloudShell = new THREE.Mesh(
+      new THREE.SphereGeometry(cfg.radius * 1.025, 64, 48),
+      new THREE.MeshStandardMaterial({ map: genClouds(cfg.seed), transparent: true, depthWrite: false, roughness: 1 })
+    );
+    parts.cloudShell.visible = T.clouds;
+    root.add(parts.cloudShell);
+  }
+}
+
+/* ============ OVERLAY 1 — THE HEIGHT GRID =========================
+   Builds an actual surface out of the collision grid and draws it over
+   the model. Read it like this: wireframe HIDDEN inside a mountain means
+   the grid sits BELOW the terrain you can see (you'd clip that peak);
+   wireframe FLOATING above the ground means the grid is too high (you'd
+   land on air). Where they agree, the wire hugs the surface.
+   Vertex colors ramp low→high over the grid's own min..max.            */
+const RAMP = [[0.04,0.23,0.42],[0.11,0.56,0.69],[0.26,0.70,0.29],[0.85,0.78,0.25],[0.82,0.33,0.16],[0.95,0.95,0.95]];
+function rampColor(t) {
+  t = Math.max(0, Math.min(0.9999, t)) * (RAMP.length - 1);
+  const i = Math.floor(t), f = t - i, a = RAMP[i], b = RAMP[i + 1];
+  return [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f];
+}
+
+/* One geometry generator for both the grid and the hazard shell: a lat/lon
+   sphere whose every vertex is pushed out to whatever radiusAt() says.
+   cols+1 columns so the east-west seam gets its own UV instead of wrapping. */
+function displacedSphere(cols, rows, radiusAt, withColor) {
+  const nv = (cols + 1) * (rows + 1);
+  const pos = new Float32Array(nv * 3), uv = new Float32Array(nv * 2);
+  const col = withColor ? new Float32Array(nv * 3) : null;
+  let k = 0;
+  for (let r = 0; r <= rows; r++) {
+    const v = r / rows;                       // 0 = north pole, matches grid row order
+    const lat = Math.PI / 2 - v * Math.PI;
+    const cl = Math.cos(lat), sl = Math.sin(lat);
+    for (let c = 0; c <= cols; c++) {
+      const u = c / cols;
+      const lon = u * Math.PI * 2 - Math.PI;
+      const x = cl * Math.cos(lon), y = sl, z = -cl * Math.sin(lon);
+      const out = radiusAt(x, y, z, k);
+      pos[k*3] = x * out.r; pos[k*3+1] = y * out.r; pos[k*3+2] = z * out.r;
+      uv[k*2] = u; uv[k*2+1] = v;
+      if (col && out.c) { col[k*3] = out.c[0]; col[k*3+1] = out.c[1]; col[k*3+2] = out.c[2]; }
+      k++;
+    }
+  }
+  const idx = new (nv > 65535 ? Uint32Array : Uint16Array)(cols * rows * 6);
+  let t = 0;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const a = r * (cols + 1) + c, b = a + 1, d = a + cols + 1, e = d + 1;
+    idx[t++] = a; idx[t++] = d; idx[t++] = b;
+    idx[t++] = b; idx[t++] = d; idx[t++] = e;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  if (col) geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  geo.setIndex(new THREE.BufferAttribute(idx, 1));
+  return geo;
+}
+
+// the game's groundRadius(), minus the pad exemption toggle — pads included
+// so the overlay shows the deck exactly where a landing would find it
+function gridRadius(bx, by, bz) {
+  const g = body.height;
+  if (!g) return cfg.radius;
+  if (body.pads) for (const p of body.pads)
+    if (bx * p.dx + by * p.dy + bz * p.dz > p.cosAng) return cfg.radius * p.top;
+  return cfg.radius * (g.min + (g.max - g.min) * sampleGrid(g, bx, by, bz) / 255);
+}
+
+function buildGridMesh() {
+  const g = body.height;
+  if (!g || gridMode === "off") return null;
+  const cols = Math.min(gridRes, g.w), rows = Math.max(2, Math.floor(cols / 2));
+  const span = (g.max - g.min) || 1;
+  const geo = displacedSphere(cols, rows, (x, y, z) => {
+    const r = gridRadius(x, y, z);
+    return { r, c: rampColor((r / cfg.radius - g.min) / span) };
+  }, true);
+  const mat = gridMode === "wire"
+    ? new THREE.MeshBasicMaterial({ vertexColors: true, wireframe: true, transparent: true, opacity: 0.75 })
+    : new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.55,
+                                    depthWrite: false, side: THREE.DoubleSide });
+  return new THREE.Mesh(geo, mat);
+}
+
+/* ============ OVERLAY 2 — THE HAZARD MASK =========================
+   Mirrors hazardLevel(): an elevation cut for water worlds (`below`), a
+   painted mask for CINDER's lava and VERDANT's canopy, and pads always
+   read safe. Painted as an equirect texture on a copy of the grid
+   surface, so it hugs the terrain instead of floating in a shell.
+   Alpha ramps with severity — a graded mask shows crust vs core.        */
+function hazardTexture() {
+  const hz = cfg.hazard;
+  if (!hz) return null;
+  const src = body.hazardGrid || body.height;
+  if (!src) return null;
+  const W = Math.min(1024, src.w), H = Math.min(512, src.h);
+  const data = new Uint8ClampedArray(W * H * 4);
+  const col = new THREE.Color(hz.color);
+  const at = hz.at != null ? hz.at : 0.5;
+  const lethal = hz.lethalAt != null ? hz.lethalAt : null;
+  const g = body.height, span = g ? (g.max - g.min) || 1 : 1;
+  for (let y = 0; y < H; y++) {
+    const lat = Math.PI / 2 - (y + 0.5) / H * Math.PI;
+    const cl = Math.cos(lat), sl = Math.sin(lat);
+    for (let x = 0; x < W; x++) {
+      const lon = (x + 0.5) / W * Math.PI * 2 - Math.PI;
+      const bx = cl * Math.cos(lon), by = sl, bz = -cl * Math.sin(lon);
+      let lvl = 0, safePad = false;
+      if (body.pads) for (const p of body.pads)
+        if (bx * p.dx + by * p.dy + bz * p.dz > p.cosAng) safePad = true;
+      if (!safePad) {
+        if (hz.below != null) {
+          const mult = g ? g.min + span * sampleGrid(g, bx, by, bz) / 255 : 1;
+          lvl = mult < hz.below ? 1 : 0;
+        } else if (body.hazardGrid) {
+          lvl = sampleGrid(body.hazardGrid, bx, by, bz) / 255;
+        }
+      }
+      const i = (y * W + x) * 4;
+      if (lvl >= at) {
+        // brighten toward the lethal tier so "you can power out of this" and
+        // "this is the end of it" don't paint the same
+        const sev = lethal ? Math.min(1, Math.max(0, (lvl - at) / Math.max(1e-6, lethal - at))) : 1;
+        data[i]   = col.r * 255 * (0.55 + 0.45 * sev) + 255 * 0.25 * sev;
+        data[i+1] = col.g * 255 * (0.55 + 0.45 * sev);
+        data[i+2] = col.b * 255 * (0.55 + 0.45 * sev);
+        data[i+3] = 110 + 125 * sev;
+      } else { data[i] = data[i+1] = data[i+2] = 0; data[i+3] = 0; }
+    }
+  }
+  const tex = canvasTex(data, W, H);
+  tex.flipY = false;   // v=0 must be the NORTH pole, matching grid row order
+  return tex;
+}
+function buildHazardMesh() {
+  if (!T.hazard || !cfg.hazard) return null;
+  const tex = hazardTexture();
+  if (!tex) return null;
+  const cols = Math.min(512, body.height ? body.height.w : 512), rows = Math.floor(cols / 2);
+  // lifted a hair off the collision surface so it can't z-fight the terrain
+  const geo = displacedSphere(cols, rows, (x, y, z) => ({ r: gridRadius(x, y, z) * 1.0015 }), false);
+  return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  }));
+}
+
+/* ============ OVERLAY 3 — PADS & VENTS ============================
+   Every pad drawn at its baked lat/lon and its declared deck height, at
+   its real angular footprint. If a marker doesn't sit on the deck you
+   modelled, the config and the mesh disagree — that's the v68 bug,
+   visible in one look instead of one landing.                          */
+function labelSprite(text, colorCss) {
+  const cnv = document.createElement("canvas");
+  const ctx = cnv.getContext("2d");
+  ctx.font = "600 30px ui-monospace, monospace";
+  cnv.width = Math.ceil(ctx.measureText(text).width) + 24; cnv.height = 44;
+  const c2 = cnv.getContext("2d");
+  c2.font = "600 30px ui-monospace, monospace";
+  c2.fillStyle = "rgba(5,9,15,0.72)"; c2.fillRect(0, 0, cnv.width, cnv.height);
+  c2.fillStyle = colorCss; c2.textBaseline = "middle";
+  c2.fillText(text, 12, cnv.height / 2 + 1);
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(cnv), transparent: true, depthWrite: false,
+    sizeAttenuation: false,          // constant on screen — it's a label, not an object
+  }));                               // depth-tested on purpose: a label showing THROUGH
+                                     // the planet would read as a pad on the near side
+  spr.scale.set(cnv.width / 3400, cnv.height / 3400, 1);
+  spr.renderOrder = 10;
+  return spr;
+}
+function buildSites() {
+  if (!T.sites) return null;
+  const grp = new THREE.Group();
+
+  for (const p of (body.pads || [])) {
+    const d = new THREE.Vector3(p.dx, p.dy, p.dz);
+    const deck = cfg.radius * p.top;
+    const foot = Math.sin(p.raw.ang) * deck;            // real angular footprint, in units
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(foot * 0.86, foot, 48),
+      new THREE.MeshBasicMaterial({ color: 0x33e6cd, side: THREE.DoubleSide,
+                                    transparent: true, opacity: 0.9 })
+    );
+    // 0.08% clear of the declared deck so it can't z-fight the modelled pad.
+    // Way under the ~14u config drift this overlay exists to catch (v68).
+    ring.position.copy(d).multiplyScalar(deck * 1.0008);
+    ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), d);
+    ring.renderOrder = 9;
+    grp.add(ring);
+    // a mast so you can find the pad from orbit, where the ring is sub-pixel
+    const mast = cfg.radius * 0.03;
+    const pole = new THREE.Mesh(
+      new THREE.CylinderGeometry(foot * 0.02 + cfg.radius * 0.0004, foot * 0.02 + cfg.radius * 0.0004, mast, 6),
+      new THREE.MeshBasicMaterial({ color: 0x33e6cd, transparent: true, opacity: 0.5 })
+    );
+    pole.position.copy(d).multiplyScalar(deck + mast / 2);
+    pole.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
+    pole.renderOrder = 9;
+    grp.add(pole);
+    const nm = (p.raw.port && p.raw.port.name) || "PAD";
+    const lab = labelSprite(nm + (p.raw.port && p.raw.port.home ? "  ★" : ""), "#33e6cd");
+    lab.position.copy(d).multiplyScalar(deck + mast * 1.25);
+    grp.add(lab);
+  }
+
+  for (const v of (cfg.vents || [])) {
+    const d = dirOf(v.lat * Math.PI / 180, v.lon * Math.PI / 180);
+    const gr = gridRadius(d.x, d.y, d.z);
+    const mast = cfg.radius * 0.05 * (0.5 + v.power);
+    const cone = new THREE.Mesh(
+      new THREE.ConeGeometry(cfg.radius * 0.012 * (0.5 + v.power), mast, 10, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xff8f42, transparent: true, opacity: 0.55,
+                                    side: THREE.DoubleSide })
+    );
+    cone.position.copy(d).multiplyScalar(gr + mast / 2);
+    cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
+    cone.renderOrder = 9;
+    grp.add(cone);
+    const lab = labelSprite(v.name, "#ff8f42");
+    lab.position.copy(d).multiplyScalar(gr + mast * 1.2);
+    grp.add(lab);
+  }
+  return grp.children.length ? grp : null;
+}
+
+/* ============ OVERLAY 4 — TREE DAMAGE VOLUMES =====================
+   VERDANT's 588 trunks/crowns as the collider sees them. Instanced, so
+   588 trees are two draw calls. Positions follow the manifest's own note:
+   position = dir(lat,lon) * (radius * ground); crown in the top ~25%.   */
+function buildTrees() {
+  if (!T.trees || !body.trees) return null;
+  const list = body.trees.trees, n = list.length;
+  const grp = new THREE.Group();
+  const trunkMat = new THREE.MeshBasicMaterial({ color: 0x8a6a3f, wireframe: true, transparent: true, opacity: 0.7 });
+  const crownMat = new THREE.MeshBasicMaterial({ color: 0x3fd66a, wireframe: true, transparent: true, opacity: 0.45 });
+  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 6), trunkMat, n);
+  const crowns = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 8, 6), crownMat, n);
+  const up = new THREE.Vector3(0, 1, 0), m = new THREE.Object3D();
+  const R = body.trees.radius || cfg.radius;
+  for (let i = 0; i < n; i++) {
+    const t = list[i];
+    const d = dirOf(t.lat * Math.PI / 180, t.lon * Math.PI / 180);
+    const foot = R * t.ground;
+    const q = new THREE.Quaternion().setFromUnitVectors(up, d);
+    m.quaternion.copy(q);
+    m.position.copy(d).multiplyScalar(foot + t.h * 0.36);
+    m.scale.set(t.trunkR, t.h * 0.72, t.trunkR);
+    m.updateMatrix(); trunks.setMatrixAt(i, m.matrix);
+    m.position.copy(d).multiplyScalar(foot + t.h * 0.86);
+    m.scale.setScalar(t.crownR);
+    m.updateMatrix(); crowns.setMatrixAt(i, m.matrix);
+  }
+  grp.add(trunks, crowns);
+  return grp;
+}
+
+/* Rebuild only what changed. These aren't cheap — a MED grid is 74k displaced
+   vertices and EARTH's hazard texture is half a million grid samples — so
+   flipping SITES has no business rebuilding the height grid. Pass nothing to
+   rebuild everything (a fresh world); pass the keys you touched otherwise. */
+const OVERLAYS = {
+  gridMesh: buildGridMesh, hazMesh: buildHazardMesh,
+  sitesGrp: buildSites,    treesGrp: buildTrees,
+};
+function rebuildOverlays(only) {
+  if (!body || !holder) return;
+  for (const k of (only || Object.keys(OVERLAYS))) {
+    if (parts[k]) { holder.remove(parts[k]); disposeAll(parts[k]); parts[k] = null; }
+    const m = OVERLAYS[k]();
+    if (m) { parts[k] = m; holder.add(m); }
+  }
+}
+function applyWire() {
+  if (!parts.model) return;
+  parts.model.traverse(o => {
+    if (!o.isMesh) return;
+    const list = Array.isArray(o.material) ? o.material : [o.material];
+    for (const mm of list) mm.wireframe = T.wire;
+  });
+}
+
+/* ============ CAMERA ============ */
+const skyTop = () => cfg.radius + (cfg.atmoAlt != null ? cfg.atmoAlt : cfg.radius * 0.4);
+function frameWorld(preset) {
+  const R = cfg.radius, sky = skyTop() - R;
+  if (preset === "orbit") dist = R + sky * 2.6;
+  else if (preset === "sky") dist = R + sky;
+  else if (preset === "low") dist = R + sky * 0.10;
+  else dist = R + Math.max(R * 0.004, sky * 0.012);
+  clampDist();
+}
+function clampDist() {
+  const R = cfg.radius;
+  const minA = Math.max(1, R * 0.0015), maxA = (skyTop() - R) * 14 + R * 2;
+  dist = Math.min(R + maxA, Math.max(R + minA, dist));
+}
+const _cn = new THREE.Vector3();
+function camDir() { return _cn.copy(camera.position).normalize(); }
+// world dir -> baked frame, exactly the game's toBakedFrame
+function toBaked(n) {
+  const yaw = holder ? holder.rotation.y : 0;
+  if (!yaw) return { x: n.x, y: n.y, z: n.z };
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  return { x: n.x * cy - n.z * sy, y: n.y, z: n.x * sy + n.z * cy };
+}
+function placeCamera() {
+  const ce = Math.cos(el), se = Math.sin(el);
+  camera.position.set(dist * ce * Math.sin(az), dist * se, dist * ce * Math.cos(az));
+  camera.lookAt(0, 0, 0);
+  // near/far track altitude so you can sit on the deck without clipping through it
+  const alt = Math.max(1, dist - cfg.radius);
+  camera.near = Math.max(0.05, alt * 0.02);
+  camera.far = dist * 3 + cfg.radius * 4 + 200000;
+  camera.updateProjectionMatrix();
+}
+function placeSun() {
+  const a = T.follow ? az + sunOff : sunOff;
+  const e = T.follow ? Math.max(-0.9, Math.min(1.1, el * 0.4 + 0.30)) : 0.30;
+  const ce = Math.cos(e);
+  sunLight.position.set(SUN_DIST * ce * Math.sin(a), SUN_DIST * Math.sin(e), SUN_DIST * ce * Math.cos(a));
+}
+
+/* ============ READOUTS ============ */
+function fmt(n, d) { return n.toLocaleString(undefined, { maximumFractionDigits: d == null ? 0 : d }); }
+function fillStats(headRes) {
+  const g = body.height;
+  const len = headRes && headRes.ok ? +headRes.headers.get("content-length") : 0;
+  $("dFile").innerHTML = cfg.file.split("/").pop() +
+    (len ? '  <span style="color:var(--dimmer)">' + (len / 1048576).toFixed(1) + " MB</span>"
+         : (parts.model ? "" : ' <span class="miss">missing</span>'));
+  $("dGrid").innerHTML = g ? g.w + "×" + g.h : '<span class="miss">none</span>';
+  if (g) {
+    const relief = (g.max - g.min) * cfg.radius;
+    $("dRelief").innerHTML = g.min.toFixed(5) + " → " + g.max.toFixed(5) +
+      '<br><span style="color:var(--dim)">' + fmt(relief, 1) + " u of relief</span>";
+    $("rampLo").textContent = fmt(g.min * cfg.radius, 0) + " u";
+    $("rampHi").textContent = fmt(g.max * cfg.radius, 0) + " u";
+  } else { $("dRelief").textContent = "—"; $("rampLo").textContent = "—"; $("rampHi").textContent = "—"; }
+  $("dSky").textContent = fmt(skyTop() - cfg.radius) + " u  (R " + fmt(cfg.radius) + ")";
+  const np = (cfg.pads || []).length, nv = (cfg.vents || []).length, nt = body.trees ? body.trees.count : 0;
+  $("dSites").textContent = np + " pad" + (np === 1 ? "" : "s") +
+    (nv ? " · " + nv + " vents" : "") + (nt ? " · " + nt + " trees" : "");
+  $("dHaz").innerHTML = cfg.hazard
+    ? '<span class="haz">' + cfg.hazard.name + "</span> " +
+      (cfg.hazard.below != null ? "&lt; " + cfg.hazard.below
+        : "mask ≥ " + (cfg.hazard.at != null ? cfg.hazard.at : 0.5)) +
+      (body.hazardGrid ? '<br><span style="color:var(--dim)">' + body.hazardGrid.w + "×" + body.hazardGrid.h + " mask</span>" : "")
+    : "none";
+}
+function updateReadouts() {
+  if (!cfg || !body) return;
+  const n = camDir(), b = toBaked(n);
+  const gr = body.height ? gridRadius(b.x, b.y, b.z) : cfg.radius;
+  $("rAlt").textContent = fmt(dist - gr, 0) + " u";
+  const lat = Math.asin(Math.max(-1, Math.min(1, b.y))) * 180 / Math.PI;
+  const lon = Math.atan2(-b.z, b.x) * 180 / Math.PI;
+  $("rLatLon").textContent = lat.toFixed(1) + "° / " + lon.toFixed(1) + "°";
+
+  // what is under the camera? same three rules the game's hazardLevel uses
+  let over = "—";
+  const hz = cfg.hazard;
+  let padName = null;
+  if (body.pads) for (const p of body.pads)
+    if (b.x * p.dx + b.y * p.dy + b.z * p.dz > p.cosAng)
+      padName = (p.raw.port && p.raw.port.name) || "PAD";
+  if (padName) over = '<span class="ok">' + padName + "</span>";
+  else if (hz && body.height) {
+    let lvl = 0;
+    if (hz.below != null) lvl = (gr / cfg.radius) < hz.below ? 1 : 0;
+    else if (body.hazardGrid) lvl = sampleGrid(body.hazardGrid, b.x, b.y, b.z) / 255;
+    const at = hz.at != null ? hz.at : 0.5;
+    over = lvl >= at
+      ? '<span class="haz">' + hz.name + (hz.lethalAt != null ? " " + (lvl * 100).toFixed(0) + "%" : "") +
+        (hz.lethalAt != null && lvl >= hz.lethalAt ? " LETHAL" : "") + "</span>"
+      : '<span class="ok">CLEAR</span>';
+  } else if (body.height) over = '<span class="ok">CLEAR</span>';
+  $("rOver").innerHTML = over;
+  $("dTris").textContent = fmt(renderer.info.render.triangles);
+}
+
+/* ============ CONTROLS ============ */
+const cvs = renderer.domElement;
+let dragging = false, px = 0, py = 0;
+cvs.addEventListener("pointerdown", e => {
+  dragging = true; px = e.clientX; py = e.clientY;
+  try { cvs.setPointerCapture(e.pointerId); } catch (_) {}
+});
+cvs.addEventListener("pointermove", e => {
+  if (!dragging || !cfg) return;
+  // sensitivity scales with altitude: close to the deck, drags get fine-grained
+  const alt = Math.max(1, dist - cfg.radius);
+  const k = Math.max(0.05, Math.min(1, alt / cfg.radius)) * 0.008;
+  az -= (e.clientX - px) * k;
+  el = Math.max(-1.5, Math.min(1.5, el + (e.clientY - py) * k));
+  px = e.clientX; py = e.clientY;
+});
+const endDrag = e => { dragging = false; try { cvs.releasePointerCapture(e.pointerId); } catch (_) {} };
+cvs.addEventListener("pointerup", endDrag);
+cvs.addEventListener("pointercancel", endDrag);
+cvs.addEventListener("wheel", e => {
+  if (!cfg) return;
+  e.preventDefault();
+  // zoom on ALTITUDE, not distance — so the last 50 units take as many
+  // clicks as the first 50,000 and you can ease onto the surface
+  const alt = dist - cfg.radius;
+  dist = cfg.radius + alt * Math.exp(e.deltaY * 0.0014);
+  clampDist();
+}, { passive: false });
+
+addEventListener("resize", () => {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+/* ---- panel wiring ---- */
+function segSet(btn) {
+  for (const s of btn.parentNode.children) s.classList.toggle("on", s === btn);
+}
+document.querySelectorAll("[data-t]").forEach(b => b.addEventListener("click", () => {
+  const key = b.dataset.t;
+  // in every 2-button group the SECOND button is the "on" state
+  T[key] = b === b.parentNode.children[1];
+  segSet(b);
+  applyToggle(key);
+}));
+function applyToggle(key) {
+  if (key === "atmo" && parts.atmo) parts.atmo.visible = T.atmo;
+  else if (key === "clouds") {
+    if (parts.cloudShell) parts.cloudShell.visible = T.clouds;
+    if (parts.glbClouds) parts.glbClouds.visible = T.clouds;
+  }
+  else if (key === "wire") applyWire();
+  else if (key === "hazard") rebuildOverlays(["hazMesh"]);
+  else if (key === "sites") rebuildOverlays(["sitesGrp"]);
+  else if (key === "trees") rebuildOverlays(["treesGrp"]);
+}
+document.querySelectorAll("[data-grid]").forEach(b => b.addEventListener("click", () => {
+  gridMode = b.dataset.grid; segSet(b); rebuildOverlays(["gridMesh"]);
+}));
+document.querySelectorAll("[data-res]").forEach(b => b.addEventListener("click", () => {
+  gridRes = +b.dataset.res; segSet(b); if (gridMode !== "off") rebuildOverlays(["gridMesh"]);
+}));
+document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("click", () => {
+  segSet(b); frameWorld(b.dataset.preset);
+}));
+document.querySelectorAll("[data-src]").forEach(b => b.addEventListener("click", () => {
+  source = b.dataset.src; segSet(b); loadPlanet(cfg.name);
+}));
+$("sun").addEventListener("input", e => { sunOff = +e.target.value * Math.PI / 180; });
+$("pick").addEventListener("change", e => loadPlanet(e.target.value));
+$("bReload").addEventListener("click", () => loadPlanet(cfg.name));
+$("bShot").addEventListener("click", shot);
+$("tab").addEventListener("click", () => $("hud").classList.remove("hide"));
+
+function shot() {
+  renderer.render(scene, camera);          // fresh frame, then grab it
+  const a = document.createElement("a");
+  a.download = "lab_" + cfg.name.toLowerCase() + "_" + Date.now() + ".png";
+  a.href = renderer.domElement.toDataURL("image/png");
+  a.click();
+}
+
+addEventListener("keydown", e => {
+  if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
+  const k = e.key.toLowerCase();
+  const gltfNames = BODIES.map(b => b.name);
+  if (k >= "1" && k <= "9" && gltfNames[+k - 1]) {
+    $("pick").value = gltfNames[+k - 1]; loadPlanet(gltfNames[+k - 1]);
+  }
+  else if (k === "r") loadPlanet(cfg.name);
+  else if (k === "w") { T.wire = !T.wire; syncTogglesUI(); applyWire(); }
+  else if (k === "h") { T.hazard = !T.hazard; syncTogglesUI(); rebuildOverlays(); }
+  else if (k === "g") {
+    gridMode = gridMode === "off" ? "wire" : gridMode === "wire" ? "solid" : "off";
+    syncGridUI();
+    rebuildOverlays(["gridMesh"]);
+  }
+  else if (k === " ") { e.preventDefault(); T.spin = !T.spin; syncTogglesUI(); }
+  else if (k === "s") shot();
+  else if (k === "tab") { e.preventDefault(); $("hud").classList.toggle("hide"); }
+});
+// keep the segmented buttons honest after a keyboard or scripted change
+function syncGridUI() {
+  document.querySelectorAll("[data-grid]").forEach(b => b.classList.toggle("on", b.dataset.grid === gridMode));
+}
+function syncTogglesUI() {
+  document.querySelectorAll("[data-t]").forEach(b => {
+    const isOnBtn = b === b.parentNode.children[1];
+    b.classList.toggle("on", T[b.dataset.t] === isOnBtn);
+  });
+}
+
+/* Debug handle. The game is one classic <script> so everything in it is a
+   global, which is exactly what makes it testable headlessly; the lab is an
+   IIFE, so it hands out the same access deliberately. The harness uses this
+   to check gridRadius() here against groundRadius() in the game — the one
+   assertion that proves this overlay isn't drawing a pretty lie. */
+window.LAB = {
+  get cfg() { return cfg; }, get body() { return body; }, get parts() { return parts; },
+  get bodies() { return BODIES; }, get view() { return { az, el, dist, gridMode, gridRes, T }; },
+  gridRadius, sampleGrid, dirOf, load: loadPlanet,
+  setSource(s) { source = s; return loadPlanet(cfg.name); },
+  setGrid(m) { gridMode = m; syncGridUI(); rebuildOverlays(["gridMesh"]); },
+  toggle(k, v) { T[k] = v; syncTogglesUI(); applyToggle(k); },
+  // "settled", not "started" — a half-loaded world would let a caller read
+  // parts.model before the .glb has landed and conclude it failed
+  ready() { return !!(cfg && body) && !loading; },
+};
+
+/* ============ LOOP ============ */
+let last = performance.now(), tick = 0;
+function loop(now) {
+  requestAnimationFrame(loop);
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (cfg) {
+    if (T.spin) {
+      // the game's own spin rate — slow. ×6 so a turntable is watchable
+      // without lying about direction.
+      spinY += (cfg.spin || 0.002) * 6 * dt;
+      cloudY += (cfg.spin || 0.005) * 6 * dt;
+    }
+    if (holder) holder.rotation.y = (cfg.yaw || 0) + spinY;
+    if (parts.cloudShell) parts.cloudShell.rotation.y = cloudY;
+    if (parts.glbClouds) parts.glbClouds.rotation.y = cloudY * 0.5;
+    placeCamera();
+    placeSun();
+    renderer.render(scene, camera);
+    if ((tick++ & 3) === 0) updateReadouts();   // DOM writes don't need 60fps
+  }
+}
+
+/* ============ BOOT ============ */
+busy("READING <b>space-flight.html</b> …");
+fetch("space-flight.html" + bust())
+  .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+  .then(src => {
+    // only the Blender-built worlds — procedural bodies have no .glb to inspect
+    BODIES = readGameConfig(src).filter(b => b.style === "gltf" && b.file);
+    if (!BODIES.length) throw new Error("no gltf worlds in BODIES");
+    $("pick").innerHTML = BODIES.map((b, i) =>
+      '<option value="' + b.name + '">' + (i + 1) + " — " + b.name + "</option>").join("");
+    const want = decodeURIComponent(location.hash.slice(1)).toUpperCase();
+    const start = BODIES.find(b => b.name === want) || BODIES.find(b => b.name === "EARTH") || BODIES[0];
+    $("pick").value = start.name;
+    requestAnimationFrame(loop);
+    return loadPlanet(start.name);
+  })
+  .catch(err => fail('<span class="err">Could not read the game config.</span><br>' +
+    "This page pulls BODIES straight out of <b>space-flight.html</b> so the two can't drift.<br>" +
+    "Serve it from the SpaceSuck folder (<b>./play.sh</b>) and reload.<br><br>" +
+    '<span style="color:var(--dim)">' + err.message + "</span>"));
+})();
+</script>
+</body>
+</html>

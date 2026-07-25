@@ -8,12 +8,25 @@
 #
 # Optional arg: a world name spawns you on its doorstep, e.g. "earth" or
 # "rubicon" (→ space-flight.html#earth / #rubicon).
+#
+# --phone  serve to the WHOLE network instead of just this machine, print the
+#          URLs to open on a phone, and don't bother opening a browser here.
+#          For testing the touch UI without a push→Pages→reload round trip.
+#          Off by default on purpose: the default bind keeps this folder off
+#          the wifi. Ctrl-C or `pkill -f "http.server 8123"` when you're done.
 
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT=8123
 LOG=/tmp/spacesuck-server.log
+
+PHONE=0
+ARGS=()
+for a in "$@"; do
+  if [[ "$a" == "--phone" ]]; then PHONE=1; else ARGS+=("$a"); fi
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
 
 # ?v=<timestamp> busts Chrome's cache — a unique URL each launch can't be
 # served stale, so you always get the latest build (the game ignores the
@@ -25,17 +38,53 @@ URL="http://localhost:${PORT}/space-flight.html?v=$(date +%s)"
 # "up" means: something is serving OUR game on that port, not just anything
 up() { curl -fs -o /dev/null --max-time 1 "http://localhost:${PORT}/space-flight.html"; }
 
+# A localhost-only server already running can't serve your phone, so --phone
+# has to take the port over rather than reuse it.
+if [[ $PHONE -eq 1 ]] && up && ! curl -fs -o /dev/null --max-time 1 \
+     "http://$(hostname -I | awk '{print $1}'):${PORT}/space-flight.html" 2>/dev/null; then
+  echo "SpaceSuck: a localhost-only server owns :$PORT — restarting it on all interfaces."
+  pkill -f "http\.server ${PORT}" || true
+  sleep 0.4
+fi
+
 if ! up; then
   cd "$DIR"
   # --bind 127.0.0.1 keeps the folder off the wifi; setsid detaches the server
   # so it outlives this script and survives the next launch
-  setsid nohup python3 -m http.server "$PORT" --bind 127.0.0.1 \
+  BIND=127.0.0.1
+  [[ $PHONE -eq 1 ]] && BIND=0.0.0.0
+  setsid nohup python3 -m http.server "$PORT" --bind "$BIND" \
     >"$LOG" 2>&1 </dev/null &
 
   for _ in $(seq 1 60); do
     up && break
     sleep 0.1
   done
+fi
+
+if [[ $PHONE -eq 1 ]]; then
+  HASH=""
+  [[ -n "${1:-}" ]] && HASH="#${1}"
+  echo
+  echo "  SpaceSuck is serving to your network. Open ONE of these on the phone:"
+  echo
+  # Tailscale first when it's up: it works off your wifi too, and it doesn't
+  # care what the router or the firewall think.
+  if command -v tailscale >/dev/null && TS=$(tailscale ip -4 2>/dev/null | head -1) && [[ -n "$TS" ]]; then
+    echo "    http://${TS}:${PORT}/space-flight.html${HASH}      <- Tailscale (works anywhere)"
+  fi
+  for ip in $(hostname -I); do
+    [[ "$ip" == *:* ]] && continue                    # IPv6 needs [brackets] in a URL; not worth it
+    [[ "$ip" == 192.168.122.* ]] && continue          # libvirt's virtual bridge, not your wifi
+    [[ "$ip" == 100.* ]] && continue                  # already printed as Tailscale
+    echo "    http://${ip}:${PORT}/space-flight.html${HASH}      <- same wifi only"
+  done
+  echo
+  echo "  Edit the file, then just PULL TO REFRESH on the phone. No commit, no push."
+  echo "  Add ?v=\$(date +%s) to the URL if Safari serves you a stale copy."
+  echo "  Stop it with:  pkill -f 'http.server ${PORT}'"
+  echo
+  exit 0
 fi
 
 if ! up; then

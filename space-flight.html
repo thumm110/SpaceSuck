@@ -6573,6 +6573,35 @@ let viewMode = VIEW_COCKPIT;                      // start in the cockpit
 const CHASE_OFFSET = new THREE.Vector3(0, 4.85, 15.5);
 const CHASE_FAR_OFFSET = new THREE.Vector3(0, 8.8, 27);  // v44: same brain, wider stage
 
+/* v79.1 — ON GLASS THE SHIP SAT ON TOP OF THE RADAR. The camera rides above
+   the ship and looks along its NOSE (not at it), so the ship rests
+   atan2(y, z) below the lens: 17.4 degrees in chase, 18.1 in chase-far. Through
+   these FOVs that is NDC -0.50, i.e. 75% of the way down the screen — which on
+   a 1080-tall desktop leaves 270px of clearance under it and on a 390-tall
+   landscape phone leaves 97px, with the bottom-centre scope drawn right through
+   the hull. (Tanner, playing on his phone: "the HUD is directly over top of the
+   ship".)
+
+   Flattening the rise is the whole fix, and it's ONE number because everything
+   downstream reads this same vector: the framing, and the frame-guarantee
+   deadzone anchor that derives from `atan2(_off.y, _off.z)`. Scale it and the
+   two cannot drift apart. z is untouched, so the ship is the same SIZE in
+   frame — only its height moves, ~75% -> ~63%.
+
+   Recomputed from PRISTINE bases rather than multiplied in place, so calling it
+   twice can't compound, and it reads `body.touch` — the same source of truth as
+   every other touch branch — rather than matchMedia. That distinction is not
+   pedantic: the headless harness forces the CLASS (it can't fake a coarse
+   pointer), so a matchMedia version silently never applies under test, which is
+   exactly how the first cut of this measured 72% instead of 63%. */
+const TOUCH_FRAME_RISE = 0.52;
+const CHASE_BASE_Y = CHASE_OFFSET.y, CHASE_FAR_BASE_Y = CHASE_FAR_OFFSET.y;
+function applyTouchFraming() {
+  const k = document.body.classList.contains("touch") ? TOUCH_FRAME_RISE : 1;
+  CHASE_OFFSET.y     = CHASE_BASE_Y     * k;
+  CHASE_FAR_OFFSET.y = CHASE_FAR_BASE_Y * k;
+}
+
 /* ---- PER-VIEW FIELD OF VIEW (v71) --------------------------------------
    The camera ran one 70-degree vertical FOV for every view. At 16:9 that is
    about 102 degrees HORIZONTAL — wide, and wide FOV is what makes mass read
@@ -7005,19 +7034,64 @@ function stickRest() {
    Measuring rather than hardcoding is what makes a CSS nudge to the cluster
    move the radar with it instead of quietly re-creating the overlap. */
 let navRadarUp = 92;
+/* The scope's RADIUS has one owner too, for the same reason its height does:
+   drawNavHud paints it, layoutNavHud dodges the buttons with it, and the tests
+   reconstruct its box from it. Three literal 52s would be three chances to
+   disagree. It shrinks on glass because a 104px scope is a quarter of a
+   390px-tall phone. */
+let navRadarR = 52;
 function layoutNavHud() {
-  navRadarUp = 92;
-  if (!document.body.classList.contains("touch")) return;
+  // this reads shipRestFrac(), which reads the chase offsets — so it must own
+  // that ordering rather than trust every caller to have done it first. It's
+  // idempotent (recomputed from pristine bases), so calling it here is free.
+  applyTouchFraming();
+  const glass = document.body.classList.contains("touch");
+  navRadarR = glass ? 42 : 52;
+  if (!glass) { navRadarUp = 92; return; }
   let top = Infinity, left = Infinity;
   for (const id of ["btnFire", "btnThrust", "btnRev", "btnBrake"]) {
     const r = document.getElementById(id).getBoundingClientRect();
     if (!r.width) continue;                       // hidden — nothing to dodge
     top = Math.min(top, r.top); left = Math.min(left, r.left);
   }
+  /* NOTHING MEASURABLE MEANS THE CLUSTER IS HIDDEN, NOT THAT THERE IS NOTHING
+     TO DODGE — and the dock sheet hides all four buttons. So this DECLINES and
+     keeps the last good answer instead of falling back to the flight default.
+
+     The first version reset navRadarUp = 92 on the way in, and that shipped a
+     live copy of the very bug this function exists to prevent: park at a port
+     on a phone, rotate (which fires resize), and the lift collapsed 282 -> 92
+     with nothing to recompute it on undock — so you launched with the radar
+     drawn back underneath REVERSE and STOP. A layout helper whose inputs have
+     vanished must decline, not answer with a default. */
   if (!isFinite(top)) return;
-  const clashes = innerWidth / 2 - 52 < innerWidth * STICK_ZONE   // into the stick's zone
-               || innerWidth / 2 + 52 > left;                     // into the cluster
-  if (clashes) navRadarUp = Math.max(92, innerHeight - (top - 78));
+  const clashes = innerWidth / 2 - navRadarR < innerWidth * STICK_ZONE   // into the stick's zone
+               || innerWidth / 2 + navRadarR > left;                     // into the cluster
+  navRadarUp = clashes ? Math.max(92, innerHeight - (top - 78)) : 92;
+
+  /* ...and it must not be drawn through the SHIP either. Dodging the buttons
+     alone lifted the scope in portrait until it sat exactly on the hull, which
+     is the thing Tanner reported. The ship's resting height is a FIXED fraction
+     of the screen (see shipRestFrac), so this is a real constraint we can solve
+     rather than a number to nudge: cap the lift so the scope's top edge clears
+     the hull. Only bites when the two constraints actually meet — portrait — and
+     floors at 92 rather than pretending there's room when there isn't. */
+  const shipLine = shipRestFrac() * innerHeight;
+  navRadarUp = Math.max(92, Math.min(navRadarUp, innerHeight - shipLine - navRadarR - 10));
+}
+
+/* Where the ship RESTS in frame as a fraction of screen height. The chase camera
+   sits above the hull and looks along its NOSE, so the ship hangs atan2(y, z)
+   below the lens axis; through the view's FOV that lands at a fixed fraction,
+   independent of how you're flying. Takes the LOWEST of the two chase views so
+   whatever dodges it clears the ship in either. */
+function shipRestFrac() {
+  let worst = 0.5;
+  for (const [off, fov] of [[CHASE_OFFSET, VIEW_FOV[1]], [CHASE_FAR_OFFSET, VIEW_FOV[2]]]) {
+    const half = Math.tan(THREE.MathUtils.degToRad(fov) / 2);
+    worst = Math.max(worst, 0.5 + 0.5 * Math.tan(Math.atan2(off.y, off.z)) / half);
+  }
+  return worst;
 }
 
 /* The landing pop-up rides directly above the scope, WHEREVER the scope ended
@@ -7029,11 +7103,12 @@ function layoutNavHud() {
 function layoutAssistPill() {
   const pill = document.getElementById("btnLand");
   pill.style.bottom = document.body.classList.contains("touch")
-    ? (navRadarUp + 52 + 14 + 18) + "px"   // scope radius + its label + a gap
+    ? (navRadarUp + navRadarR + 14 + 18) + "px"   // scope radius + its label + a gap
     : "";
 }
 
 stickRest();
+applyTouchFraming();
 layoutNavHud();
 layoutAssistPill();
 // an orientation flip moves the corner, the scope AND the pill that rides it
@@ -7631,7 +7706,7 @@ function drawNavHud(dt) {
   // --- C: proximity radar, bottom-centre. Nose = up. LOCAL contacts only. ---
   // (navRadarUp is 92 on a desktop and lifts on glass when the thumbs need
   // the bottom strip — see layoutNavHud.)
-  const r = 52, cx = W / 2, cy = H - navRadarUp;
+  const r = navRadarR, cx = W / 2, cy = H - navRadarUp;
   _nFwd.set(0, 0, -1).applyQuaternion(shipObj.quaternion);
   _nRight.set(1, 0, 0).applyQuaternion(shipObj.quaternion);
   c.save();
@@ -8790,6 +8865,10 @@ function animate() {
   if (wantDock !== docked) {
     docked = wantDock;
     document.body.classList.toggle("docked", docked);
+    // the cluster just appeared or vanished, so the scope's dodge and the pill
+    // that rides above it are both stale — re-measure NOW rather than waiting
+    // for a resize that may never come
+    layoutNavHud(); layoutAssistPill();
   }
   if (docked) {
     const pName = onPort.name || landedOn.cfg.name;
