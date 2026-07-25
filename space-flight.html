@@ -2282,8 +2282,17 @@ function loadPlayerShip(def) {
     const model = gltf.scene;
 
     // scale to the hangar row's presence (nose to tail, in units)
-    const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
-    model.scale.setScalar(def.len / size.z);
+    const bbox = new THREE.Box3().setFromObject(model);
+    const size = bbox.getSize(new THREE.Vector3());
+    const sscale = def.len / size.z;
+    model.scale.setScalar(sscale);
+    /* the flown hull's true reach, for the freight/capital ram tests (v70.1) —
+       see shipHullR. Corner distance off the ORIGIN, not half the extent, for
+       the same reason the NPC capsules use min/max: nothing re-centres a model. */
+    shipHullR = sscale * Math.hypot(
+      Math.max(Math.abs(bbox.min.x), bbox.max.x),
+      Math.max(Math.abs(bbox.min.y), bbox.max.y),
+      Math.max(Math.abs(bbox.min.z), bbox.max.z));
 
     // any "*Glow" material (thrusters, wing conduits, nav lights, canopy)
     // glows bright; the hull gets a faint self-lit floor so it still reads
@@ -2443,6 +2452,28 @@ const JUNK_NEAR = 450;      // closest a piece may spawn — no pop-in on your n
 const JUNK_FAR = 3000;      // spawn shell, still inside the ~3750u bolt range
 const JUNK_CULL = 4200;     // drifted past this? recycle it to the front
 const SHIP_HIT_R = 12;      // hull radius, for ramming
+
+/* The player's REAL hull reach — the radius of the smallest sphere that
+   actually contains the flown ship — measured off its model at load (v70.1).
+
+   SHIP_HIT_R is 12, and it is NOT that number. USS THUMM circumscribes at
+   7.46, BOO 7.43, CHAR 8.16, SAMSAM 9.16, so the constant carries up to 4.5
+   units of padding. Invisible against junk and pirates, where both sides are
+   fat and it just reads as "contact". Very visible against a truck: with the
+   v70 capsule the flank stops you at capR + SHIP_HIT_R = 19.8 from the axis
+   while the hull surface is at 7.8 — so the truck spooks and bills you while
+   there is still a ship's width of clear space in the windscreen. (Tanner,
+   playtest 2026-07-25: "it spooked and took off, damaged me before I was
+   close.")
+
+   Used ONLY by the freight and capital ram tests. SHIP_HIT_R stays exactly
+   as-is everywhere else on purpose:
+     - trees: playtest-confirmed and tuning LOCKED 2026-07-24
+     - junk:  the field's whole difficulty curve is tuned around it
+     - pirates: 12-vs-12 is deliberate fighter parity, not an accident
+   Per-ship, so the brick handles like a brick: SAMSAM gets 1.7 units less
+   closing room than THUMM, because it genuinely is that much bigger. */
+let shipHullR = SHIP_HIT_R;   // real value lands with the model
 
 /* ---- HULL CAPSULES (v70) ------------------------------------------------
    Every NPC ram test used to be ONE SPHERE of radius len/2 — half the ship's
@@ -4203,21 +4234,39 @@ function haulerTestBolt(p0, p1, boltVel) {
     haulToC.subVectors(h.group.position, p0);
     const t = segLen2 > 0 ? THREE.MathUtils.clamp(haulToC.dot(haulSeg) / segLen2, 0, 1) : 0;
     haulNearPt.copy(p0).addScaledVector(haulSeg, t);
-    /* Still a SPHERE, on purpose (v70) — bolts were never the complaint, and
-       tightening them to the hull would roughly double freight time-to-kill and
-       reprice the loot economy. Generous bolt hitboxes are already house style
-       (PIRATE_HIT_R is 12 around a 10u fighter).
+    /* Bolts test the hull's AXIS with a generous radius (v70.1), not a sphere.
 
-       But it MUST NOT out-reach the ram. The ram parks you at capR + SHIP_HIT_R
-       + 1 from the hull axis — 20.8 on a truck — while this sphere was still
-       26 wide. That gap is a position you can hold, alongside the hull, INSIDE
-       the bolt volume: every shot fired there, in any direction including
-       straight away, registered an instant hit on a target no bolt ever
-       reached. Free freight kills, and it provoked the escort too. Clamping to
-       ram reach restores containment: the ram guarantees you sit at least rr
-       from the axis, and distance-to-centre is never less than that. */
-    const bR = Math.min(h.hitR, h.capR + SHIP_HIT_R);
-    if (haulNearPt.distanceToSquared(h.group.position) <= bR * bR) {
+       A sphere had to go for two reasons. It must not OUT-reach the ram, or
+       there's a shell you can park in — alongside the hull, outside the ram
+       volume, inside the bolt volume — where every shot fired in ANY direction,
+       including straight away, scores a free hit on a target no bolt reached.
+       But clamping the sphere to ram reach then made it 15.3 wide against a
+       truck 52 long, so it only covered the middle ~59% and shots at the nose
+       or tail sailed through. Shrinking a sphere trades one failure for another
+       because a sphere is simply the wrong shape for a 3.3:1 hull.
+
+       Testing the axis fixes both at once: the whole 52-unit length is
+       targetable, and `bR` sets the radial generosity independently. bR is held
+       at ram reach, which keeps containment airtight — the ram guarantees you
+       sit at least that far from the axis, so a bolt leaving your muzzle starts
+       outside this volume by construction.
+
+       bR stays deliberately fat (15.3 against a hull half-width of 7.8):
+       forgiving bolt hitboxes are house style, and freight time-to-kill and the
+       loot economy are tuned around a target this size. Tighten it here if you
+       want honest hits, and re-tune payouts on purpose when you do. */
+    const bR = Math.min(h.hitR, h.capR + shipHullR);
+    // two passes of closest-point ping-pong between the bolt segment and the
+    // hull axis — converges hard for the near-perpendicular crossings that
+    // bolts actually make, and costs two dot products more than the sphere
+    for (let it = 0; it < 2; it++) {
+      capsuleNear(haulCap, h.group, h.capHalf, haulNearPt);
+      haulToC.subVectors(haulCap, p0);
+      const tt = segLen2 > 0 ? THREE.MathUtils.clamp(haulToC.dot(haulSeg) / segLen2, 0, 1) : 0;
+      haulNearPt.copy(p0).addScaledVector(haulSeg, tt);
+    }
+    capsuleNear(haulCap, h.group, h.capHalf, haulNearPt);
+    if (haulNearPt.distanceToSquared(haulCap) <= bR * bR) {
       haulerDamage(h, haulNearPt, boltVel);
       return true;
     }
@@ -4299,7 +4348,7 @@ function updateHaulers(dt) {
        downstream — normal, bounce, shove — now hangs off the closest point on
        the hull axis instead of the truck's centre, so clipping CANARY's nose
        pushes you out of the NOSE rather than sideways off a point 34u away. */
-    const rr = h.capR + SHIP_HIT_R;
+    const rr = h.capR + shipHullR;   // v70.1: the ship's REAL reach, not the padded 12
     let ramHit = false;
     if (!landedOn) {
       const nSteps = ramSweepSteps(rr);
@@ -4706,11 +4755,18 @@ function gunshipTestBolt(p0, p1, boltVel) {
     gunToC.subVectors(g.group.position, p0);
     const t = segLen2 > 0 ? THREE.MathUtils.clamp(gunToC.dot(gunSeg) / segLen2, 0, 1) : 0;
     gunNearPt.copy(p0).addScaledVector(gunSeg, t);
-    // clamped to ram reach for the same containment reason as freight (see
-    // haulerTestBolt): a bolt volume wider than the ram volume is a position
-    // you can park in and fire from for free hits
-    const bR = Math.min(g.hitR, g.capR + SHIP_HIT_R);
-    if (gunNearPt.distanceToSquared(g.group.position) <= bR * bR) {
+    // axis-tested with a generous radius, exactly as freight — see the long
+    // note in haulerTestBolt for why a sphere could not be made to work here.
+    // For TIMECLOCK (capHalf 0) this reduces to the old sphere automatically.
+    const bR = Math.min(g.hitR, g.capR + shipHullR);
+    for (let it = 0; it < 2; it++) {
+      capsuleNear(gunCap, g.group, g.capHalf, gunNearPt);
+      gunToC.subVectors(gunCap, p0);
+      const tt = segLen2 > 0 ? THREE.MathUtils.clamp(gunToC.dot(gunSeg) / segLen2, 0, 1) : 0;
+      gunNearPt.copy(p0).addScaledVector(gunSeg, tt);
+    }
+    capsuleNear(gunCap, g.group, g.capHalf, gunNearPt);
+    if (gunNearPt.distanceToSquared(gunCap) <= bR * bR) {
       gunshipDamage(g, gunNearPt, boltVel);
       return true;
     }
@@ -4904,7 +4960,7 @@ function updateGunships(dt) {
     /* ---- ram: freight's wall, not the fighter's shatter — a mini-boss is
        never rammed to death. You bounce, you bleed, it rolls on. A ram on a
        sleeping escort is a provocation. Damage LAST (breach re-entrancy). ---- */
-    const rr = g.capR + SHIP_HIT_R;                              // v70: hull capsule
+    const rr = g.capR + shipHullR;   // v70: hull capsule; v70.1: real player reach
     let ramHit = false;
     if (!landedOn) {
       const nSteps = ramSweepSteps(rr);
