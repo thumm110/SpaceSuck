@@ -84,7 +84,7 @@ SpaceSuck/
 ├── lib/                   ← three.min.js · GLTFLoader.js · hull-plating.js
 │
 ├── ship/                  ← the four PLAYABLE hulls
-│   uss-thumm.glb · uss-boo.glb · uss-char.glb · uss-samsam.glb   (+ previews/)
+│   uss-thumm.glb · uss-boo.glb · uss-char.glb · uss-samsam.glb
 │
 ├── enemies/               ← raider.glb · ss-timeclock.glb · ss-shrinkage.glb
 │
@@ -104,7 +104,8 @@ SpaceSuck/
 │   build_rubicon.py · build_cinder.py · build_azure.py · build_verdant.py
 │   build_icon.py
 │
-└── sounds/                ← SpaceMusic.js (the live score) + offline experiments
+└── sounds/                ← SpaceMusic.js (the live score) + space-music-demo.html
+                             (a console to audition it) + space_music.py
 ```
 
 **Ship and planet *masters* live outside this repo** at
