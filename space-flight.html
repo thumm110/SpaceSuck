@@ -6200,7 +6200,11 @@ const spinRideQ = new THREE.Quaternion();      // parked ship rides the spin
    at the deck — drives the air DRAG, so thick air still slows you all the way
    down. hazeDepth: a mid-atmosphere cloud-deck BAND — faint up top, thick
    through the middle, then CLEARS toward the ground — drives the visible
-   tint/wisps/shake, so you break through into clear air on final approach. */
+   tint/wisps/shake, so you break through into clear air on final approach.
+   v73: they no longer share a band. Drag keeps the tall one (radius × 1.2,
+   floored at the sky); haze rides the sky you can SEE (atmoAlt), because it
+   used to peak ABOVE the drawn shell and fade out inside it. See the entry
+   block for the numbers. */
 let entryDepth = 0;
 let hazeDepth = 0;
 const atmoEl = document.getElementById("atmo");
@@ -7887,22 +7891,56 @@ function animate() {
   entryDepth = 0;
   hazeDepth = 0;
   if (nearest && nearest.cfg.atmosphere) {
-    // ~1.2 radii of atmosphere (v37 gives it a bit more flying room). alt is
-    // altitude above the surface; a is that as a fraction of the shell —
-    // a = 1 at the top of the atmosphere, a = 0 at the deck.
-    const shell = nearest.cfg.radius * 1.2;
+    /* v73: the two bands finally agree about where the WEATHER is.
+       There have always been two atmospheres here and they measured from
+       different places: the glow shell you SEE is the surface + this world's
+       own atmoAlt, while the effect band was a flat radius × 1.2. Once v65/v71
+       raised every atmoAlt, that left two real problems:
+
+         - the haze was INSIDE-OUT. It peaked at 50–75% of the DRAG band, and
+           on EARTH that's 1500–2250u — entirely ABOVE the 1400u sky. So the
+           tint, wisps, shake, rumble and the ENTRY banner ran at full blast in
+           what looked like empty space, then FADED as the drawn sky came up
+           around you. Backwards on 4 of the 6 worlds.
+         - VERDANT was INVERTED. r×1.2 = 810 against a 900u sky, so the top
+           90u of visible atmosphere had no air in it at all — no drag, no
+           haze, no rumble, nothing.
+
+       Fix is a split, not a merge, because the two bands answer to different
+       masters. Everything SENSORY now rides skyAlt, so what you feel matches
+       what's drawn. DRAG keeps its taller band on purpose: pulling it down to
+       the sky would leave 42–50% of today's entry braking on the big worlds
+       and drop you on the deck a lot hotter, and water is lethal at ≥70 u/s
+       closing. Thin air above the visible sky is a real thing and it's tuned.
+       The max() is the floor that keeps VERDANT's case from ever coming back. */
     const strength = nearest.cfg.atmoStrength ?? 0.8;
-    const alt = Math.max(0, Math.min(shell, nearestDist));
-    const a = alt / shell;
+    const skyAlt = nearest.cfg.atmoAlt ?? nearest.cfg.radius * 0.4;  // matches makeAtmosphere
+    const shell = Math.max(nearest.cfg.radius * 1.2, skyAlt);
+    // alt is altitude above the datum; a is that as a fraction of the drag
+    // shell — a = 1 at the top of the air, a = 0 at the deck.
+    const a = Math.max(0, Math.min(shell, nearestDist)) / shell;
     // DRAG builds all the way to the deck — thick air still brakes you on the
     // way in and holds you on the ground.
     entryDepth = (1 - a) * strength;
-    // the VISIBLE haze is a cloud deck: it fades in from the top of the
-    // atmosphere, thickens through a mid band, then CLEARS as you drop below
-    // ~half altitude into clear air near the ground — so the red/blue hue
-    // stops blinding you on final approach (and while parked on the surface).
-    const fadeIn  = Math.min(1, (1 - a) / 0.25);   // faint above ~75% altitude
-    const fadeOut = Math.min(1, a / 0.50);         // clears below ~50% altitude
+    /* the VISIBLE haze is a cloud deck hung inside the sky you can actually
+       see: fades in below the shell, thickens through a mid band, then CLEARS
+       as you drop into clear air near the ground — so the tint stops blinding
+       you on final approach (and while parked on the surface).
+
+       The two ends measure from DIFFERENT places on purpose. The shell is
+       drawn at a fixed radius, so fading IN keys off altitude over the datum.
+       Clear air is about seeing the thing you're landing on, so fading OUT
+       keys off true altitude over the TERRAIN — the same number the ALT
+       instrument shows. Without that split, a pad that sits high on its own
+       world parks you inside the weather: AZURE's islands stand 35-50u up
+       under a shallow 850u sky, which is enough to keep the ENTRY banner lit
+       while you're sitting still on the deck. Over the datum they're high;
+       over the ground they're zero, and zero is the honest answer. */
+    const gndAlt = surf ? Math.max(0, surf.alt) : nearestDist;
+    const sTop = Math.max(0, Math.min(skyAlt, nearestDist)) / skyAlt;
+    const sGnd = Math.max(0, Math.min(skyAlt, gndAlt)) / skyAlt;
+    const fadeIn  = Math.min(1, (1 - sTop) / 0.25);  // faint just under the shell
+    const fadeOut = Math.min(1, sGnd / 0.50);        // clears below half the sky
     hazeDepth = fadeIn * fadeOut * strength;
   }
   if (entryDepth > 0.01) {
