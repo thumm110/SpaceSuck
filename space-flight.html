@@ -2495,6 +2495,54 @@ function modelGlowHex(root, fallback) {
   return hex ?? fallback;
 }
 
+/* ---- per-burner bloom on NPCs (v74) ------------------------------------
+   v72 gave PLAYER ships one sprite per burner. Every NPC was left sharing a
+   single blob parked at the average of its engine seats — so from directly
+   astern, which is the angle you see traffic from most, CANARY's three-burner
+   delta and a one-engine raider both read as the same dot. Engine count and
+   spread are the cheapest size cue the game has and it was being thrown away
+   on exactly the ships ("the hauler looks small") that needed it.
+
+   Same discovery as the player: seats by node name, colour off the EngineGlow
+   material. Adding a burner stays a Blender-side act. `names` is a fallback
+   for the capitals, whose seats predate the convention.
+
+   The sprites SHARE one material — one colour for the ship, N lights — and
+   each is scaled 1/sqrt(N) via `glowK`, so N burners emit the same total light
+   as the single blob they replace. The ship reads WIDER, not brighter; a
+   freighter that lit three times as hot as a fighter would just bloom out. */
+const npcGlowV = new THREE.Vector3();
+function npcBurners(host, model, fallbackHex, back, names) {
+  const proto = host.engineGlow;
+  proto.material.color.setHex(modelGlowHex(model, fallbackHex));
+  let seats = findEmitters(model);
+  if (!seats.length && names)
+    seats = names.map(n => model.getObjectByName(n)).filter(Boolean);
+  host.engineGlows = [proto];
+  host.glowK = 1;
+  if (!seats.length) return 0;     // caller keeps whatever anchoring it had
+  host.group.updateMatrixWorld(true);
+  for (let i = 1; i < seats.length; i++) {
+    const s = new THREE.Sprite(proto.material);
+    host.group.add(s);
+    host.engineGlows.push(s);
+  }
+  seats.forEach((n, i) => {
+    const g = host.engineGlows[i];
+    g.position.copy(host.group.worldToLocal(n.getWorldPosition(npcGlowV)));
+    g.position.z += back;          // nudge clear of the nozzle it sits in
+  });
+  host.glowK = 1 / Math.sqrt(seats.length);
+  return seats.length;
+}
+
+/* one throttle-driven size for every burner on an NPC */
+function npcGlowScale(host, size) {
+  const s = size * (host.glowK ?? 1);
+  const gs = host.engineGlows || [host.engineGlow];
+  for (const g of gs) g.scale.setScalar(s);
+}
+
 let fireCooldown = 0;
 const muzzleL = new THREE.Vector3(), muzzleR = new THREE.Vector3(),
       boltDir = new THREE.Vector3(), flashLocal = new THREE.Vector3();
@@ -3763,7 +3811,7 @@ for (let i = 0; i < PIRATE_COUNT; i++) {
     baseName: PIRATE_NAMES[i % PIRATE_NAMES.length], // stable slot name; a bounty temporarily overrides .name
     bounty: false,                                 // (10h) true = this raider is the dispatch mark
     group: built.group,
-    engineGlow: built.engineGlow,
+    engineGlow: built.engineGlow, engineGlows: [built.engineGlow], glowK: 1,
     beacon: built.beacon,
     phase: Math.random() * 6.28,                   // de-syncs the two strobes
     mats: junkCollectMats(built.group),            // per-slot emissives for the white hit-flash
@@ -3819,18 +3867,15 @@ if (THREE.GLTFLoader) {
         if (child !== p.engineGlow && child !== p.beacon) p.group.remove(child);
       }
       p.group.add(model);
+      p.model = model;   // v74: haulers and gunships already kept theirs
 
       // re-anchor the engine glow between the twin thrusters, and hand the
       // fire block the wingtip gun tips as muzzles
       p.group.updateMatrixWorld(true);
-      // v72: bloom takes the hull's own EngineGlow colour, like every ship
-      p.engineGlow.material.color.setHex(modelGlowHex(model, 0xff6a4d));
-      const tL = model.getObjectByName("ThrusterL"), tR = model.getObjectByName("ThrusterR");
-      if (tL && tR) {
-        const a = tL.getWorldPosition(new THREE.Vector3()), b = tR.getWorldPosition(new THREE.Vector3());
-        p.engineGlow.position.copy(p.group.worldToLocal(a.add(b).multiplyScalar(0.5)));
-        p.engineGlow.position.z += 0.8;   // nudge clear of the nozzles
-      }
+      // v72: bloom takes the hull's own EngineGlow colour, like every ship.
+      // v74: and one sprite PER burner — the raider's twin exhausts used to
+      // average into a single dot floating between them.
+      npcBurners(p, model, 0xff6a4d, 0.8);
       p.muzzles = [model.getObjectByName("GunTipL"), model.getObjectByName("GunTipR")].filter(Boolean);
       if (!p.muzzles.length) p.muzzles = null;
 
@@ -3973,7 +4018,7 @@ for (let si = 0; si < haulerSlotDefs.length; si++) {
   beacon.scale.setScalar(14 * hlF);
   g.add(beacon);
   haulers.push({
-    def, group: g, engineGlow, beacon,
+    def, group: g, engineGlow, engineGlows: [engineGlow], glowK: 1, beacon,
     hitR: (def.len || HAULER_LEN) / 2,   // collision sphere scales with the ship (PACKRAT ~11, trucks 26)
                                          // NOT the hull radius — the salvage "throat" gap below reads
                                          // this as a half-LENGTH. The ram capsule uses capR/capHalf.
@@ -4038,9 +4083,6 @@ if (THREE.GLTFLoader) for (const h of haulers) {
          whole design rests on quietly stops being true. With the clamp a chunky
          hull degenerates to exactly today's sphere (capHalf 0) — correct, since
          a capsule buys nothing on a ship that isn't long. */
-    // v72: the bloom matches the burners the model actually draws. This is
-    // where SS PACKRAT stopped glowing hauler-blue over amber nozzles.
-    h.engineGlow.material.color.setHex(modelGlowHex(model, 0x55aaff));
     h.capR = Math.min(hlen / 2, hscale * Math.max(
       Math.abs(bbox.min.x), bbox.max.x, Math.abs(bbox.min.y), bbox.max.y));
     h.capHalf = hlen / 2 - h.capR;
@@ -4053,13 +4095,14 @@ if (THREE.GLTFLoader) for (const h of haulers) {
     dressHullMats(model, { floor: 0.5, weather: true, shipLen: hlen });
     h.group.add(model);
     h.model = model;
-    // exhaust bloom sits behind the engine bell (PACKRAT has no ThrusterC — use its def's node)
-    h.group.updateMatrixWorld(true);
-    const tC = model.getObjectByName(h.def.thruster || "ThrusterC");
-    if (tC) {
-      h.engineGlow.position.copy(h.group.worldToLocal(tC.getWorldPosition(new THREE.Vector3())));
-      h.engineGlow.position.z += 2.3 * (hlen / HAULER_LEN);
-    }
+    /* v72: the bloom matches the burners the model actually draws — this is
+       where SS PACKRAT stopped glowing hauler-blue over amber nozzles.
+       v74: and there's one per burner now. It matters most here: CANARY flies
+       a three-burner delta and the OVERTIMEs a bank, and a single averaged
+       blob hid all of it behind the widest sterns in the game. `def.thruster`
+       stays as the fallback for a hull whose seats miss the convention. */
+    npcBurners(h, model, 0x55aaff, 2.3 * (hlen / HAULER_LEN),
+               [h.def.thruster || "ThrusterC"]);
     // the authored idle float — a loaded truck riding its suspension
     if (gltf.animations && gltf.animations.length) {
       h.mixer = new THREE.AnimationMixer(model);
@@ -4483,7 +4526,7 @@ function updateHaulers(dt) {
 
     // exhaust bloom rides the throttle; the running light tells the mood:
     // slow amber blink = a shift being worked, fast strobe = a truck in trouble
-    h.engineGlow.scale.setScalar(6 + 6 * h.vel.length() / HAULER_FLEE_SPD);
+    npcGlowScale(h, 6 + 6 * h.vel.length() / HAULER_FLEE_SPD);
     h.beacon.material.opacity = h.state === "FLEE"
       ? (Math.sin(clock.elapsedTime * 8 + h.phase) > 0 ? 0.9 : 0.1)
       : (Math.sin(clock.elapsedTime * 1.6 + h.phase) > 0 ? 0.6 : 0.2);
@@ -4584,7 +4627,7 @@ for (let i = 0; i < 4; i++) {
   g.add(beacon);
   gunships.push({
     role, name: GUNSHIP_NAMES[i], slotOff: ESCORT_SLOT_OFFSETS[Math.max(0, i - 1)],
-    group: g, engineGlow, beacon, phase: Math.random() * 6.28,
+    group: g, engineGlow, engineGlows: [engineGlow], glowK: 1, beacon, phase: Math.random() * 6.28,
     model: null, mixer: null, mats: [], tellMats: [],   // no model → no spawns (hauler rule)
     muzzles: null,
     // per-ship spec — data-driven so a second capital rides the same brain (v58)
@@ -4635,7 +4678,7 @@ for (let i = 0; i < 4; i++) {
   g.add(beacon);
   gunships.push({
     role: "foe", name: "SS SHRINKAGE", slotOff: ESCORT_SLOT_OFFSETS[0],  // slotOff unused by a foe
-    group: g, engineGlow, beacon, phase: Math.random() * 6.28,
+    group: g, engineGlow, engineGlows: [engineGlow], glowK: 1, beacon, phase: Math.random() * 6.28,
     model: null, mixer: null, mats: [], tellMats: [],
     muzzles: null,
     glb: "enemies/ss-shrinkage.glb", len: SHRINK_LEN, hitR: SHRINK_HIT_R,
@@ -4685,7 +4728,6 @@ if (THREE.GLTFLoader) for (const g of gunships) {
     // Min/max off the origin (TIMECLOCK's hull is 6.4u off-centre in Y) and
     // clamped to len/2. TIMECLOCK's true reach is 19.1 against a len/2 of 15,
     // so it clamps to a plain sphere: correct, it's tall, not long.
-    g.engineGlow.material.color.setHex(modelGlowHex(model, 0xff6a4d));   // v72
     g.capR = Math.min(g.len / 2, gscale * Math.max(
       Math.abs(bbox.min.x), bbox.max.x, Math.abs(bbox.min.y), bbox.max.y));
     g.capHalf = g.len / 2 - g.capR;
@@ -4699,17 +4741,13 @@ if (THREE.GLTFLoader) for (const g of gunships) {
     g.model = model;
     g.muzzles = g.muzzleNames.map(nm => model.getObjectByName(nm)).filter(Boolean);
     if (!g.muzzles.length) g.muzzles = null;
-    // exhaust bloom at the center of the engine cores (coreNames per ship —
-    // these capitals have no ThrusterL/R): average their seats, nudge aft
-    g.group.updateMatrixWorld(true);
-    const cores = g.coreNames
-      .map(nm => model.getObjectByName(nm)).filter(Boolean);
-    if (cores.length) {
-      gunTmpA.set(0, 0, 0);
-      for (const c of cores) gunTmpA.add(c.getWorldPosition(new THREE.Vector3()));
-      g.engineGlow.position.copy(g.group.worldToLocal(gunTmpA.divideScalar(cores.length)));
-      g.engineGlow.position.z += 1.5;
-    }
+    /* v72 colour + v74 one bloom per core. These capitals have no
+       ThrusterL/R — TIMECLOCK runs a 4-core bank and SHRINKAGE a 6 — and
+       averaging them into one sprite was the single worst case in the game:
+       the biggest hulls flying with the smallest apparent engine. `coreNames`
+       is kept as the fallback list, but E0-E9 are valid seats so discovery
+       finds them on its own. */
+    npcBurners(g, model, 0xff6a4d, 1.5, g.coreNames);
     // the authored 5s heavy bob — runs EVERY frame (a capital ship rides its
     // own mass even mid-fight; only fighters fly too hard to float)
     if (gltf.animations && gltf.animations.length) {
@@ -4765,6 +4803,7 @@ function gunshipSpawnEscort(h) {
     m.userData.baseEmissive.setHex(ESCORT_GLOW);
     m.emissive.copy(m.userData.baseEmissive);
   }
+  if (g.tellMats.length) g.engineGlow.material.color.setHex(ESCORT_GLOW);   // v74: bloom rides the bells back
   for (const m of g.mats) m.emissive.copy(m.userData.baseEmissive);
   g.beacon.material.color.setHex(BEACON_NEUTRAL);
   gunTmpA.copy(g.slotOff).applyQuaternion(h.group.quaternion);
@@ -4814,6 +4853,11 @@ function gunshipProvoke(g) {
     m.userData.baseEmissive.setHex(GUNSHIP_RED);
     m.emissive.setHex(GUNSHIP_RED);
   }
+  // v74: EngineGlow is the FIRST tell mat, so provoking an escort turned its
+  // bells red while the exhaust bloom stayed ion blue — the same bloom-vs-bells
+  // drift v72 killed on player ships, still live here. The burner sprites share
+  // one material per ship, so this is one call for all of them.
+  if (g.tellMats.length) g.engineGlow.material.color.setHex(GUNSHIP_RED);
   g.beacon.material.color.setHex(BEACON_HOSTILE);
   pirateWarnSound();
   gunshipFlash = 3; gunshipFlashMsg = g.banner;
@@ -5085,7 +5129,7 @@ function updateGunships(dt) {
 
     if (g.mixer) g.mixer.update(dt);   // the heavy bob — mass never stops moving
 
-    g.engineGlow.scale.setScalar(5 + 6 * g.vel.length() / GUNSHIP_MAX_SPD);
+    npcGlowScale(g, 5 + 6 * g.vel.length() / GUNSHIP_MAX_SPD);
     g.beacon.material.opacity = g.hostile
       ? (Math.sin(clock.elapsedTime * 7 + g.phase) > 0 ? 0.9 : 0.15)    // fast and angry
       : (Math.sin(clock.elapsedTime * 1.6 + g.phase) > 0 ? 0.6 : 0.2);  // the working blink
@@ -5615,7 +5659,7 @@ function updateEnemies(dt) {
     // the tail light rides how hard it's flying. Running lights by faction:
     // hostile strobes fast and angry, neutral blinks slow amber, a wingman's
     // is a steady teal breath — the color plus the RHYTHM is the tell.
-    p.engineGlow.scale.setScalar(1.5 + 2.5 * p.vel.length() / PIRATE_MAX_SPD);
+    npcGlowScale(p, 1.5 + 2.5 * p.vel.length() / PIRATE_MAX_SPD);
     p.beacon.material.opacity =
         p.faction === "hostile" ? (Math.sin(clock.elapsedTime * 7 + p.phase) > 0 ? 0.9 : 0.15)
       : p.faction === "neutral" ? (Math.sin(clock.elapsedTime * 2.2 + p.phase) > 0 ? 0.7 : 0.25)
