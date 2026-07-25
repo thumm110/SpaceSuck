@@ -1,284 +1,103 @@
 """
 build_earth.py — SpaceSuck planet factory, planet #1: EARTH
 ============================================================
-Blender is the art department. This script is the master (same pattern as
-build_ship.py): edit the numbers, re-run headless, get fresh files. The
-.blend is never saved — everything is regenerated from code.
+Blender is the art department. This script is the master: edit the numbers,
+re-run headless, get fresh files. The .blend is never saved.
 
     blender -b -P build_earth.py
 
 Outputs (written next to this script):
-    earth.glb           — the planet mesh: flat-shaded low-poly terrain with
-                          per-face colors, polar ice, cloud blobs, and a
-                          landing pad + beacon at Charleston, SC
-    earth_height.json   — 512x256 lat/lon height grid (base64 uint8). The
+    earth.glb           — terrain + the hi-res Charleston patch + the city,
+                          the Ravenel Bridge, the steeples, and the spaceport
+                          (deck, markings, lights, terminal, tanks, beacon)
+    earth_height.json   — 2048x1024 lat/lon height grid (base64 uint8). The
                           game samples this to know the EXACT ground height
                           under the ship — that's what makes landing work
-                          without raycasting 80k triangles every frame.
-    earth_preview_*.png — Cycles renders so you can eyeball the planet
-                          without opening Blender
+                          without raycasting 300k triangles every frame.
+    earth_preview_*.png — Cycles renders
 
 The planet is built at radius 100 Blender units; the game scales it up to
 whatever radius the BODIES config says (2500 → scale factor 25).
 
-How the terrain works, in one breath: every vertex direction on the sphere
-gets a "continent mask" (a sum of soft blobs placed at real Earth lat/lons,
-with noise-wiggled coastlines), and the mask + fractal noise decide the
-elevation; the ocean stays at exactly radius 100 (flat water), land rises
-above it. The same function paints the colors and fills the height grid, so
-what you see, what you collide with, and what the game samples all agree.
+===========================================================================
+THINGS THAT ARE DIFFERENT FROM THE OTHER PLANETS — read before editing
+===========================================================================
+1. THE TERRAIN MATH LIVES IN `earthlib.py`, not here. This file is the
+   Blender half: meshes, structures, export, renders. `earthlib` is pure
+   numpy, so `preview_charleston.py` can render the exact same height field
+   as an ASCII map in about a second. Iterating a coastline through 15-minute
+   Cycles builds is how you lose a day. If you are changing terrain, change
+   it there and look at the ASCII first.
+
+2. THE HOME PAD IS FROZEN AT lat 32.9 / lon -80.0. The game hardcodes it in
+   BODIES and it is the only pad in the game with `home: true`. Charleston's
+   geography was laid out AROUND that fixed point (it lands on the neck, in
+   North Charleston) — not the other way round. Moving it here without the
+   matching game-side edit puts the home port in the Cooper River.
+
+3. THE RIVERS ARE LETHAL. The game's EARTH hazard is `below: 1.0015` and the
+   Ashley, the Cooper and the harbor all carve to exactly 1.0 — the same
+   number as the open ocean, so they are water in every sense the game has.
+   Every building, street segment and steeple is water-rejected at placement
+   with a 0.9 BU margin, and the build asserts the pad apron is dry.
+
+4. CHARLESTON IS CARICATURED, DELIBERATELY. The metro is 0.18 rad (~900 game
+   units across) and the Ravenel's pylons are roughly 2x their true
+   proportion. A true-scale bridge here is 4 game units tall and reads as
+   nothing from a cockpit. Landmarks are sized to be LEGIBLE, not accurate.
+
+5. THE PENINSULA NEEDS THE HI-RES PATCH. At SUBDIV 7 the base facets are
+   ~0.94 BU; the peninsula is 8.4 BU wide, so it would render as a 9-facet
+   blocky worm (gotchas.md #2). The patch drops that to 0.22 BU. Its border
+   sits in the flat metro plateau and in flat sea level — the two places two
+   sampling densities are guaranteed to agree — so there is no seam.
+
+6. THE HISTORIC PENINSULA IS CAPPED LOW ON PURPOSE. Real Charleston has no
+   skyline; the steeples are the tallest things downtown, which is the whole
+   "Holy City" read. The towers were pushed ACROSS the rivers into Mount
+   Pleasant / West Ashley / North Charleston, which is both how the real city
+   zones itself and how you keep something visible from orbit.
 """
 
 import bpy
+import bmesh
 import json
 import base64
 import math
 import os
 import random
+import sys
 import numpy as np
 from mathutils import Vector, Matrix
 
-# ---------------------------------------------------------------- CONFIG --
-R          = 100.0      # base (sea-level) radius in Blender units
-SUBDIV     = 7          # icosphere subdivisions: 7 → 327,680 triangles.
-                        #   At Earth's 2500u game radius that's ~24u facets —
-                        #   chunky-stylized up close; flattened zones (city,
-                        #   pad) stay smooth. Local hi-res patches are the
-                        #   upgrade path, NOT subdiv 8 (4× the 12MB GLB).
-SEED       = 71
-
-# landing pad — Charleston, SC. lat north+, lon east+ (west is negative)
-PAD_LAT, PAD_LON = 32.9, -80.0
-PAD_H      = 1.012      # pad plateau height (surface multiplier)
-PAD_ANG    = 0.035      # pad flatten radius, radians of arc (downsized: smaller apron)
-
-# cities — each entry flattens its footprint into the terrain and grows a
-# cluster of low-poly towers on it. Planets can have zero, one, or many:
-# THIS is the list to edit when settling (or abandoning) a world.
-#   ang: city radius in radians of arc (0.10 ≈ 10u here ≈ 250u in-game,
-#        a ~500u-wide metro at Earth's 2500u game radius)
-#   h:   ground plateau height; towers: rough building count
-CITIES = [
-    # center sits ~0.08 rad from the pad: downtown gets to be TALL and the
-    # spaceport lives at the city's edge instead of eating its heart
-    { "name": "Charleston", "lat": 36.8, "lon": -76.8,
-      "ang": 0.10, "h": 1.010, "towers": 130 },
-]
-
-# continents: (lat, lon, width_radians, strength) — soft blobs that sum
-# into a landmass mask. Widths/strengths are ART, tuned via the previews.
-CONTINENTS = [
-    # Africa
-    (5, 20, 0.40, 1.00), (24, 13, 0.26, 0.80), (-20, 25, 0.26, 0.85),
-    # Eurasia
-    (52, 20, 0.28, 0.85), (58, 62, 0.32, 0.95), (64, 105, 0.36, 1.00),
-    (35, 108, 0.28, 0.90), (21, 78, 0.19, 0.85), (24, 45, 0.22, 0.80),
-    (13, 103, 0.16, 0.70),
-    # North America
-    (57, -102, 0.34, 1.00), (41, -100, 0.28, 0.90), (65, -152, 0.20, 0.80),
-    (23, -102, 0.17, 0.75), (34, -81, 0.17, 0.85),   # ← east coast: the pad
-    # Greenland
-    (73, -41, 0.15, 0.80),
-    # South America
-    (-8, -60, 0.28, 0.95), (-25, -63, 0.22, 0.85), (-42, -70, 0.14, 0.70),
-    # Australia + islands
-    (-25, 134, 0.23, 0.90), (37, 138, 0.09, 0.60), (-42, 172, 0.08, 0.55),
-    (54, -3, 0.08, 0.60),
-    # Antarctica
-    (-90, 0, 0.40, 1.10),
-]
-
-# palette — authored as web-style sRGB hex, exported raw so the in-game
-# colors land close to these values (the game renders linear passthrough)
-PAL = {
-    "deep":    0x0b2e55, "shallow": 0x2e83a0, "sand": 0xc9b77e,
-    "grass":   0x4d8f3a, "forest":  0x2f6b2f, "rock": 0x7a6a52,
-    "dry":     0xb0a05c, "boreal":  0x2f5136,   # subtropical steppe + boreal forest
-    "snow":    0xf2f7fa, "ice":     0xe8f2f7,
-    "pad":     0x3a4148, "beacon":  0xffb066, "cloud": 0xffffff,
-    "asphalt": 0x24282e,
-    "towerA":  0x6b7280, "towerB": 0x4b5563, "towerC": 0x94a3b8,
-    "towerLit": 0x3a3f4a, "window": 0xffcf8a,
-    "unit":    0x9aa0a8, "beaconRed": 0xff3b30,   # rooftop mech units + warning lights
-    "street":  0x5a6270, "streetGlow": 0xffc27a,  # concrete road grid + warm streetlight glow
-}
-
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)   # repo root — this builder lives in build/; assets live one level up
+sys.path.insert(0, HERE)          # blender -b -P does NOT add the script's dir
+import earthlib as E              # noqa: E402  — the terrain half
 
-# ---------------------------------------------------- NOISE (numpy, fast) --
-# Value noise: hash the 8 corners of the grid cell each point sits in, then
-# blend. Same idea as the JS noise in space-flight.html, just vectorized.
+ROOT = os.path.dirname(HERE)
+OUT  = os.path.join(ROOT, "planets")
+os.makedirs(os.path.join(OUT, "previews"), exist_ok=True)
 
-def _hash3(ix, iy, iz, seed):
-    x = ix.astype(np.uint32) * np.uint32(374761393)
-    x += iy.astype(np.uint32) * np.uint32(668265263)
-    x += iz.astype(np.uint32) * np.uint32(3266489917)
-    x += np.uint32(seed) * np.uint32(2654435761)
-    x ^= x >> np.uint32(13)
-    x *= np.uint32(1274126177)
-    x ^= x >> np.uint32(16)
-    return (x & np.uint32(0xFFFF)).astype(np.float64) / 65535.0
+R, SEED, PAL = E.R, E.SEED, E.PAL
+hex_rgb = E.hex_rgb
 
-def vnoise(p, seed):
-    """p: (N,3) points → (N,) noise in [0,1]"""
-    i = np.floor(p).astype(np.int64)
-    f = p - i
-    u = f * f * (3.0 - 2.0 * f)          # smoothstep fade
-    ix, iy, iz = i[:, 0], i[:, 1], i[:, 2]
-    ux, uy, uz = u[:, 0], u[:, 1], u[:, 2]
-    c = lambda dx, dy, dz: _hash3(ix + dx, iy + dy, iz + dz, seed)
-    x00 = c(0,0,0) + (c(1,0,0) - c(0,0,0)) * ux
-    x10 = c(0,1,0) + (c(1,1,0) - c(0,1,0)) * ux
-    x01 = c(0,0,1) + (c(1,0,1) - c(0,0,1)) * ux
-    x11 = c(0,1,1) + (c(1,1,1) - c(0,1,1)) * ux
-    y0 = x00 + (x10 - x00) * uy
-    y1 = x01 + (x11 - x01) * uy
-    return y0 + (y1 - y0) * uz
+# ---- the hi-res Charleston patch ---------------------------------------
+# Authored in MAP radius (Blender units out from the city centre), because
+# that's the frame the peninsula is drawn in. The cut is smaller than the
+# patch so there's overlap and no hole.
+PATCH_R    = 20.5                          # patch reach, map BU
+PATCH_CUT  = 0.180                         # base faces deleted inside this, rad
+PATCH_RES  = 0.22                          # patch cell size, BU (~4x the base)
+PATCH_LIFT = 0.03                          # float it against z-fighting
 
-def fbm(p, octaves, seed):
-    total, amp, freq, norm = 0.0, 0.5, 1.0, 0.0
-    for o in range(octaves):
-        total = total + vnoise(p * freq + o * 19.19, seed + o) * amp
-        norm += amp
-        amp *= 0.5
-        freq *= 2.0
-    return total / norm
+GROUND = R * E.CITY_H                      # the metro plateau, in world units
 
-def ridged(p, octaves, seed):
-    """sharp mountain ridges: fold the noise around its midline"""
-    n = fbm(p, octaves, seed)
-    return (1.0 - np.abs(2.0 * n - 1.0)) ** 2
+# The game's EARTH water hazard (BODIES: `hazard: { ...WATER, below: 1.0015 }`).
+# Anything that stands on the ground is checked against this before it's placed
+# — the city scatter, the spaceport dressing, and the assertions at the bottom
+# all read this one number. It used to be re-declared down in the assert block.
+HAZ = 1.0015
 
-def smoothstep(a, b, x):
-    t = np.clip((x - a) / (b - a), 0.0, 1.0)
-    return t * t * (3.0 - 2.0 * t)
-
-def ll_dir(lat, lon):
-    """lat/lon degrees → unit direction, Blender coords (Z = north)"""
-    la, lo = math.radians(lat), math.radians(lon)
-    return np.array([math.cos(la) * math.cos(lo),
-                     math.cos(la) * math.sin(lo),
-                     math.sin(la)])
-
-PAD_DIR = ll_dir(PAD_LAT, PAD_LON)
-
-# ------------------------------------------------------- THE HEIGHT FIELD --
-# One function decides the whole planet. dirs: (N,3) unit vectors.
-# Returns the surface multiplier m (ocean = exactly 1.0, land > 1.0) plus
-# the intermediate values the coloring pass needs.
-
-def height_field(dirs):
-    z = dirs[:, 2]                                     # sin(latitude)
-
-    # continent mask: sum of soft angular blobs
-    mask = np.zeros(len(dirs))
-    for lat, lon, width, strength in CONTINENTS:
-        d = ll_dir(lat, lon)
-        ang = np.arccos(np.clip(dirs @ d, -1.0, 1.0))
-        mask += strength * np.exp(-(ang / width) ** 2)
-
-    # wiggle the coastlines so nothing looks like a perfect circle
-    mask += (fbm(dirs * 2.3 + 7.7, 5, SEED) - 0.5) * 0.55
-
-    land  = smoothstep(0.48, 0.60, mask)               # 0 = sea, 1 = land
-    core  = smoothstep(0.62, 0.95, mask)               # continental interior
-    hills = (fbm(dirs * 6.0 + 3.3, 5, SEED + 40) - 0.5) * 2.0
-    ridge = ridged(dirs * 3.6 + 1.1, 5, SEED + 80)
-
-    elev = land * (0.012 + 0.005 * hills) + core * ridge * 0.042 * land
-    elev = np.maximum(elev, 0.0)
-
-    # polar ice sheets: slightly raised, ocean or not
-    ice = smoothstep(0.885, 0.96, np.abs(z) + (fbm(dirs * 5.0, 3, SEED + 7) - 0.5) * 0.07)
-    elev = np.maximum(elev, ice * 0.006)
-
-    m = 1.0 + elev
-
-    # flatten city footprints (before the pad, so the pad wins the overlap)
-    for c in CITIES:
-        cd = ll_dir(c["lat"], c["lon"])
-        ang_c = np.arccos(np.clip(dirs @ cd, -1.0, 1.0))
-        t = 1.0 - smoothstep(c["ang"], c["ang"] * 1.9, ang_c)
-        m = m * (1.0 - t) + c["h"] * t
-
-    # flatten a disc for the landing pad — terrain blends into a plateau
-    ang_pad = np.arccos(np.clip(dirs @ PAD_DIR, -1.0, 1.0))
-    t = 1.0 - smoothstep(PAD_ANG, PAD_ANG * 2.6, ang_pad)
-    m = m * (1.0 - t) + PAD_H * t
-
-    return m, {"mask": mask, "land": land, "elev": m - 1.0, "ice": ice, "z": z}
-
-# ------------------------------------------------------------- COLOR PASS --
-def hex_rgb(h):
-    return np.array([(h >> 16 & 255) / 255.0, (h >> 8 & 255) / 255.0, (h & 255) / 255.0])
-
-def lerp_col(a, b, t):
-    t = t[:, None]
-    return a[None, :] * (1 - t) + b[None, :] * t
-
-def tint(base, color, t):
-    """pull a per-face color ARRAY toward a single color by weight t (per face)"""
-    t = t[:, None]
-    return base * (1 - t) + color[None, :] * t
-
-def face_colors(dirs):
-    """dirs: (F,3) unit face directions → (F,4) RGBA float colors"""
-    m, aux = height_field(dirs)
-    mask, elev, ice, z = aux["mask"], aux["elev"], aux["ice"], aux["z"]
-    n_forest = fbm(dirs * 4.5 + 11.1, 4, SEED + 21)    # forest patchiness
-
-    # start as ocean: shallow teal near the coast, navy in the deeps
-    depth = smoothstep(0.50, 0.28, mask)
-    col = lerp_col(hex_rgb(PAL["shallow"]), hex_rgb(PAL["deep"]), depth)
-
-    is_land = elev > 0.0065
-
-    beach = is_land & (elev < 0.011) & (mask < 0.58)
-    col[beach] = hex_rgb(PAL["sand"])
-
-    # local texture: patchy grass↔forest, as before
-    green_t = smoothstep(0.35, 0.75, n_forest)
-    greens = lerp_col(hex_rgb(PAL["grass"]), hex_rgb(PAL["forest"]), green_t)
-    # latitude biomes: a dry steppe band across the subtropics (rises then
-    # falls again by ~temperate), then dark boreal forest toward the poles —
-    # before the elevation rock/snow below takes over
-    az = np.abs(z)
-    greens = tint(greens, hex_rgb(PAL["dry"]),
-                  smoothstep(0.24, 0.36, az) * (1.0 - smoothstep(0.46, 0.58, az)))
-    greens = tint(greens, hex_rgb(PAL["boreal"]), smoothstep(0.60, 0.78, az))
-    plains = is_land & ~beach
-    col[plains] = greens[plains]
-
-    rocky = is_land & (elev > 0.031)
-    col[rocky] = hex_rgb(PAL["rock"])
-
-    snow = (is_land & (elev > 0.052)) | (is_land & (np.abs(z) > 0.88))
-    col[snow] = hex_rgb(PAL["snow"])
-
-    icy = ice > 0.25
-    col[icy] = hex_rgb(PAL["ice"])
-
-    # city ground: dark asphalt between the buildings
-    for c in CITIES:
-        cd = ll_dir(c["lat"], c["lon"])
-        ang_c = np.arccos(np.clip(dirs @ cd, -1.0, 1.0))
-        col[ang_c < c["ang"] * 0.92] = hex_rgb(PAL["asphalt"])
-
-    # pad plateau gets its own concrete color
-    ang_pad = np.arccos(np.clip(dirs @ PAD_DIR, -1.0, 1.0))
-    col[ang_pad < PAD_ANG * 1.4] = hex_rgb(PAL["pad"]) * 1.6
-
-    # per-face brightness jitter — the thing that makes low-poly look rich
-    rng = np.random.default_rng(SEED)
-    col *= (1.0 + (rng.random(len(dirs))[:, None] - 0.5) * 0.10)
-    col = np.clip(col, 0.0, 1.0)
-
-    return np.concatenate([col, np.ones((len(dirs), 1))], axis=1)
-
-# ------------------------------------------------------------ SCENE SETUP --
-bpy.ops.wm.read_factory_settings(use_empty=True)
-scene = bpy.context.scene
 
 def make_material(name, color_hex=None, emission_hex=None, strength=0.0,
                   vertex_colors=False, roughness=0.9):
@@ -305,9 +124,14 @@ def make_material(name, color_hex=None, emission_hex=None, strength=0.0,
                 break
     return mat
 
+
+# ------------------------------------------------------------ SCENE SETUP --
+bpy.ops.wm.read_factory_settings(use_empty=True)
+scene = bpy.context.scene
+
 # --------------------------------------------------------------- TERRAIN --
 print("building terrain sphere…")
-bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=SUBDIV, radius=R)
+bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=E.SUBDIV, radius=R)
 planet = bpy.context.active_object
 planet.name = "Earth"
 me = planet.data
@@ -318,30 +142,95 @@ me.vertices.foreach_get("co", co)
 co = co.reshape(-1, 3)
 dirs = co / np.linalg.norm(co, axis=1)[:, None]
 
-m, _ = height_field(dirs)
+m, _ = E.height_field(dirs)
 me.vertices.foreach_set("co", (dirs * (R * m)[:, None]).ravel())
 me.update()
 
-# per-face colors, painted onto the mesh corners (all 3 corners of a
-# triangle get the same color → each facet is one flat tint)
+terrain_mat = make_material("Terrain", vertex_colors=True, roughness=0.92)
+
+# ----------------------------------------------- HI-RES CHARLESTON PATCH --
+# Cut a hole in the base sphere over Charleston and drop a 4x denser mesh in.
+# Global subdiv 8 would be 4x the whole GLB to fix one feature.
+# The hole is cut BEFORE the colour pass so the vertex-colour layer is only
+# ever built for faces that survive — no bmesh custom-data round-trip to trust.
+print("cutting the hi-res patch…")
+_cd = Vector(E.CITY_DIR.tolist())
+_base_nf = len(me.polygons)
+bm = bmesh.new()
+bm.from_mesh(me)
+bm.faces.ensure_lookup_table()
+kill = [f for f in bm.faces
+        if f.calc_center_median().normalized().dot(_cd) > math.cos(PATCH_CUT)]
+bmesh.ops.delete(bm, geom=kill, context='FACES')
+bm.to_mesh(me)
+bm.free()
+# equilateral triangle of area A has edge sqrt(4A/√3) — the earlier form used
+# 2A/√3 and under-reported the facet size by √2
+_facet = math.sqrt(4.0 * (4 * math.pi * R * R / _base_nf) / math.sqrt(3))
+print(f"  removed {len(kill)} of {_base_nf} base faces inside {PATCH_CUT} rad")
+
 nf = len(me.polygons)
 centers = np.empty(nf * 3)
 me.polygons.foreach_get("center", centers)
 centers = centers.reshape(-1, 3)
 fdirs = centers / np.linalg.norm(centers, axis=1)[:, None]
-cols = face_colors(fdirs)
+cols = E.face_colors(fdirs)
 
 attr = me.color_attributes.new(name="Col", type='FLOAT_COLOR', domain='CORNER')
 attr.data.foreach_set("color", np.repeat(cols, 3, axis=0).ravel())
-
+bpy.context.view_layer.objects.active = planet
 bpy.ops.object.shade_flat()
-me.materials.append(make_material("Terrain", vertex_colors=True, roughness=0.92))
+me.materials.append(terrain_mat)
+
+print("building the hi-res patch…")
+_n = int(math.ceil(2 * PATCH_R / PATCH_RES))
+_ax = np.linspace(-PATCH_R, PATCH_R, _n + 1)
+# indexing="ij" so ravel order is i*(_n+1)+j with i the EAST index and j the
+# NORTH index — matching vid() below. With the default "xy" the two are
+# transposed, which still tiles but reverses the winding, and the whole patch
+# renders inside-out.
+PE, PN = np.meshgrid(_ax, _ax, indexing="ij")
+pdirs = E.en_dir(PE.ravel(), PN.ravel())
+pm, _ = E.height_field(pdirs)
+pverts = pdirs * (R * pm + PATCH_LIFT)[:, None]
+
+# emit a quad per cell whose CENTRE is inside the patch disc
+ci, cj = np.meshgrid(np.arange(_n), np.arange(_n), indexing="ij")
+ce = (_ax[ci] + _ax[ci + 1]) * 0.5
+cn = (_ax[cj] + _ax[cj + 1]) * 0.5
+keep = (ce ** 2 + cn ** 2) <= PATCH_R ** 2
+vid = lambda ie, jn: ie * (_n + 1) + jn
+pfaces = np.stack([vid(ci, cj), vid(ci + 1, cj),
+                   vid(ci + 1, cj + 1), vid(ci, cj + 1)], axis=-1)[keep]
+
+pmesh = bpy.data.meshes.new("CharlestonPatchMesh")
+pmesh.from_pydata(pverts.tolist(), [], pfaces.tolist())
+pmesh.update()
+patch = bpy.data.objects.new("CharlestonPatch", pmesh)
+bpy.context.collection.objects.link(patch)
+
+pnf = len(pmesh.polygons)
+pc = np.empty(pnf * 3)
+pmesh.polygons.foreach_get("center", pc)
+pc = pc.reshape(-1, 3)
+pfdirs = pc / np.linalg.norm(pc, axis=1)[:, None]
+pcols = E.face_colors(pfdirs)
+pattr = pmesh.color_attributes.new(name="Col", type='FLOAT_COLOR', domain='CORNER')
+pattr.data.foreach_set("color", np.repeat(pcols, 4, axis=0).ravel())
+pmesh.materials.append(terrain_mat)
+bpy.ops.object.select_all(action='DESELECT')
+patch.select_set(True)
+bpy.context.view_layer.objects.active = patch
+bpy.ops.object.shade_flat()
+print(f"  patch: {pnf} quads at {PATCH_RES} BU vs base facets ~{_facet:.2f} BU "
+      f"→ peninsula is {E.PEN_HW0 * 2 / PATCH_RES:.0f} facets wide "
+      f"(was {E.PEN_HW0 * 2 / _facet:.0f})")
 
 # ----------------------------------------------------- LANDING PAD + BEACON --
-print("placing landing pad at Charleston…")
-pad_up = Vector(PAD_DIR.tolist())
+print("placing landing pad (North Charleston)…")
+pad_up = Vector(E.PAD_DIR.tolist())
 pad_quat = Vector((0, 0, 1)).rotation_difference(pad_up)
-pad_center = pad_up * (R * PAD_H)
+pad_center = pad_up * (R * E.PAD_H)
 
 bpy.ops.mesh.primitive_cylinder_add(radius=2.6, depth=0.6,
                                     location=pad_center + pad_up * 0.25)
@@ -351,20 +240,18 @@ pad.rotation_mode = 'QUATERNION'
 pad.rotation_quaternion = pad_quat
 pad.data.materials.append(make_material("Pad", color_hex=PAL["pad"], roughness=0.6))
 
-# beacon: a glowing spire at the pad's edge — the spaceport landmark
-# (0.25×3.2 here = a 6×80u tower in-game, a hair taller than downtown)
+# `tangent` is theta 0 of the entire spaceport layout — every bearing below is
+# measured off it. It lives up here because it's derived from the pad, but
+# nothing else about the beacon does any more (see below).
 tangent = pad_up.cross(Vector((0, 0, 1))).normalized()
-bpy.ops.mesh.primitive_cylinder_add(radius=0.25, depth=3.2,
-                                    location=pad_center + tangent * 2.4 + pad_up * 1.5)
-beacon = bpy.context.active_object
-beacon.name = "Beacon"
-beacon.rotation_mode = 'QUATERNION'
-beacon.rotation_quaternion = pad_quat
-beacon.data.materials.append(make_material("BeaconGlow", color_hex=PAL["beacon"],
-                                           emission_hex=PAL["beacon"], strength=4.0))
 
-# ----------------------------------------------------------------- CITIES --
-print("raising cities…")
+# The rest of the spaceport — deck paint, rim lights, terminal, tank farm,
+# beacon, approach lead-in — is built further down under "SPACEPORT DRESSING".
+# It needs the _box/_cyl/_cone/_ico/_strut primitives and surf_quat, none of
+# which exist yet up here.
+
+# ----------------------------------------------------------- CHARLESTON --
+print("raising Charleston…")
 tower_mats = [
     make_material("TowerA", color_hex=PAL["towerA"], roughness=0.85),
     make_material("TowerB", color_hex=PAL["towerB"], roughness=0.85),
@@ -374,22 +261,33 @@ tower_mats = [
     make_material("TowerLit", color_hex=PAL["towerLit"],
                   emission_hex=PAL["window"], strength=0.9, roughness=0.7),
 ]
-unit_mat   = make_material("RoofUnit", color_hex=PAL["unit"], roughness=0.7)   # rooftop AC/mech
+# the historic peninsula gets its own stock: pale stucco, low, no glass
+hist_mats = [
+    make_material("HistA", color_hex=0xd8c9b0, roughness=0.9),
+    make_material("HistB", color_hex=0xc7b49a, roughness=0.9),
+    make_material("HistC", color_hex=0xe0d3bd, roughness=0.9),
+    make_material("HistLit", color_hex=0x6a6055,
+                  emission_hex=PAL["window"], strength=0.7, roughness=0.8),
+]
+unit_mat   = make_material("RoofUnit", color_hex=PAL["unit"], roughness=0.7)
 beacon_red = make_material("BeaconRed", color_hex=PAL["beaconRed"],
-                           emission_hex=PAL["beaconRed"], strength=4.0)        # aviation warning lights
-glass_mat  = tower_mats[3]                                                     # landmark towers glow at night
+                           emission_hex=PAL["beaconRed"], strength=4.0)
+glass_mat  = tower_mats[3]
 street_mat = make_material("Street", color_hex=PAL["street"],
-                           emission_hex=PAL["streetGlow"], strength=0.5, roughness=0.9)  # lit road grid
+                           emission_hex=PAL["streetGlow"], strength=0.5, roughness=0.9)
+# Steeples read as pale stone by day and glow by night. Base stays a MID grey,
+# not white: the game ignores emissive_strength and adds emission on top of the
+# lit base, so a white base clips the sunlit faces to a flat blob (gotchas #10).
+# strength 0.5, not 1.4 — at 1.4 the sunlit previews rendered each steeple as
+# a white starburst with no spire inside it, and the night shot as a flare
+steeple_mat = make_material("Steeple", color_hex=0x9a948a,
+                            emission_hex=PAL["steepleGlow"], strength=0.5,
+                            roughness=0.75)
+bridge_mat = make_material("BridgeDeck", color_hex=PAL["bridge"], roughness=0.8)
+cable_mat  = make_material("BridgeCable", color_hex=PAL["cable"],
+                           emission_hex=0xdfe8f5, strength=0.8, roughness=0.6)
 
-# --- building factory ---------------------------------------------------
-# Every building is assembled in a LOCAL frame where +Z is "up" (away from the
-# planet center) and X/Y are the footprint plane. base_pt is the point on the
-# city plateau under the building; rot maps local +Z onto the surface normal d,
-# so a local offset (lx,ly,lz) lands at base_pt + rot @ (lx,ly,lz), with lz the
-# height of a part's CENTER above the ground. THIS is what lets a building be
-# more than one cube — stacked tiers, spires, domes, rooftop units all share
-# the same base_pt + rot, so a whole downtown of varied silhouettes drops in.
-
+# --- primitives in a local +Z-up frame ----------------------------------
 def _box(base_pt, rot, off, scale, mat, objs):
     bpy.ops.mesh.primitive_cube_add(size=1.0, location=base_pt + rot @ Vector(off))
     b = bpy.context.active_object
@@ -419,18 +317,188 @@ def _ico(base_pt, rot, off, scale, mat, objs, subd=2):
     b.rotation_mode = 'QUATERNION'; b.rotation_quaternion = rot
     b.data.materials.append(mat); objs.append(b); return b
 
+def _strut(p0, p1, w, t, mat, objs):
+    """A box spanning two WORLD points. Bridge decks, pylon legs and stay
+    cables are all 'a bar from A to B' — one helper instead of three piles of
+    trigonometry. Local +X runs along the strut, +Z is as close to radially-up
+    as the strut allows."""
+    d = p1 - p0
+    L = d.length
+    if L < 1e-6:
+        return None
+    mid = (p0 + p1) * 0.5
+    x = d.normalized()
+    up = mid.normalized()
+    y = up.cross(x)
+    if y.length < 1e-6:
+        y = Vector((0, 0, 1)).cross(x)
+    y.normalize()
+    z = x.cross(y)
+    q = Matrix((x, y, z)).transposed().to_quaternion()
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=mid)
+    b = bpy.context.active_object
+    b.scale = (L, w, t)
+    b.rotation_mode = 'QUATERNION'; b.rotation_quaternion = q
+    b.data.materials.append(mat); objs.append(b); return b
+
 def surf_quat(d, fwd):
-    """quaternion: local +Z → d (surface 'up'), +X → fwd projected into the
-    tangent plane. Orients a part so its footprint lines up with the street
-    grid instead of spinning to some arbitrary azimuth (what rotation_difference
-    did). Same frame for streets and buildings → tidy blocks and rows."""
+    """local +Z → d (surface 'up'), +X → fwd projected into the tangent plane"""
     z = d.normalized()
     x = (fwd - z * fwd.dot(z)).normalized()
     y = z.cross(x)
     return Matrix((x, y, z)).transposed().to_quaternion()
 
+# --- map helpers ---------------------------------------------------------
+AX, PP = E.PEN_AXIS, E.PEN_PERP
+
+def mp(e, n, lift=0.0):
+    """map (e,n) → a world point on the metro plateau"""
+    d = Vector(E.en_dir(e, n).tolist())
+    return d * (GROUND + lift), d
+
+def pen_en(al, pp):
+    """peninsula-frame (along, across) → map (e, n)"""
+    return (E.PEN_BASE[0] + AX[0] * al + PP[0] * pp,
+            E.PEN_BASE[1] + AX[1] * al + PP[1] * pp)
+
+# the street grid and every building share the peninsula's axis, so downtown
+# blocks line up with the shoreline instead of cutting across it at an angle
+GRID_FWD = Vector(E.en_dir(*pen_en(1.0, 0.0)).tolist()) \
+    - Vector(E.en_dir(*pen_en(0.0, 0.0)).tolist())
+
+def probe(e, n):
+    """the Charleston fields at one map point"""
+    d = E.en_dir(np.array([e]), np.array([n]))
+    return E.charleston(d)
+
+# ================================================== THE RAVENEL BRIDGE ====
+# Cable-stayed, two diamond pylons, crossing the Cooper from the peninsula to
+# Mount Pleasant. The banks are MEASURED, not assumed — the bank wiggle moves
+# them, and a bridge that starts in the river is the kind of thing you only
+# find in a render (gotchas.md #6).
+print("building the Ravenel Bridge…")
+# These proportions are the second pass. The first had a 2.1 BU deck across a
+# 3.3 BU river (a causeway, not a bridge), pylons inset 0.9 BU from each bank
+# so they stood 1.5 BU apart while being 5.2 BU tall, and cable fans that
+# overshot the far pylon into a spider web. Widening the Cooper and reading
+# these numbers as RATIOS to the span is what fixed it.
+BRIDGE_W    = 0.30       # deck half-width (0.6 BU ≈ 15 game units across)
+DECK_H      = 1.35       # deck height above the plateau at midspan
+                         # (~34 game units — 3.4 ship lengths of clearance)
+PYLON_H     = 3.7        # apex above the plateau (~92 game units). Still tops
+                         # the tallest tower across the river (3.2), so the
+                         # Ravenel wins the skyline — but it no longer reads
+                         # as a gantry crane straddling a creek.
+PYLON_INSET = 0.15       # pylons stand AT the banks, not out in the channel
+PYLON_SPLAY = 0.62       # how far the diamond's legs spread
+PYLON_WAIST = 0.46       # height of the diamond's widest point, x PYLON_H
+APPROACH    = 3.4        # ramp length on each shore
+
+_pp_scan = np.linspace(0.0, 16.0, 640)
+
+def _cooper_banks(al):
+    """measure the Cooper's near and far bank at a given point down the
+    peninsula. Returns None if the scan finds no single clean channel."""
+    ee, nn = pen_en(al, _pp_scan)
+    w = E.charleston(E.en_dir(ee, nn))["wet"] > 0.5
+    if not w.any():
+        return None
+    lo = int(np.argmax(w))
+    hi = len(w) - 1 - int(np.argmax(w[::-1]))
+    if not w[lo:hi + 1].all():           # two channels — an island mid-river
+        return None
+    return float(_pp_scan[lo]), float(_pp_scan[hi])
+
+# Pick the crossing by MEASURING for the widest clean channel rather than
+# hardcoding one — the bank wiggle moves the river, and the first guess landed
+# on a 2.4 BU pinch that made the hero bridge look like a culvert.
+_best = None
+for _a in np.linspace(2.0, 11.0, 46):
+    _b = _cooper_banks(float(_a))
+    if _b and (_best is None or (_b[1] - _b[0]) > (_best[1][1] - _best[1][0])):
+        _best = (float(_a), _b)
+if _best is None:
+    raise RuntimeError("Ravenel: no clean Cooper River channel found to cross")
+BRIDGE_AL, (_bank_w, _bank_e) = _best
+print(f"  Cooper crossing chosen at al={BRIDGE_AL:.2f}: banks at across "
+      f"{_bank_w:.2f} → {_bank_e:.2f} BU  (span {_bank_e - _bank_w:.2f} BU "
+      f"≈ {(_bank_e - _bank_w) * 25:.0f} game units)")
+
+bridge = []
+_s0, _s1 = _bank_w - APPROACH, _bank_e + APPROACH
+_TOT = _s1 - _s0
+
+def _deck_z(s):
+    """height above the plateau at across-position s: ramp up from each shore,
+    flat across the main span"""
+    a = (s - _s0) / APPROACH
+    b = (_s1 - s) / APPROACH
+    return DECK_H * E.smoothstep(0.0, 1.0, np.clip(min(a, b), 0.0, 1.0))
+
+def _deck_pt(s, off=0.0):
+    """world point on the deck centreline at across-position s"""
+    e, n = pen_en(BRIDGE_AL + off, s)
+    d = Vector(E.en_dir(e, n).tolist())
+    return d * (GROUND + float(_deck_z(s)))
+
+# deck — a chain of struts so it follows both the ramp and the planet's curve
+NSEG = 44
+for i in range(NSEG):
+    p0 = _deck_pt(_s0 + _TOT * i / NSEG)
+    p1 = _deck_pt(_s0 + _TOT * (i + 1) / NSEG)
+    _strut(p0, p1, BRIDGE_W * 2, 0.13, bridge_mat, bridge)
+
+# two diamond pylons, one at each bank
+PYLONS = [_bank_w + PYLON_INSET, _bank_e - PYLON_INSET]
+_mid = (PYLONS[0] + PYLONS[1]) * 0.5
+for px in PYLONS:
+    e, n = pen_en(BRIDGE_AL, px)
+    d = Vector(E.en_dir(e, n).tolist())
+    base = d * GROUND
+    rot = surf_quat(d, GRID_FWD)
+    # the diamond straddles the roadway, so the legs spread ACROSS the deck
+    waist_l = base + rot @ Vector((0.0, -PYLON_SPLAY, PYLON_H * PYLON_WAIST))
+    waist_r = base + rot @ Vector((0.0,  PYLON_SPLAY, PYLON_H * PYLON_WAIST))
+    apex = base + rot @ Vector((0.0, 0.0, PYLON_H))
+    _strut(base, waist_l, 0.22, 0.22, bridge_mat, bridge)
+    _strut(base, waist_r, 0.22, 0.22, bridge_mat, bridge)
+    _strut(waist_l, apex, 0.19, 0.19, bridge_mat, bridge)
+    _strut(waist_r, apex, 0.19, 0.19, bridge_mat, bridge)
+    # a cross-tie just under the deck closes the diamond visually
+    _strut(base + rot @ Vector((0.0, -PYLON_SPLAY * 0.62, PYLON_H * PYLON_WAIST * 0.62)),
+           base + rot @ Vector((0.0,  PYLON_SPLAY * 0.62, PYLON_H * PYLON_WAIST * 0.62)),
+           0.13, 0.13, bridge_mat, bridge)
+    _ico(base, rot, (0, 0, PYLON_H + 0.13), (0.075, 0.075, 0.075), beacon_red, bridge)
+    # STAY CABLES. Each pylon fans to its OWN half of the span and to its own
+    # back-stay only — reaching past the far pylon is what turned the first
+    # pass into a cat's cradle.
+    toward_mid = 1 if px < _mid else -1
+    for side in (-1, 1):
+        reach = (abs(_mid - px) * 0.92) if side == toward_mid else (APPROACH * 0.80)
+        for k in range(1, 6):
+            s = px + side * reach * (k / 5.0)
+            if not (_s0 <= s <= _s1):
+                continue
+            for plane in (-1, 1):
+                top = base + rot @ Vector((0.0, plane * 0.11,
+                                           PYLON_H - 0.20 - k * 0.11))
+                anc_c = _deck_pt(s)
+                anc = anc_c + anc_c.normalized() * 0.08 \
+                    + (rot @ Vector((0.0, plane * BRIDGE_W * 0.82, 0.0)))
+                _strut(top, anc, 0.035, 0.035, cable_mat, bridge)
+
+bpy.ops.object.select_all(action='DESELECT')
+for b in bridge:
+    b.select_set(True)
+bpy.context.view_layer.objects.active = bridge[0]
+bpy.ops.object.join()
+bridge_obj = bpy.context.active_object
+bridge_obj.name = "RavenelBridge"
+bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+print(f"  Ravenel: {len(bridge)} parts, pylons {PYLON_H * 25:.0f} game units tall")
+
+# ========================================================== THE CITY =====
 def rooftop_units(base_pt, rot, fx, fy, roof_z, rng, objs, n=None):
-    """scatter a few little mechanical boxes (rooftop RTUs) on a flat roof"""
     for _ in range(rng.randint(1, 3) if n is None else n):
         ux, uy = rng.uniform(-fx * 0.32, fx * 0.32), rng.uniform(-fy * 0.32, fy * 0.32)
         uz, us = rng.uniform(0.08, 0.18), rng.uniform(0.10, 0.20)
@@ -441,45 +509,73 @@ def make_building(base_pt, rot, fx, fy, h, mat, rng, objs):
     """pick a silhouette and build it. fx,fy = footprint; h = total height."""
     kind = rng.random()
     if kind < 0.30 and h > 0.9:
-        # SETBACK tower — 2-3 shrinking stacked boxes (the classic skyscraper)
         fracs = [0.5, 0.3, 0.2] if h > 1.8 else [0.62, 0.38]
         z, sx, sy = 0.0, fx, fy
         for fr in fracs:
             th = h * fr
             _box(base_pt, rot, (0, 0, z + th / 2), (sx, sy, th), mat, objs)
             z += th; sx *= 0.66; sy *= 0.66
-        if rng.random() < 0.5:            # crown the tall ones with a lit spire
+        if rng.random() < 0.5:
             _cyl(base_pt, rot, (0, 0, z + 0.18), 0.03, 0.36, mat, objs, verts=6)
             _ico(base_pt, rot, (0, 0, z + 0.4), (0.05, 0.05, 0.05), beacon_red, objs, subd=1)
         else:
             rooftop_units(base_pt, rot, sx * 1.5, sy * 1.5, z, rng, objs, n=1)
     elif kind < 0.42:
-        # ROUND cylinder tower
         r = min(fx, fy) * 0.55
         _cyl(base_pt, rot, (0, 0, h / 2), r, h, mat, objs, verts=12)
-        if rng.random() < 0.5:            # mechanical cap
+        if rng.random() < 0.5:
             _cyl(base_pt, rot, (0, 0, h + 0.12), r * 0.4, 0.24, unit_mat, objs, verts=8)
     elif kind < 0.52:
-        # TAPERED box with a pointed spire top
         bh = h * 0.78
         _box(base_pt, rot, (0, 0, bh / 2), (fx, fy, bh), mat, objs)
         _cone(base_pt, rot, (0, 0, bh + h * 0.16), min(fx, fy) * 0.5, 0.02, h * 0.32, mat, objs)
     elif kind < 0.60 and h > 1.0:
-        # ANTENNA box — flat roof, thin mast, red warning light
         _box(base_pt, rot, (0, 0, h / 2), (fx, fy, h), mat, objs)
         _cyl(base_pt, rot, (0, 0, h + 0.22), 0.02, 0.44, unit_mat, objs, verts=6)
         _ico(base_pt, rot, (0, 0, h + 0.46), (0.04, 0.04, 0.04), beacon_red, objs, subd=1)
     else:
-        # plain BOX — the workhorse, usually wearing rooftop mechanical units
         _box(base_pt, rot, (0, 0, h / 2), (fx, fy, h), mat, objs)
         if fx > 0.55 and h > 0.8 and rng.random() < 0.75:
             rooftop_units(base_pt, rot, fx, fy, h, rng, objs)
 
+def make_rowhouse(base_pt, rot, fx, fy, h, mat, rng, objs):
+    """The historic peninsula's workhorse: a low block with a pitched roof and
+    a chimney or two. Charleston single-houses stand side-on to the street with
+    a piazza down one flank — at 25x that's a 2 BU detail, so this is really
+    just 'low, pastel, and NOT a glass box'."""
+    _box(base_pt, rot, (0, 0, h / 2), (fx, fy, h), mat, objs)
+    # pitched roof: a squashed 4-sided cone reads as a hip roof at this size.
+    # 0.30 not 0.44 — the steeper first pass made every row house look like a
+    # circus tent and stole the vertical read from the actual steeples.
+    _cone(base_pt, rot, (0, 0, h + h * 0.15), max(fx, fy) * 0.56, 0.02,
+          h * 0.30, mat, objs, verts=4)
+    if rng.random() < 0.55:
+        cx = rng.uniform(-fx * 0.3, fx * 0.3)
+        _box(base_pt, rot, (cx, 0, h + h * 0.24), (0.06, 0.06, h * 0.42), mat, objs)
+
+def make_steeple(base_pt, rot, h, rng, objs):
+    """Church body + tower + spire. The tallest thing downtown, by design."""
+    bw, bl = rng.uniform(0.34, 0.46), rng.uniform(0.62, 0.86)
+    bh = h * 0.20
+    _box(base_pt, rot, (0, 0, bh / 2), (bl, bw, bh), steeple_mat, objs)
+    _cone(base_pt, rot, (0, 0, bh + bh * 0.30), max(bw, bl) * 0.60, 0.02,
+          bh * 0.60, steeple_mat, objs, verts=4)
+    # the tower rises off one end of the nave
+    tx = bl * 0.34
+    tw = bw * 0.52
+    th = h * 0.46
+    _box(base_pt, rot, (tx, 0, th / 2), (tw, tw, th), steeple_mat, objs)
+    # belfry: a slightly wider stage, then the octagonal spire
+    _box(base_pt, rot, (tx, 0, th + h * 0.045), (tw * 1.25, tw * 1.25, h * 0.09),
+         steeple_mat, objs)
+    sp = th + h * 0.09
+    _cone(base_pt, rot, (tx, 0, sp + (h - sp) * 0.5), tw * 0.78, 0.012,
+          (h - sp), steeple_mat, objs, verts=8)
+    _ico(base_pt, rot, (tx, 0, h + 0.05), (0.035, 0.035, 0.06), steeple_mat, objs, subd=1)
+
 def make_landmark(base_pt, rot, kind, rng, objs):
-    """one-off hero structures that give downtown a recognizable skyline"""
+    """one-off hero structures — all of them now live ACROSS the rivers"""
     if kind == "supertall":
-        # a 5-tier glass spire, ~2.2x the tallest normal tower — the hero that
-        # anchors the skyline (in-game ~170u, ~17 ship lengths)
         h, z, sx, sy = 6.8, 0.0, 0.95, 0.95
         for fr in (0.34, 0.24, 0.18, 0.13, 0.08):
             th = h * fr
@@ -488,121 +584,198 @@ def make_landmark(base_pt, rot, kind, rng, objs):
         _cyl(base_pt, rot, (0, 0, z + 0.7), 0.06, 1.4, tower_mats[2], objs, verts=6)
         _ico(base_pt, rot, (0, 0, z + 1.45), (0.09, 0.09, 0.09), beacon_red, objs, subd=1)
     elif kind == "stadium":
-        # a drum + a low dome (a domed arena)
         _cyl(base_pt, rot, (0, 0, 0.2), 1.15, 0.4, tower_mats[0], objs, verts=16)
         _ico(base_pt, rot, (0, 0, 0.4), (1.15, 1.15, 0.55), tower_mats[2], objs, subd=2)
     elif kind == "mast":
-        # a tall tapered comms mast with cross-arms + a beacon
         _cone(base_pt, rot, (0, 0, 1.9), 0.14, 0.03, 3.8, tower_mats[1], objs, verts=6)
         for cz in (1.4, 2.4, 3.1):
             _box(base_pt, rot, (0, 0, cz), (0.5, 0.05, 0.04), tower_mats[1], objs)
         _ico(base_pt, rot, (0, 0, 3.85), (0.06, 0.06, 0.06), beacon_red, objs, subd=1)
 
-for city in CITIES:
-    cd = Vector(ll_dir(city["lat"], city["lon"]).tolist())
-    t1 = cd.cross(Vector((0, 0, 1))).normalized()   # street-grid axes
-    t2 = cd.cross(t1)
-    ground = R * city["h"]
-    city_r = city["ang"] * R
-    step = 1.0                           # block spacing (~25u in-game: a
-                                         # street you can actually fly down)
-    rng2 = random.Random(SEED + sum(ord(ch) for ch in city["name"]))
-    blocks = []
-    built = 0
+# --- candidate sites, all queried in ONE vectorised pass -----------------
+CITY_R = E.CITY_ANG * R
+# 0.80 not 1.20. The peninsula is the hero and it's only ~130 BU^2; at the
+# coarse step it drew 47 candidate sites against 490 for the suburbs across the
+# rivers, i.e. the historic district came out emptier than its own outskirts.
+# The finer grid is thinned back per-zone below, so the total stays sane.
+STEP   = 0.80
+DRY    = 0.9          # a building must sit this far (BU) from the waterline
+DRY_PEN = 0.5         # ...but downtown is built to the seawall (the Battery,
+                      # East Bay), so the peninsula gets a tighter margin
+rng2   = random.Random(SEED + 11)
 
-    # landmarks first; the grid fills in around their keep-out discs. the pad
-    # sits at roughly (pu,pv) in the city's (u,v) tangent frame — place the
-    # landmarks on the OPPOSITE side (au,av), in the dense downtown, so they
-    # anchor the skyline and never crowd the spaceport.
-    keepouts = []
-    def place_landmark(u, v, kind, clear):
-        d = (cd * R + t1 * u + t2 * v).normalized()
-        if d.dot(pad_up) > math.cos(PAD_ANG * 1.7):
-            return                       # safety net: never inside the pad apron
-        make_landmark(d * ground, surf_quat(d, t1), kind, rng2, blocks)
-        keepouts.append((u, v, clear))
-    pu, pv = pad_up.dot(t1) * R, pad_up.dot(t2) * R
-    plen = math.hypot(pu, pv) or 1.0
-    au, av = -pu / plen, -pv / plen      # unit vector pointing away from the pad
-    qu, qv = -av, au                     # perpendicular, for spreading them out
-    place_landmark(au * 4.0,            av * 4.0,            "supertall", 1.1)
-    place_landmark(au * 3.5 + qu * 3.6, av * 3.5 + qv * 3.6, "stadium",   1.7)
-    place_landmark(au * 6.4 - qu * 2.2, av * 6.4 - qv * 2.2, "mast",      0.9)
-    built += len(keepouts)
+_sites = []
+_ns = int(math.ceil(CITY_R * 1.12 / STEP))
+for gi in range(-_ns, _ns + 1):
+    for gj in range(-_ns, _ns + 1):
+        e = gi * STEP + rng2.uniform(-0.30, 0.30)
+        n = gj * STEP + rng2.uniform(-0.30, 0.30)
+        if math.hypot(e, n) > CITY_R * 1.12:
+            continue
+        _sites.append((e, n))
+_SE = np.array([s[0] for s in _sites])
+_SN = np.array([s[1] for s in _sites])
+_sdirs = E.en_dir(_SE, _SN)
+_sch = E.charleston(_sdirs)
+_spad = np.arccos(np.clip(_sdirs @ E.PAD_DIR, -1.0, 1.0))
 
-    # --- STREETS: a lit concrete grid on the asphalt, laid before the towers.
-    # roads run both grid axes; each is built from short segments so it hugs the
-    # planet's curve (a single long box would lift off the ground at the city
-    # edges). glows warm at night = "streets you can fly down."
-    reach = city_r * 0.9
-    road_gap, seg_len, road_w = 2.0, 2.2, 0.22
-    nlines = int(reach / road_gap)
-    def lay_road(along_t1, offset):
-        s = -reach
-        while s < reach:
-            c = s + seg_len / 2
-            u, v = (c, offset) if along_t1 else (offset, c)
-            if math.hypot(u, v) <= reach:
-                d = (cd * R + t1 * u + t2 * v).normalized()
-                if d.dot(pad_up) <= math.cos(PAD_ANG * 1.7):
-                    sc = ((seg_len * 1.03, road_w, 0.03) if along_t1
+blocks = []
+attempted = len(_sites)
+placed = {"historic": 0, "neck": 0, "across": 0}
+rejected_water = 0
+rejected_pad = 0
+
+# --- STREETS: a lit grid on the peninsula axis, laid before the towers ----
+reach, road_gap, seg_len, road_w = CITY_R * 0.95, 2.6, 2.4, 0.22
+nlines = int(reach / road_gap)
+
+def lay_road(along_axis, offset):
+    s = -reach
+    while s < reach:
+        c = s + seg_len / 2
+        al, pp = (c, offset) if along_axis else (offset, c)
+        e, n = pen_en(al, pp)
+        if math.hypot(e, n) <= reach:
+            ch = probe(e, n)
+            if ch["sd"][0] < -DRY:                       # keep roads out of the river
+                d = Vector(E.en_dir(e, n).tolist())
+                if d.dot(pad_up) <= math.cos(E.PAD_ANG * 1.5):
+                    sc = ((seg_len * 1.03, road_w, 0.03) if along_axis
                           else (road_w, seg_len * 1.03, 0.03))
-                    _box(d * ground, surf_quat(d, t1), (0, 0, 0.02), sc, street_mat, blocks)
-            s += seg_len
-    for k in range(-nlines, nlines + 1):
-        lay_road(True,  k * road_gap)
-        lay_road(False, k * road_gap)
+                    _box(d * GROUND, surf_quat(d, GRID_FWD), (0, 0, 0.02),
+                         sc, street_mat, blocks)
+        s += seg_len
 
-    n = int(math.ceil(city_r * 1.18 / step))    # extend the grid for outskirts
-    for gi in range(-n, n + 1):
-        for gj in range(-n, n + 1):
-            u = gi * step + rng2.uniform(-0.25, 0.25)
-            v = gj * step + rng2.uniform(-0.25, 0.25)
-            rr = math.hypot(u, v)
-            if rr > city_r * 1.18:
-                continue
-            if any((u - ku) ** 2 + (v - kv) ** 2 < kr * kr for ku, kv, kr in keepouts):
-                continue                 # don't build inside a landmark's lot
-            d = (cd * R + t1 * u + t2 * v).normalized()
-            if d.dot(pad_up) > math.cos(PAD_ANG * 1.7):
-                continue                 # keep the spaceport clear
-            if rr > city_r * 0.9:
-                # SUBURBS — a sparse ring of low 1-2 story blocks so downtown
-                # fades into outskirts instead of ending in a hard wall
-                if rng2.random() < 0.6:
-                    continue             # thin them out toward the countryside
-                h = rng2.uniform(0.4, 0.85)
-                fx, fy = rng2.uniform(0.4, 0.7), rng2.uniform(0.4, 0.7)
-                mat = tower_mats[3] if rng2.random() < 0.18 else tower_mats[rng2.randrange(3)]
-                _box(d * ground, surf_quat(d, t1), (0, 0, h / 2), (fx, fy, h), mat, blocks)
-                if fx > 0.5 and rng2.random() < 0.4:
-                    rooftop_units(d * ground, surf_quat(d, t1), fx, fy, h, rng2, blocks, n=1)
-            else:
-                if built >= city["towers"]:
-                    continue
-                # downtown rises in the middle, low blocks out at the rim
-                # (max ~3.1u here = a 78u tower in-game — 8 ship lengths)
-                peak = (1.0 - rr / city_r) ** 1.5
-                h = 0.5 + peak * rng2.uniform(1.2, 2.6)
-                fx, fy = rng2.uniform(0.5, 0.9), rng2.uniform(0.5, 0.9)
-                mat = tower_mats[3] if rng2.random() < 0.30 else tower_mats[rng2.randrange(3)]
-                make_building(d * ground, surf_quat(d, t1),
-                              fx, fy, h, mat, rng2, blocks)
-                built += 1
-    bpy.ops.object.select_all(action='DESELECT')
-    for b in blocks:
-        b.select_set(True)
-    bpy.context.view_layer.objects.active = blocks[0]
-    bpy.ops.object.join()
-    cobj = bpy.context.active_object
-    cobj.name = "City_" + city["name"]
-    # origin to planet center, same reason as the clouds
-    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-    print(f"  {city['name']}: {built} buildings, {len(blocks)} parts")
+print("laying streets…")
+for k in range(-nlines, nlines + 1):
+    lay_road(True,  k * road_gap)
+    lay_road(False, k * road_gap)
+print(f"  {len(blocks)} street segments")
+
+# --- the landmarks, all across a river -----------------------------------
+keepouts = []
+def place_landmark(al, pp, kind, clear):
+    e, n = pen_en(al, pp)
+    ch = probe(e, n)
+    if ch["sd"][0] > -1.4:
+        print(f"  !! landmark '{kind}' rejected — too close to water")
+        return
+    d = Vector(E.en_dir(e, n).tolist())
+    make_landmark(d * GROUND, surf_quat(d, GRID_FWD), kind, rng2, blocks)
+    keepouts.append((e, n, clear))
+
+# Mount Pleasant across the Cooper gets the supertall — from the peninsula and
+# from the bridge you look at a skyline, and the historic district stays low.
+place_landmark(6.5,  9.6, "supertall", 1.4)
+place_landmark(1.0, -11.0, "stadium",  1.9)    # West Ashley, across the Ashley
+place_landmark(-8.5, 4.2, "mast",      1.1)    # North Charleston, near the pad
+
+# --- the steeples --------------------------------------------------------
+# Rejection-sampled with a minimum separation, then PRINTED placed-vs-attempted
+# — silent rejection looks exactly like success (gotchas.md #6).
+print("raising steeples…")
+STEEPLE_TARGET = 7
+STEEPLE_SEP    = 1.8     # measured: 2.2/2.0/1.9 all stall at 6 of 7 in 600
+                         # tries; 1.8 fills in 172. The peninsula just isn't
+                         # big enough to hold seven steeples further apart.
+steeples = []
+_tries = 0
+while len(steeples) < STEEPLE_TARGET and _tries < 600:
+    _tries += 1
+    al = rng2.uniform(3.0, E.PEN_LEN - 2.0)
+    # Sample the across-offset against the LOCAL half-width, not a fixed band.
+    # The peninsula tapers to a point, so a flat +/-2.2 throws most attempts
+    # into the river south of midway — first pass placed 4 of 7 in 400 tries.
+    hw_here = float(probe(*pen_en(al, 0.0))["hw"][0])
+    room = hw_here - 1.5
+    if room <= 0.15:
+        continue
+    pp = rng2.uniform(-room, room)
+    e, n = pen_en(al, pp)
+    ch = probe(e, n)
+    if ch["on_pen"][0] < 0.5 or ch["sd"][0] > -1.4:
+        continue                                  # off the peninsula, or wet
+    if any(math.hypot(e - se, n - sn) < STEEPLE_SEP for se, sn, _ in steeples):
+        continue
+    h = rng2.uniform(1.9, 2.7)
+    steeples.append((e, n, h))
+for (e, n, h) in steeples:
+    d = Vector(E.en_dir(e, n).tolist())
+    make_steeple(d * GROUND, surf_quat(d, GRID_FWD), h, rng2, blocks)
+    keepouts.append((e, n, 0.85))
+print(f"  {len(steeples)}/{STEEPLE_TARGET} steeples placed in {_tries} tries "
+      f"(tallest {max(s[2] for s in steeples) * 25:.0f} game units)")
+
+# --- the buildings -------------------------------------------------------
+print("filling the districts…")
+for i, (e, n) in enumerate(_sites):
+    sd, al, pp = _sch["sd"][i], _sch["al"][i], _sch["pp"][i]
+    hw, outer = _sch["hw"][i], _sch["outer"][i]
+
+    # zone FIRST, because the peninsula gets a tighter waterline margin
+    ap = abs(pp)
+    inland = ap < hw
+    if inland and al > 0.0:
+        zone = "historic"
+    elif inland:
+        zone = "neck"
+    else:
+        zone = "across"
+
+    if sd > -(DRY_PEN if zone == "historic" else DRY):
+        rejected_water += 1
+        continue
+    if _spad[i] < E.PAD_ANG * 1.5:
+        rejected_pad += 1
+        continue
+    if any((e - ke) ** 2 + (n - kn) ** 2 < kr * kr for ke, kn, kr in keepouts):
+        continue
+
+    if zone == "historic":
+        # THE HOLY CITY RULE: nothing here out-tops a steeple. 0.9 BU is
+        # ~22 game units — three or four storeys.
+        if rng2.random() > 0.80:
+            continue
+        h = rng2.uniform(0.34, 0.90)
+        fx, fy = rng2.uniform(0.42, 0.66), rng2.uniform(0.42, 0.72)
+        mat = hist_mats[3] if rng2.random() < 0.22 else hist_mats[rng2.randrange(3)]
+        make_rowhouse(mp(e, n)[0], surf_quat(Vector(E.en_dir(e, n).tolist()), GRID_FWD),
+                      fx, fy, h, mat, rng2, blocks)
+    elif zone == "neck":
+        if rng2.random() > 0.20:
+            continue
+        h = rng2.uniform(0.45, 1.55)
+        fx, fy = rng2.uniform(0.45, 0.80), rng2.uniform(0.45, 0.80)
+        mat = tower_mats[3] if rng2.random() < 0.24 else tower_mats[rng2.randrange(3)]
+        make_building(mp(e, n)[0], surf_quat(Vector(E.en_dir(e, n).tolist()), GRID_FWD),
+                      fx, fy, h, mat, rng2, blocks)
+    else:
+        # ACROSS THE RIVER — this is where the skyline went. Tallest at the
+        # waterfront, falling away inland, so the peninsula is framed by towers
+        # on both banks instead of carrying them itself.
+        front = float(np.clip(1.0 - (ap - outer) / 9.0, 0.0, 1.0))
+        if rng2.random() > 0.13 + 0.16 * front:
+            continue
+        h = 0.5 + (front ** 1.25) * rng2.uniform(1.5, 3.0)
+        fx, fy = rng2.uniform(0.50, 0.92), rng2.uniform(0.50, 0.92)
+        mat = tower_mats[3] if rng2.random() < 0.30 else tower_mats[rng2.randrange(3)]
+        make_building(mp(e, n)[0], surf_quat(Vector(E.en_dir(e, n).tolist()), GRID_FWD),
+                      fx, fy, h, mat, rng2, blocks)
+    placed[zone] += 1
+
+bpy.ops.object.select_all(action='DESELECT')
+for b in blocks:
+    b.select_set(True)
+bpy.context.view_layer.objects.active = blocks[0]
+bpy.ops.object.join()
+cobj = bpy.context.active_object
+cobj.name = "City_Charleston"
+bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+print(f"  sites {attempted}: historic {placed['historic']}, neck {placed['neck']}, "
+      f"across {placed['across']} | rejected {rejected_water} wet, {rejected_pad} on the pad")
+print(f"  {len(blocks)} total city parts")
 
 # ------------------------------------------------------------ CITY LIGHTS --
-# tiny warm emissive specks clustered at other coastlines — from orbit the night
-# side glows with distant civilization, so Charleston isn't the only sign of life.
 print("lighting distant cities…")
 LIGHT_SPOTS = [(51, 0), (48, 2), (40, -74), (34, -118), (35, 139), (1, 104),
                (-23, -46), (19, 73), (30, 31), (-33, 151), (55, 37), (39, 116)]
@@ -611,9 +784,9 @@ citylight_mat = make_material("CityLight", color_hex=PAL["window"],
 lights = []
 random.seed(SEED + 9)
 for (la, lo) in LIGHT_SPOTS:
-    c = ll_dir(la, lo)
-    _, aux = height_field(np.array([[c[0], c[1], c[2]]]))
-    if aux["elev"][0] < 0.006:          # in the sea → no city here
+    c = E.ll_dir(la, lo)
+    _, aux = E.height_field(np.array([[c[0], c[1], c[2]]]))
+    if aux["elev"][0] < 0.006:
         continue
     cdl = Vector(c.tolist())
     tan1 = cdl.cross(Vector((0, 0, 1)) if abs(cdl.z) < 0.9 else Vector((1, 0, 0))).normalized()
@@ -621,7 +794,7 @@ for (la, lo) in LIGHT_SPOTS:
     for _ in range(random.randint(5, 9)):
         pdir = (cdl * R + tan1 * random.uniform(-2.2, 2.2)
                 + tan2 * random.uniform(-2.2, 2.2)).normalized()
-        phm, _ = height_field(np.array([[pdir.x, pdir.y, pdir.z]]))
+        phm, _ = E.height_field(np.array([[pdir.x, pdir.y, pdir.z]]))
         pr = R * float(phm[0])
         bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1,
                                               radius=random.uniform(0.09, 0.16),
@@ -639,38 +812,243 @@ if lights:
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     print(f"  {len(lights)} distant city lights")
 
+# ------------------------------------------------------ SPACEPORT DRESSING --
+# Tier 2 of the pad job. The deck itself goes in up at "LANDING PAD + BEACON";
+# this is what turns it from a gray coin into a PLACE — lit deck paint, rim
+# lights, a terminal with a control tower, a tank farm, and an approach lead-in
+# you can pick up on final.
+#
+# ALL OF IT IS COSMETIC. Nothing in this block goes anywhere near
+# height_field(), so the baked grid comes out byte-identical to the run before
+# it. That's the regression test, not a hope: if earth_height.json changes,
+# something in here touched terrain and shouldn't have.
+#
+# Two numbers this must not move, because the game hardcodes both:
+#   * deck top    1.0175  → space-flight.html BODIES pads[0].top
+#   * deck radius 2.6 BU  → BODIES pads[0].ang 0.026  (= 2.6/R rad)
+# Move either without the matching game-side edit and you get parked 14 units
+# above the deck, or sunk through it.
+print("dressing the spaceport…")
+
+DECK_R   = 2.6                  # keep in step with BODIES pads[0].ang
+DECK_TOP = 0.55                 # deck surface, local z measured from pad_center
+MARK_Z   = DECK_TOP + 0.005     # paint rides 0.12 game units proud: clears
+                                # z-fighting, far under any landing tolerance
+PAD_RAD  = pad_center.length    # 101.2 — the apron's own sphere radius
+FLAT_R   = E.PAD_ANG * R        # 3.5 BU: past here the plateau blends back down
+                                # to real terrain, so nothing solid goes beyond
+TERM_TH  = 150.0                # bearings are measured off the beacon's spoke,
+TANK_TH  = 250.0                # which is theta 0 and therefore already taken
+APPR_TH  = TERM_TH + 180.0      # lead-in comes in over open ground
+
+# local pad frame: +X = the beacon's tangent, +Y = its perpendicular, +Z = up
+pad_t1  = tangent               # reuse the beacon's own basis vector, so the
+pad_t2  = pad_up.cross(pad_t1).normalized()      # two can't drift apart
+pad_rot = surf_quat(pad_up, pad_t1)
+
+
+def pad_dir(theta_deg):
+    a = math.radians(theta_deg)
+    return pad_t1 * math.cos(a) + pad_t2 * math.sin(a)
+
+
+def pad_pt(r, theta_deg, z=0.0, curve=True):
+    """A point r BU out from the deck centre on bearing theta, z above the local
+    ground. The apron is a sphere, not a plane — a flat tangent offset of r
+    floats r^2/2R above it, which is 1.2 game units out at the tank farm and
+    reads as a visible hover. `curve` folds that drop in. Pass curve=False for
+    anything sitting on the DECK, which really is flat."""
+    drop = (r * r) / (2.0 * PAD_RAD) if curve else 0.0
+    return pad_center + pad_dir(theta_deg) * r + pad_up * (z - drop)
+
+
+def apron_pt(r, theta_deg, z=0.0):
+    """Like pad_pt, but samples the real height field. Past FLAT_R the plateau
+    ramps back down to terrain and the sphere approximation stops being true.
+    Returns (point, height multiplier) so the caller can water-reject."""
+    d = (pad_center + pad_dir(theta_deg) * r).normalized()
+    hm, _ = E.height_field(np.array([[d.x, d.y, d.z]]))
+    return d * (R * float(hm[0]) + z), float(hm[0])
+
+
+def _ring(center, rot, major_r, minor_r, mat, objs, seg=48, flat=0.30):
+    """A flat painted circle on the deck. A torus rather than a ring of dashes:
+    one mesh, and a solid circle is what reads from altitude."""
+    bpy.ops.mesh.primitive_torus_add(location=center, major_radius=major_r,
+                                     minor_radius=minor_r,
+                                     major_segments=seg, minor_segments=4)
+    t = bpy.context.active_object
+    t.scale = (1.0, 1.0, flat)
+    t.rotation_mode = 'QUATERNION'; t.rotation_quaternion = rot
+    t.data.materials.append(mat); objs.append(t); return t
+
+
+# Emissive rule (gotchas #10): the game ignores emissive_strength and adds
+# emission ON TOP of the lit base colour, so a white base clips every sunlit
+# face to one flat blob. Each glowing part below carries a MID-GREY base and
+# puts its colour in the emission — light enough to read as paint by day,
+# bright enough to carry the night render.
+mark_mat  = make_material("PadMarking",    color_hex=0x7d8288,
+                          emission_hex=PAL["beacon"], strength=2.5, roughness=0.7)
+touch_mat = make_material("PadTouchdown",  color_hex=0x7d8288,
+                          emission_hex=0x66e0d8, strength=2.2, roughness=0.7)
+rim_mat   = make_material("PadRimLight",   color_hex=0x9aa0a8,
+                          emission_hex=PAL["beacon"], strength=4.0)
+# The apron is PAL["pad"] * 1.6 — a mid grey. The terminal's first pass was
+# 0x59606b, near enough to that to vanish into it: in the daylight render the
+# building read as a low wall lying on the ground. Pale concrete separates it.
+term_mat  = make_material("Terminal",      color_hex=0x8b929c, roughness=0.85)
+tglass    = make_material("TerminalGlass", color_hex=0x44607a,
+                          emission_hex=PAL["window"], strength=1.4, roughness=0.4)
+tank_mat  = make_material("FuelTank",      color_hex=0xb9bfc6, roughness=0.55)
+pipe_mat  = make_material("PadPipe",       color_hex=0x6c737b, roughness=0.7)
+mast_mat  = make_material("BeaconMast",    color_hex=0x3f454d, roughness=0.80)
+bcn_glow  = make_material("BeaconGlow",    color_hex=0x7a6a55,
+                          emission_hex=PAL["beacon"], strength=3.0)
+
+port = []
+rngp = random.Random(SEED + 31)
+
+# --- deck paint. Sizes are picked against the SHIP, not the deck: the ship is
+# 10 game units nose-to-tail and 1 BU is 25, so the touchdown circle at 1.15 BU
+# is ~6 ship-lengths across — a target you can see but not fill.
+_ctr = pad_pt(0, 0, 0.0, curve=False)
+_ring(pad_pt(0, 0, MARK_Z, curve=False), pad_rot, 2.28, 0.055, mark_mat,  port)
+_ring(pad_pt(0, 0, MARK_Z, curve=False), pad_rot, 1.15, 0.040, touch_mat, port)
+
+# the "H" — legs along +X, crossbar between them
+_box(_ctr, pad_rot, (0, -0.34, MARK_Z), (0.95, 0.10, 0.03), touch_mat, port)
+_box(_ctr, pad_rot, (0,  0.34, MARK_Z), (0.95, 0.10, 0.03), touch_mat, port)
+_box(_ctr, pad_rot, (0,  0.00, MARK_Z), (0.10, 0.68, 0.03), touch_mat, port)
+
+# four approach chevrons, apex inward — a bare circle has no orientation, and
+# from the cockpit you want to know which way the port is facing on the way in
+for _th in (45.0, 135.0, 225.0, 315.0):
+    _apex = pad_pt(1.58, _th, MARK_Z, curve=False)
+    _strut(_apex, pad_pt(2.02, _th + 11.0, MARK_Z, curve=False), 0.085, 0.03, mark_mat, port)
+    _strut(_apex, pad_pt(2.02, _th - 11.0, MARK_Z, curve=False), 0.085, 0.03, mark_mat, port)
+
+# --- rim lights: 12 around the deck edge, amber to match the beacon so the
+# whole port speaks one colour. Short on purpose (0.27 BU ~ 7 game units) —
+# tall posts around a landing deck read as an obstacle course.
+for _i in range(12):
+    _b = pad_pt(2.42, _i * 30.0 + 15.0, DECK_TOP, curve=False)
+    _cyl(_b, pad_rot, (0, 0, 0.09), 0.035, 0.18, pipe_mat, port, verts=6)
+    _ico(_b, pad_rot, (0, 0, 0.21), (0.055, 0.055, 0.055), rim_mat, port, subd=1)
+
+# --- the terminal. It has to live in the ring between the deck edge (2.6) and
+# FLAT_R (3.5), so the footprint is deliberately shallow and wide: 0.70 deep x
+# 1.95 across, centred at 3.10, spanning 2.75-3.45. All of it flat, all of it
+# inside the apron the build already asserts is dry.
+term_base = pad_pt(3.05, TERM_TH, 0.0)
+term_rot  = surf_quat(pad_up, pad_dir(TERM_TH))          # +X = radially outward
+# Taller and shorter than the first pass (was 0.60 x 1.95). Long and low read
+# as a boundary wall from the air; 0.85 x 1.55 reads as a building. The far
+# corner lands at sqrt(3.40^2 + 0.825^2) = 3.50 BU — exactly FLAT_R, so the
+# whole footprint still sits on guaranteed-flat, guaranteed-dry apron.
+_box(term_base, term_rot, (0, 0, 0.425), (0.70, 1.55, 0.85), term_mat, port)
+_box(term_base, term_rot, (-0.36, 0, 0.48), (0.05, 1.38, 0.52), tglass, port)  # glass, facing the deck
+_box(term_base, term_rot, (0, 0, 0.885), (0.80, 1.65, 0.07), term_mat, port)   # roof lip
+rooftop_units(term_base, term_rot, 0.70, 1.55, 0.92, rngp, port, n=3)          # RTUs, obviously
+
+# control tower off the terminal's far end. Tops out at 2.55 BU above the
+# apron = 64 game units, level with the tallest steeple and well under the
+# 80-unit towers across the river — a landmark on the approach, not a rival.
+_tw = (0.10, -0.95)
+_cyl(term_base, term_rot, (_tw[0], _tw[1], 0.925), 0.16, 1.85, term_mat, port, verts=8)
+_cyl(term_base, term_rot, (_tw[0], _tw[1], 1.96), 0.30, 0.24, tglass,   port, verts=8)  # the cab
+_cyl(term_base, term_rot, (_tw[0], _tw[1], 2.11), 0.33, 0.05, term_mat, port, verts=8)  # cab roof
+_cyl(term_base, term_rot, (_tw[0], _tw[1], 2.32), 0.025, 0.40, pipe_mat, port, verts=6)  # mast
+_ico(term_base, term_rot, (_tw[0], _tw[1], 2.55), (0.045, 0.045, 0.045), beacon_red, port, subd=1)
+
+# jetway: deck edge -> terminal front, so the two read as one facility instead
+# of a shed parked near a disc
+_strut(pad_pt(2.50, TERM_TH, DECK_TOP + 0.04, curve=False),
+       pad_pt(2.74, TERM_TH, 0.55), 0.22, 0.11, term_mat, port)
+_cyl(pad_pt(2.66, TERM_TH, 0.0), pad_rot, (0, 0, 0.24), 0.05, 0.48, pipe_mat, port, verts=6)
+
+# --- tank farm, opposite the terminal so the deck has something on both sides
+tank_base = pad_pt(3.00, TANK_TH, 0.0)
+tank_rot  = surf_quat(pad_up, pad_dir(TANK_TH))
+
+
+def tank_pt(dy, dz):
+    return tank_base + tank_rot @ Vector((0.0, dy, dz))
+
+
+for _dy in (-0.52, 0.0, 0.52):
+    _cyl(tank_base, tank_rot, (0, _dy, 0.31), 0.20, 0.62, tank_mat, port, verts=12)
+    _ico(tank_base, tank_rot, (0, _dy, 0.62), (0.20, 0.20, 0.09), tank_mat, port, subd=2)
+_box(tank_base, tank_rot, (-0.44, 0, 0.11), (0.26, 0.52, 0.22), term_mat, port)   # pump house
+_ico(tank_base, tank_rot, (0, 0, 0.74), (0.04, 0.04, 0.04), beacon_red, port, subd=1)
+_strut(tank_pt(-0.52, 0.50), tank_pt(0.52, 0.50), 0.045, 0.045, pipe_mat, port)   # header
+_strut(tank_pt(0.0, 0.14), pad_pt(2.64, TANK_TH, 0.10), 0.05, 0.05, pipe_mat, port)  # run to the deck
+
+# --- the beacon. It used to be a 0.5 x 3.2 BU cylinder standing ON the deck at
+# r=2.4, amber base under amber emission at strength 4 — which clips to a flat
+# white slab under AgX and parks an 80-game-unit monolith on the one surface
+# the [G] landing assist flies you onto. Now it's a tapered mast out on the
+# APRON at theta 0: dark body, glow carried in bands and a crown, so it reads
+# as a spire from the air and the deck stays clear.
+bcn_base = pad_pt(2.98, 0.0, 0.0)
+bcn_rot  = surf_quat(pad_up, pad_dir(0.0))
+_cone(bcn_base, bcn_rot, (0, 0, 1.55), 0.155, 0.035, 3.10, mast_mat, port, verts=8)
+for _bz, _br in ((0.85, 0.135), (1.65, 0.104), (2.45, 0.073)):
+    _cyl(bcn_base, bcn_rot, (0, 0, _bz), _br, 0.075, bcn_glow, port, verts=8)
+_ico(bcn_base, bcn_rot, (0, 0, 3.22), (0.11, 0.11, 0.15), bcn_glow, port, subd=2)
+_ico(bcn_base, bcn_rot, (0, 0, 3.44), (0.045, 0.045, 0.045), beacon_red, port, subd=1)
+
+# --- approach lead-in: a lit centreline running out from the deck over open
+# ground, the cue you pick up on final. These run past FLAT_R, so they sample
+# the height field instead of assuming the plateau — and any that come down wet
+# get dropped, the same water rule every other structure here obeys.
+_appr = 0
+for _r in (3.30, 3.95, 4.60, 5.25, 5.90, 6.55):
+    _p, _hm = apron_pt(_r, APPR_TH, 0.0)
+    if _hm < HAZ:                       # in the drink — the Ashley runs close
+        continue
+    _lr = surf_quat(_p.normalized(), pad_dir(APPR_TH))   # own normal: the
+    _cyl(_p, _lr, (0, 0, 0.06), 0.030, 0.12, pipe_mat, port, verts=6)  # surface
+    _ico(_p, _lr, (0, 0, 0.15), (0.05, 0.05, 0.05), rim_mat, port, subd=1)  # tilts
+    _appr += 1
+
+bpy.ops.object.select_all(action='DESELECT')
+for _o in port:
+    _o.select_set(True)
+bpy.context.view_layer.objects.active = port[0]
+bpy.ops.object.join()
+_port_obj = bpy.context.active_object
+_port_obj.name = "Spaceport"
+bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+print(f"  {len(port)} spaceport parts | terminal @ {TERM_TH:.0f}deg, "
+      f"tanks @ {TANK_TH:.0f}deg, {_appr}/6 approach lights dry")
+
 # ---------------------------------------------------------------- CLOUDS --
 print("puffing clouds…")
 random.seed(SEED)
 cloud_mat = make_material("Cloud", color_hex=PAL["cloud"],
                           emission_hex=PAL["cloud"], strength=0.12, roughness=1.0)
-# each cloud SYSTEM is 3-6 overlapping squashed blobs — lone spheres read
-# as eggs; clusters read as weather
 cloud_objs = []
 systems = 0
 attempts = 0
 while systems < 14 and attempts < 200:
     attempts += 1
-    # random point on the sphere
     u, v = random.random(), random.random()
     theta, phi = 2 * math.pi * u, math.acos(2 * v - 1)
     d = Vector((math.sin(phi) * math.cos(theta),
                 math.sin(phi) * math.sin(theta), math.cos(phi)))
-    if d.dot(pad_up) > math.cos(0.60):
-        continue                       # keep the sky over the city+pad clear
+    # keep the sky over Charleston clear — you have to be able to SEE it
+    if d.dot(_cd) > math.cos(0.62):
+        continue
     systems += 1
     quat = Vector((0, 0, 1)).rotation_difference(d)
-    # local tangent axes so blobs can drift sideways within the system
     tan1 = d.cross(Vector((0, 0, 1)) if abs(d.z) < 0.9 else Vector((1, 0, 0))).normalized()
     tan2 = d.cross(tan1)
     for _ in range(random.randint(3, 6)):
-        # drift each blob sideways within the system so it reads as a broad
-        # weather bank, not a stack of eggs. (the old code built `off` but never
-        # added it to pos — that's why clouds came out as lone lozenges.)
         off = (tan1 * random.uniform(-7, 7) + tan2 * random.uniform(-4, 4))
-        pos = d * (R * random.uniform(1.04, 1.06)) + off   # a LOW, flat deck now
+        pos = d * (R * random.uniform(1.04, 1.06)) + off
         sx, sy, sz = (random.uniform(4.0, 8.5), random.uniform(3.0, 6.0),
-                      random.uniform(0.8, 1.5))             # flatter → cloud decks
+                      random.uniform(0.8, 1.5))
         bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=1.0, location=pos)
         blob = bpy.context.active_object
         blob.rotation_mode = 'QUATERNION'
@@ -687,35 +1065,98 @@ clouds = bpy.context.active_object
 clouds.name = "Clouds"
 bpy.ops.object.shade_flat()
 clouds.data.materials.append(cloud_mat)
-# bake the transform so the object's origin is the PLANET CENTER — the game
-# spins this node, and a spin around anything else flings the clouds sideways
 bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 
 # ------------------------------------------------------------ EXPORT GLB --
-glb_path = os.path.join(ROOT, "planets", "earth.glb")
+glb_path = os.path.join(OUT, "earth.glb")
 bpy.ops.object.select_all(action='SELECT')
 bpy.ops.export_scene.gltf(filepath=glb_path, export_format='GLB')
 print(f"wrote {glb_path}")
 
 # ----------------------------------------------------- EXPORT HEIGHT GRID --
-# Equirectangular grid of the SAME height function, quantized to uint8.
-# The game bilinearly samples this to get ground height under the ship.
+# 2048x1024 (was 1024x512). The rivers are only ~3 BU wide and their banks are
+# a hard boundary between safe ground and a lethal hazard; at the old
+# resolution one grid cell was 0.61 BU and the bank position aliased by up to
+# 15 game units. Doubling costs ~2 MB of JSON and buys a bank you can trust.
 print("baking height grid…")
-GW, GH = 1024, 512     # ~15u cells at the 2500u in-game radius
+GW, GH = 2048, 1024
 gy, gx = np.mgrid[0:GH, 0:GW]
 lon = (gx + 0.5) / GW * 2 * np.pi - np.pi
 lat = np.pi / 2 - (gy + 0.5) / GH * np.pi
 gdirs = np.stack([np.cos(lat) * np.cos(lon),
                   np.cos(lat) * np.sin(lon),
                   np.sin(lat)], axis=-1).reshape(-1, 3)
-gm, _ = height_field(gdirs)
+gm, gaux = E.height_field(gdirs)
 lo, hi = float(gm.min()), float(gm.max())
 q = np.round((gm - lo) / (hi - lo) * 255).astype(np.uint8)
 
-with open(os.path.join(ROOT, "planets", "earth_height.json"), "w") as f:
+with open(os.path.join(OUT, "earth_height.json"), "w") as f:
     json.dump({"w": GW, "h": GH, "min": lo, "max": hi,
                "b64": base64.b64encode(q.tobytes()).decode()}, f)
 print("wrote earth_height.json")
+
+# --------------------------------------------------------- ASSERTIONS ----
+# Print what the build CLAIMS. Every one of these is a thing that has silently
+# been wrong in some planet build before.
+print("\n" + "=" * 68)
+print("ASSERTIONS")
+print("=" * 68)
+step = (hi - lo) / 255
+print(f"grid       : {GW}x{GH}  min={lo:.6f} max={hi:.6f}")
+print(f"quantised  : 1 byte = {step:.6f}  → hazard 1.0015 is "
+      f"{(HAZ - lo) / step:.1f} byte steps above the floor")
+print(f"sea level  : round-trips to {lo + round((1.0 - lo) / step) * step:.6f} "
+      f"(want 1.000000)")
+
+pm_, paux_ = E.height_field(E.PAD_DIR[None, :])
+print(f"pad height : {float(pm_[0]):.5f}  "
+      f"{'OK — dry' if pm_[0] >= HAZ else '*** PAD IS IN THE WATER HAZARD ***'}")
+
+# the pad apron, sampled as rings — nothing within it may be water
+_pe = R * float(E.PAD_DIR @ E.EAST_T) / float(E.PAD_DIR @ E.CITY_DIR)
+_pn = R * float(E.PAD_DIR @ E.NORTH_T) / float(E.PAD_DIR @ E.CITY_DIR)
+_th = np.linspace(0, 2 * np.pi, 512)
+worst_apron = 9.0
+for rad in (E.PAD_ANG * R * 0.5, E.PAD_ANG * R, E.PAD_ANG * E.PAD_BLEND * R):
+    rd = E.en_dir(_pe + rad * np.cos(_th), _pn + rad * np.sin(_th))
+    rm, _ = E.height_field(rd)
+    worst_apron = min(worst_apron, float(rm.min()))
+    print(f"pad ring   : r={rad:5.2f} BU  min={float(rm.min()):.5f}  "
+          f"{'OK' if rm.min() >= HAZ else '*** WATER ON THE APRON ***'}")
+
+# the peninsula must be dry, flat, and above the hazard along its whole length
+_al = np.linspace(1.0, E.PEN_LEN - 1.0, 200)
+_pe2, _pn2 = pen_en(_al, np.zeros_like(_al))
+_pmid, _ = E.height_field(E.en_dir(_pe2, _pn2))
+print(f"peninsula  : centreline min={float(_pmid.min()):.5f} "
+      f"max={float(_pmid.max()):.5f}  "
+      f"{'OK — dry the whole way' if _pmid.min() >= HAZ else '*** FLOODED ***'}")
+
+# the rivers must actually BE water, or none of this meant anything
+for nm, sgn in (("Ashley", -1), ("Cooper", +1)):
+    _rp = np.full(200, 0.0)
+    _rr = []
+    for a in np.linspace(2.0, E.PEN_LEN - 2.0, 40):
+        sc = np.linspace(0.0, 16.0, 300)
+        ee, nn2 = pen_en(a, sgn * sc)
+        cc = E.charleston(E.en_dir(ee, nn2))
+        _rr.append(float((cc["wet"] > 0.5).sum()) * (16.0 / 300))
+    print(f"{nm:10s} : mean wetted width {np.mean(_rr):.2f} BU "
+          f"({np.mean(_rr) * 25:.0f} game units)  "
+          f"{'OK' if np.mean(_rr) > 1.5 else '*** RIVER MISSING ***'}")
+
+# the bridge has to actually span the water it claims to
+_bs = np.linspace(_s0, _s1, 300)
+_be, _bn = pen_en(BRIDGE_AL, _bs)
+_bw = E.charleston(E.en_dir(_be, _bn))["wet"] > 0.5
+print(f"Ravenel    : deck {_TOT:.2f} BU long, spans {_bw.sum() / 300 * _TOT:.2f} BU "
+      f"of water, dry ends={'OK' if not (_bw[0] or _bw[-1]) else '*** ENDS IN THE RIVER ***'}")
+print(f"           : pylons {PYLON_H * 25:.0f} game units vs tallest tower "
+      f"{3.2 * 25:.0f} — {'OK, bridge wins' if PYLON_H > 3.2 else '*** OUT-TOPPED ***'}")
+print(f"steeples   : {len(steeples)} placed, tallest {max(s[2] for s in steeples) * 25:.0f} "
+      f"game units vs historic cap {0.90 * 25:.0f} — "
+      f"{'OK, Holy City' if min(s[2] for s in steeples) > 0.90 else '*** OUT-TOPPED ***'}")
+print("=" * 68 + "\n")
 
 # --------------------------------------------------------------- PREVIEWS --
 print("rendering previews (Cycles CPU)…")
@@ -729,10 +1170,23 @@ world = bpy.data.worlds.new("Space")
 world.color = (0.005, 0.005, 0.01)
 scene.world = world
 
-def aim(obj, target):
+def aim(obj, target, up=None):
+    """Point obj's -Z at `target`. With no `up` the roll comes from world +Y,
+    which is fine for orbital shots and lights but rolls the horizon ~90 deg on
+    a ground-level shot at Charleston's latitude — pass the local surface
+    normal (i.e. target.normalized()) for those."""
     d = (target - obj.location).normalized()
     obj.rotation_mode = 'QUATERNION'
-    obj.rotation_quaternion = d.to_track_quat('-Z', 'Y')
+    if up is None:
+        obj.rotation_quaternion = d.to_track_quat('-Z', 'Y')
+        return
+    z = -d                                    # camera looks down its own -Z
+    x = Vector(up).cross(z)
+    if x.length < 1e-6:
+        x = Vector((1, 0, 0)).cross(z)
+    x.normalize()
+    y = z.cross(x)
+    obj.rotation_quaternion = Matrix((x, y, z)).transposed().to_quaternion()
 
 bpy.ops.object.light_add(type='SUN', location=(300, -300, 200))
 sun = bpy.context.active_object
@@ -740,40 +1194,112 @@ sun.data.energy = 4.0
 aim(sun, Vector((0, 0, 0)))
 bpy.ops.object.light_add(type='SUN', location=(-300, 300, -150))
 fill = bpy.context.active_object
-fill.data.energy = 0.35                # faint fill so shadows aren't void
+fill.data.energy = 0.35
 aim(fill, Vector((0, 0, 0)))
 
 bpy.ops.object.camera_add()
 cam = bpy.context.active_object
 scene.camera = cam
 
-SHOTS = [
-    ("earth_preview_west.png", ll_dir(18, -60) * 330, Vector((0, 0, 0))),   # Americas
-    ("earth_preview_east.png", ll_dir(18, 95) * 330, Vector((0, 0, 0))),    # Asia/Oz
-    ("earth_preview_pad.png",  Vector(PAD_DIR.tolist()) * 170,
-                               Vector(PAD_DIR.tolist()) * 100),             # pad close-up
-    ("earth_preview_city.png",                                              # skyline, oblique
-     Vector(ll_dir(28.0, -70.0).tolist()) * 135,
-     Vector(ll_dir(CITIES[0]["lat"], CITIES[0]["lon"]).tolist()) * 101),
-]
-for fname, pos, target in SHOTS:
-    cam.location = Vector(pos.tolist()) if not isinstance(pos, Vector) else pos
-    aim(cam, target)
-    scene.render.filepath = os.path.join(ROOT, "planets", "previews", fname)
-    bpy.ops.render.render(write_still=True)
-    print(f"wrote {fname}")
+def cam_over(e, n, dist, elev_deg, az_deg, lift=0.0):
+    """Camera `dist` out from the map point (e,n), `elev_deg` above the local
+    horizon on bearing `az_deg`. Aiming at two lat/lons and hoping gives
+    grazing tangent shots (gotchas.md #7)."""
+    d = E.en_dir(e, n)
+    hm, _ = E.height_field(d[None, :])
+    dv = Vector(d.tolist())
+    C = dv * (R * float(hm[0]) + lift)
+    t1 = dv.cross(Vector((0, 0, 1))).normalized()
+    t2 = dv.cross(t1)
+    az, el = math.radians(az_deg), math.radians(elev_deg)
+    horiz = t1 * math.cos(az) + t2 * math.sin(az)
+    return C + (dv * math.sin(el) + horiz * math.cos(el)) * dist, C
 
-# NIGHT shot of Charleston — move the sun BEHIND the planet (from the city's
-# view) so the day light is off and the emissive work actually shows: lit
-# windows, the warm streetlight grid, red beacons, distant city lights.
-city_dir = ll_dir(CITIES[0]["lat"], CITIES[0]["lon"])
-sun.location = Vector((-city_dir[0], -city_dir[1], -city_dir[2])) * 400
+def light_for(target):
+    """relight along the subject's own normal — the fixed system sun leaves
+    half the ground-level shots on the night side as black mush"""
+    sun.location = target.normalized() * 420 + Vector((60, -60, 40))
+    aim(sun, target)
+
+def shoot(name, pos, target, relight=True, level=False, no_clouds=False):
+    """`level` rolls the camera off the local surface normal instead of world
+    +Y. `no_clouds` hides the cloud shell for the frame — the deck sits at
+    1.0175 R and the blobs bottom out near 1.03, so at ground level one will
+    eventually park itself between the lens and the subject."""
+    if relight:
+        light_for(target)
+    if no_clouds:
+        clouds.hide_render = True
+    cam.location = pos
+    aim(cam, target, up=target.normalized() if level else None)
+    scene.render.filepath = os.path.join(OUT, "previews", name)
+    bpy.ops.render.render(write_still=True)
+    if no_clouds:
+        clouds.hide_render = False
+    print(f"wrote {name}")
+
+_pen_mid_e, _pen_mid_n = pen_en(E.PEN_LEN * 0.45, 0.0)
+_br_e, _br_n = pen_en(BRIDGE_AL, (_bank_w + _bank_e) * 0.5)
+
+# --- orbital: the sun stays fixed so the planet reads as a planet
+sun.location = Vector((300, -300, 200)); aim(sun, Vector((0, 0, 0)))
+shoot("earth_preview_west.png", Vector((E.ll_dir(18, -60) * 330).tolist()),
+      Vector((0, 0, 0)), relight=False)
+shoot("earth_preview_east.png", Vector((E.ll_dir(18, 95) * 330).tolist()),
+      Vector((0, 0, 0)), relight=False)
+
+# --- the money shot: the peninsula from straight up
+p, c = cam_over(_pen_mid_e, _pen_mid_n, 46, 88, 0)
+shoot("earth_preview_peninsula.png", p, c)
+
+# --- the peninsula on the oblique, looking down the axis toward the harbor.
+# cam_over's azimuth basis is t1 = WEST, t2 = SOUTH (t1 = d x Z is -east), so a
+# desired map heading (de, dn) is az = atan2(-dn, -de). Here we want to stand
+# up-peninsula at -AX and look down it, which lands on atan2(AX_n, AX_e).
+_AZ_DOWNAXIS = math.degrees(math.atan2(AX[1], AX[0]))
+p, c = cam_over(_pen_mid_e, _pen_mid_n, 40, 26, _AZ_DOWNAXIS)
+shoot("earth_preview_approach.png", p, c)
+
+# --- the Ravenel in profile: stand DOWN-river so the camera is perpendicular
+# to the deck and both pylons, the full span and the cable fans all read.
+# Along the river is +/-AX; from up-river the bridge is end-on and foreshortens
+# into a smear.
+p, c = cam_over(_br_e, _br_n, 20, 10, _AZ_DOWNAXIS + 180.0)
+shoot("earth_preview_ravenel.png", p, c)
+
+# --- downtown + steeples. Aim at the MIDDLE OF THE STEEPLES, not at an
+# arbitrary point down the peninsula — the first pass picked a spot by
+# fraction-of-length and framed a block of row houses with no spire in shot.
+_st_e = sum(s[0] for s in steeples) / len(steeples)
+_st_n = sum(s[1] for s in steeples) / len(steeples)
+p, c = cam_over(_st_e, _st_n, 15, 16, _AZ_DOWNAXIS + 180.0)
+shoot("earth_preview_steeples.png", p, c)
+
+# --- the spaceport
+p, c = cam_over(_pe, _pn, 16, 30, 120)
+shoot("earth_preview_pad.png", p, c)
+
+# --- the port on the nose, low on the approach bearing: lead-in lights and
+# deck paint in the foreground, terminal and control tower standing up behind.
+# cam_over's azimuth basis at the pad IS the pad frame — same cross-product
+# construction off the same `d` — so `az` here is the same theta the dressing
+# was laid out on, and APPR_TH frames it the way you actually fly in.
+p, c = cam_over(_pe, _pn, 10.0, 16, APPR_TH, lift=0.5)
+shoot("earth_preview_port.png", p, c, level=True, no_clouds=True)
+
+# --- NIGHT: sun behind the planet so the emissive work carries the frame —
+# lit windows, the street grid, floodlit steeples, the Ravenel's cables
+print("rendering night…")
+sun.location = Vector((-_cd * 400).to_tuple())
 aim(sun, Vector((0, 0, 0)))
-fill.data.energy = 0.04
-cam.location = Vector(ll_dir(30.0, -71.0).tolist()) * 128
-aim(cam, Vector(ll_dir(CITIES[0]["lat"], CITIES[0]["lon"]).tolist()) * 101)
-scene.render.filepath = os.path.join(ROOT, "planets", "previews", "earth_preview_night.png")
-bpy.ops.render.render(write_still=True)
-print("wrote earth_preview_night.png")
+sun.data.energy = 0.05
+fill.data.energy = 0.02
+p, c = cam_over(_pen_mid_e, _pen_mid_n, 42, 34, 300)
+shoot("earth_preview_night.png", p, c, relight=False)
+
+# the port after dark is the whole point of the emissive pass — if the deck
+# paint, rim lights and lead-in don't carry this frame, the dressing failed
+p, c = cam_over(_pe, _pn, 10.0, 16, APPR_TH, lift=0.5)
+shoot("earth_preview_port_night.png", p, c, relight=False, level=True, no_clouds=True)
 
 print("DONE — earth.glb + earth_height.json + previews")
