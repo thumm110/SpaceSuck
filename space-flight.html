@@ -744,11 +744,17 @@ const BODIES = [
          power  — column height/rate/loudness, 0..1
          simmer — the between-times trickle (the Maw has a lava lake, so it never
                   fully goes out; a dry fissure does) */
+    /* v77.1, from the cockpit: "the volcanic activity could be tuned up so that
+       it is more active." Gaps roughly halved and every simmer raised, so the
+       caldera is doing SOMETHING almost all the time and a full eruption is a
+       regular event rather than something you have to loiter for. THE SCAR gets
+       a simmer of its own — build_cinder.py glows the graben floor from below,
+       so a dead trench was the wrong read. */
     vents: [
-      { name: "THE MAW",   lat:  5.0, lon:  30.0, gap: [16, 34], power: 1.0,  simmer: 1.0  },
-      { name: "NORTH VENT", lat: 13.5, lon: 21.0, gap: [24, 58], power: 0.45, simmer: 0.18 },
-      { name: "SPILLWAY",  lat: -3.0, lon:  39.0, gap: [28, 64], power: 0.40, simmer: 0.14 },
-      { name: "THE SCAR",  lat: 41.0, lon: 177.0, gap: [34, 78], power: 0.55, simmer: 0    },
+      { name: "THE MAW",    lat:  5.0, lon:  30.0, gap: [ 7, 17], power: 1.0,  simmer: 1.0  },
+      { name: "NORTH VENT", lat: 13.5, lon:  21.0, gap: [12, 28], power: 0.45, simmer: 0.45 },
+      { name: "SPILLWAY",   lat: -3.0, lon:  39.0, gap: [14, 32], power: 0.40, simmer: 0.38 },
+      { name: "THE SCAR",   lat: 41.0, lon: 177.0, gap: [18, 40], power: 0.55, simmer: 0.20 },
     ],
     gravity: 0.6,                   // small world, light pull — forgiving
     // NO pads. The whole surface is landable off the height grid, and both
@@ -2991,6 +2997,7 @@ for (let i = 0; i < JUNK_COUNT; i++) {
     // v76 burn-up state. burn > 0 IS the "this slot is a meteor right now" flag;
     // everything else here is only meaningful while it is.
     burn: 0, burnMax: 1, burnBody: null, burnScale0: 1, emberCool: 0,
+    burnSurvives: false,   // v77.1 — does this one reach the ground, or burn out?
     phase: rand() * 6.28,
   });
 }
@@ -3180,8 +3187,25 @@ function junkLeaveField(j, delay) {
    shootable, not rammable, not worth scrap. That matters: a burning rock you
    could still ram would be a hitbox in the middle of a light show, and one you
    could shoot would pay out for hitting something that was already dead. */
-const BURN_LIFE_MIN = 1.15, BURN_LIFE_MAX = 2.0;
-const BURN_DIVE = 430;        // u/s straight down — a drifting rock "entering the
+/* v77.1, from the cockpit: "the meteors stay big and fall off the screen. It'd be
+   cool to see a few totally burn out to nothing."
+
+   Both symptoms had one cause. The burn life was a flat 1.15-2.0s while CINDER
+   only has 262u of air above the evict shell, so at 430 u/s EVERY rock reached
+   the ground in ~0.6s with most of its mass and most of its life left. Nothing
+   ever burned up on the world built for burning things up.
+
+   So the life is no longer a constant — it's derived from how much air is
+   actually under the rock (see junkBurnUp), which self-tunes per world and
+   guarantees a non-survivor finishes IN FLIGHT. And whether a rock survives at
+   all is now a roll, so CINDER gets a mix instead of a 100% landing rate. */
+const BURN_LIFE_MIN = 0.55, BURN_LIFE_MAX = 2.2;
+const IMPACT_CHANCE = 0.35;   // on an impacts world, how many make it down. The
+                              // other 65% are the ones that burn out to nothing.
+const BURN_AIR_USE = 0.82;    // fraction of the available air a burn-out gets to
+                              // use — the rest is margin so it dies with the
+                              // ground still visibly below it
+const BURN_DIVE = 300;        // u/s straight down — a drifting rock "entering the
                               // atmosphere" at its own 3-29 u/s just hangs there
 const BURN_TANGENT = 165;     // sideways run, kept from its old heading so no two
                               // meteors trace the same line
@@ -3217,7 +3241,6 @@ function junkCanBurn(j, body) {
 function junkBurnUp(j, body) {
   j.alive = false;              // scenery from here on — see the note above
   j.burnBody = body;
-  j.burn = j.burnMax = BURN_LIFE_MIN + Math.random() * (BURN_LIFE_MAX - BURN_LIFE_MIN);
   j.burnScale0 = j.group.scale.x;
   j.emberCool = 0;
   j.group.visible = true;
@@ -3226,6 +3249,22 @@ function junkBurnUp(j, body) {
   burnUp.subVectors(j.group.position, body.group.position);
   const d = burnUp.length();
   if (d < 1e-3) burnUp.set(0, 1, 0); else burnUp.multiplyScalar(1 / d);
+
+  /* v77.1: how long does it get? Measure the air under it and work backwards.
+     The radial speed is EXACTLY BURN_DIVE (the velocity below is built as
+     tangent x BURN_TANGENT minus up x BURN_DIVE), so air / BURN_DIVE is the
+     honest time-to-ground and no world can surprise this.
+       survivor   — impacts worlds only, and only IMPACT_CHANCE of them. Give it
+                    the full life; the ground-contact branch ends it.
+       burn-out   — everything else. Capped at BURN_AIR_USE of the fall so it is
+                    always gone with sky still under it, which is the thing that
+                    reads as "burned up" rather than "landed off-screen". */
+  const floor = body.cfg.landable ? groundRadius(body, burnUp) : body.cfg.radius;
+  const air = Math.max(30, d - floor);
+  j.burnSurvives = !!body.cfg.impacts && Math.random() < IMPACT_CHANCE;
+  j.burn = j.burnMax = j.burnSurvives
+    ? BURN_LIFE_MAX
+    : Math.max(BURN_LIFE_MIN, Math.min(BURN_LIFE_MAX, (air / BURN_DIVE) * BURN_AIR_USE));
   burnTan.copy(j.vel).addScaledVector(burnUp, -j.vel.dot(burnUp));   // strip the radial part
   if (burnTan.lengthSq() < 1e-4) {
     // it was falling dead-straight (or not moving) — pick any tangent
@@ -3259,8 +3298,14 @@ function junkBurnStep(j, dt) {
      everywhere else it's a flare, which reads as the last of it going out on
      the deck. */
   if (d <= floor + j.radius * 0.5) {
-    if (body.cfg.impacts) surfaceImpact(body, j.group.position, burnUp, j.radius);
-    else emitEmber(j.group.position, SPARK_STILL, j.radius * 2.0, 0.2, true);
+    // v77.1: the crater is the SURVIVOR's ending. A rock that lost the roll and
+    // still touched down (a short fall, a peak under it) goes out as a flare —
+    // it's a cinder by now, and cratering off a 4%-scale ember would read as a
+    // boulder landing when there's nothing left of it to land.
+    if (body.cfg.impacts && j.burnSurvives)
+      surfaceImpact(body, j.group.position, burnUp, j.radius);
+    else
+      emitEmber(j.group.position, SPARK_STILL, Math.max(5, j.radius * 2.0), 0.2, true).carry = body;
     junkLeaveField(j, 2 + Math.random() * 3);
     return;
   }
@@ -3270,10 +3315,12 @@ function junkBurnStep(j, dt) {
   const heat = Math.min(1, k * 3) * (1 - k * 0.55);
   for (const m of j.mats) m.emissive.copy(m.userData.baseEmissive).lerp(BURN_WHITE, heat);
 
-  /* ABLATION — it eats itself. On an impacts world it only sheds a chunk of
-     its mass, because the whole point of that world is that something LANDS. */
-  const shrink = body.cfg.impacts ? 1 - k * 0.5 : 1 - k * 0.92;
-  j.group.scale.setScalar(j.burnScale0 * Math.max(0.04, shrink));
+  /* ABLATION — it eats itself, and v77.1 keys this off the ROCK's fate rather
+     than the WORLD's. A survivor sheds only half, because something has to be
+     left to make a crater with; everything else is down to 3% by the end, which
+     is what "totally burned out" looks like before the final flare takes it. */
+  const shrink = j.burnSurvives ? 1 - k * 0.5 : 1 - k * 0.97;
+  j.group.scale.setScalar(j.burnScale0 * Math.max(0.03, shrink));
 
   // the trail: embers dropped behind it, drifting backward off the track
   j.emberCool -= dt;
@@ -3326,8 +3373,11 @@ function junkActivate(j) {
    simply recycling each other — a plume emitted 20 embers a second with a 2.5s
    life and never showed more than a handful, because the ring buffer came round
    and took them back. The extra 70 slots are exactly the ambient allowance
-   below, so combat FX keep the headroom they always had. */
-const EMBER_COUNT = 260;
+   below, so combat FX keep the headroom they always had. (v77.1: 260 -> 290 when
+   the ambient allowance went 70 -> 100 for the livelier vents. The rule is that
+   these two move TOGETHER — combat's share is EMBER_COUNT minus the allowance and
+   it should stay at the 190 this pool was tuned around.) */
+const EMBER_COUNT = 290;
 const EMBER_HOT = new THREE.Color(0xfff4cc), EMBER_MID = new THREE.Color(0xff8a2b),
       EMBER_COLD = new THREE.Color(0x8c1c0c);
 const embers = [];
@@ -3392,7 +3442,9 @@ function burstSparks(pos, baseVel, radius) {
    at. Counted, not tracked, for the same reason as burningNow(): a hand-kept
    tally has to be unwound every time a combat burst overwrites an ambient slot,
    and one miss switches the ambience off for the rest of the session. */
-const AMBIENT_EMBER_CAP = 70;    // of EMBER_COUNT — the 70 added in v77
+const AMBIENT_EMBER_CAP = 100;   // of EMBER_COUNT — the slots added for ambience.
+                                 // v77.1: 70 -> 100 to pay for the livelier vents;
+                                 // EMBER_COUNT went up with it so combat is untouched.
 function ambientEmber(pos, vel, size, life, grow) {
   let live = 0;
   for (const e of embers) if (e.ambient && e.life > 0 && ++live >= AMBIENT_EMBER_CAP) return null;
@@ -3456,7 +3508,9 @@ function surfaceImpact(body, at, up, radius) {
    world fires the instant you arrive, because they'd all have been sitting at
    zero waiting for you. Arriving mid-eruption is the point. */
 const VENT_SEE_R = 5200;        // past this the column is a pixel — skip the embers
-const VENT_BURST_MIN = 2.2, VENT_BURST_MAX = 4.5;
+const VENT_BURST_MIN = 3.4, VENT_BURST_MAX = 7.0;   // v77.1: longer eruptions too —
+                                                    // "more active" is as much about
+                                                    // duration as about frequency
 const _ventN = new THREE.Vector3(), _ventP = new THREE.Vector3(),
       _ventV = new THREE.Vector3(), _ventJ = new THREE.Vector3();
 
@@ -3507,8 +3561,8 @@ function updateVents(dt) {
          allowance a stream of little sparks is a stream of little sparks whereas
          eight big soft puffs a second is a column. 0.12s at full power = ~8/s,
          which at a 1.4-3.2s life stands ~20 sprites up over the caldera. */
-      v.cool = erupting ? 0.12 / Math.max(0.3, v.cfg.power)
-                        : 0.9 / Math.max(0.15, v.cfg.simmer);
+      v.cool = erupting ? 0.085 / Math.max(0.3, v.cfg.power)   // v77.1: denser column
+                        : 0.65 / Math.max(0.15, v.cfg.simmer);
 
       fromBakedFrame(b, v.dir, _ventN);
       _ventP.copy(b.group.position).addScaledVector(_ventN, groundRadius(b, _ventN));
