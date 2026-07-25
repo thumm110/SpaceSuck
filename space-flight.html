@@ -5592,8 +5592,21 @@ function updateEnemies(dt) {
 
 const VIEW_COCKPIT = 0, VIEW_CHASE = 1, VIEW_CHASE_FAR = 2, VIEW_CINEMATIC = 3;
 let viewMode = VIEW_COCKPIT;                      // start in the cockpit
-const CHASE_OFFSET = new THREE.Vector3(0, 4.2, 15.5); // behind & above, in ship-local space
-const CHASE_FAR_OFFSET = new THREE.Vector3(0, 6.4, 27); // v44: same chase brain, wider stage
+/* Behind & above, in ship-local space. The y:z RATIO is what sets where the
+   ship sits vertically in frame — the ship rests at atan(y/z) below the lens
+   axis — and it only started meaning that in v71.1, when the frame guarantee
+   stopped dragging the ship back to screen centre every frame (see the long
+   note at the guarantee itself).
+
+   Both views are tuned to land the ship at the SAME spot, about half way from
+   centre to the bottom edge (NDC -0.50), which parks it just clear of the
+   radar. They need different y values to get there because they differ in both
+   distance and FOV: 17.4° at 15.5 back through a 64° lens, 18.1° at 27 back
+   through a 66° lens. (Tanner, playtest: "move it slightly down a bit to just
+   above the radar.") Every hull inherits this for free — chaseFrame scales the
+   whole vector, so the ratio, and therefore the framing, is invariant. */
+const CHASE_OFFSET = new THREE.Vector3(0, 4.85, 15.5);
+const CHASE_FAR_OFFSET = new THREE.Vector3(0, 8.8, 27);  // v44: same brain, wider stage
 
 /* ---- PER-VIEW FIELD OF VIEW (v71) --------------------------------------
    The camera ran one 70-degree vertical FOV for every view. At 16:9 that is
@@ -7361,13 +7374,31 @@ function animate() {
         .add(shipObj.position);
     }
 
-    // frame guarantee: if a hard turn swings the ship more than 28° off
-    // camera center, rotate the camera the MINIMUM amount to catch it.
-    // Suspended while head-looking — glancing away from your own ship
-    // is the point of the look stick.
+    /* Frame guarantee: if a hard turn swings the ship off where it belongs,
+       rotate the camera the MINIMUM amount to catch it. Suspended while
+       head-looking — glancing away from your own ship is the point of the
+       look stick.
+
+       v71.1: measured against the ship's RESTING direction, not the lens
+       axis. It used to compare against dead centre, which sounds right and
+       was quietly wrong: CHASE_OFFSET puts the ship 17° BELOW the lens by
+       construction, so a deadzone centred on the screen was violated on
+       every single frame of ordinary flight. The guarantee fired constantly,
+       dragging the ship back up to exactly MAX_OFFSCREEN and pinning it
+       there — measured NDC -0.196, which is precisely -tan(7°)/tan(fov/2).
+       The camera spent all its time fighting its own offset, and
+       CHASE_OFFSET.y had almost no effect on anything you could see.
+
+       Anchoring the deadzone where the ship actually sits gives the offset
+       its meaning back (it now sets the framing height, see below) and turns
+       this back into what its name says: a safety net for hard turns. The
+       7° tolerance is untouched — tracking is exactly as tight as v38 made
+       it, just measured from the right place. */
     if (!lookActive) {
       chaseDir.copy(shipObj.position).sub(camera.position).normalize();
-      chaseFwd.set(0, 0, -1).applyQuaternion(chaseQuat);
+      const _off = viewMode === VIEW_CHASE_FAR ? CHASE_FAR_OFFSET : CHASE_OFFSET;
+      const _anchor = Math.atan2(_off.y, _off.z);   // how far below the lens it rests
+      chaseFwd.set(0, -Math.sin(_anchor), -Math.cos(_anchor)).applyQuaternion(chaseQuat);
       const offAngle = chaseFwd.angleTo(chaseDir);
       if (offAngle > MAX_OFFSCREEN) {
         chaseAxis.crossVectors(chaseFwd, chaseDir);
