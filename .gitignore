@@ -3,3 +3,7 @@
 # (Leading * matches the "(C) SpaceSuck — " prefix without depending on the
 #  em-dash byte, so the rule holds even if the prefix changes.)
 *Combined Idea Checklist.md
+
+# Pre-rebuild asset backups. Kept on disk deliberately (a Blender rebuild is
+# slow to redo), but their content is already in git history — never commit them.
+*.bak
