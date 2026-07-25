@@ -5129,9 +5129,10 @@ function updateGunships(dt) {
     // suspenders — gunshipWardGone should have caught it already)
     if (g.role === "escort" && !g.hostile && (!g.ward || !g.ward.alive)) { gunshipDespawn(g); continue; }
 
-    // harbor: same shelter rule as the raiders — a hostile breaks off,
-    // runs for open space, and despawns over the horizon
-    if (harbor && g.hostile) {
+    // same shelter rule as the raiders, both triggers: the home harbor, and
+    // (v75.1) wheels down on any pad. A capital menacing a parked ship it
+    // cannot shoot was the same empty stalemate — see the long note there.
+    if ((harbor || landedOn) && g.hostile) {
       if (dist > PIRATE_HARBOR_GONE) { gunshipDespawn(g); continue; }
       if (g.state !== "BREAK") { g.state = "BREAK"; g.jinkDir.copy(gunTmpA).negate(); }
       g.stateT = 0;
@@ -5627,10 +5628,24 @@ function updateEnemies(dt) {
     }
     pirTmpA.divideScalar(dist || 1);   // unit pirate→ship; holds for this whole iteration
 
-    // harbor: any HOSTILE pursuer breaks off, runs for open space, and
-    // despawns over the horizon. The retreat is pinned so it can't re-engage.
-    // Neutrals aren't hunting and wingmen are yours — the harbor ignores both.
-    if (harbor && p.faction === "hostile") {
+    /* Any HOSTILE pursuer breaks off, runs for open space, and despawns over
+       the horizon. The retreat is pinned so it can't re-engage. Two triggers:
+
+       - HARBOR (v44): home's sky is a no-hunt zone across the whole
+         PIRATE_SAFE_R bubble, so the approach and the departure are covered.
+       - PARKED (v75.1): wheels down on ANY pad. Tanner, playtest 2026-07-25:
+         "the raiders should break off when on a pad." Every damage path in both
+         directions was already exempt on the deck — they can't shoot you, and
+         v60 made your guns cold so you can't shoot them (see the note at the
+         blasters) — so a raider orbiting a parked ship was a stalemate with
+         nothing left in it but menace. Now it leaves.
+
+       This does NOT quietly hand RustHollow the harbor's protection. `landedOn`
+       is null through the entire approach and liftoff, so a pirate market still
+       costs you the corridor in and out, which is the part of v60's
+       "fencing here costs you the protection" rule that was load-bearing.
+       Neutrals aren't hunting and wingmen are yours — both ignore this. */
+    if ((harbor || landedOn) && p.faction === "hostile") {
       if (dist > PIRATE_HARBOR_GONE) { pirateDespawn(p); continue; }
       if (p.state !== "BREAK") { p.state = "BREAK"; p.jinkDir.copy(pirTmpA).negate(); }
       p.stateT = 0;
