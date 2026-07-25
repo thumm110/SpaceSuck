@@ -7,3 +7,6 @@
 # Pre-rebuild asset backups. Kept on disk deliberately (a Blender rebuild is
 # slow to redo), but their content is already in git history — never commit them.
 *.bak
+
+# Blender/Python bytecode from the build scripts
+__pycache__/

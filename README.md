@@ -1,9 +1,11 @@
 # SpaceSuck — Deep Space Flight
 
-A procedural space-flight toy in **one HTML file**. No build step, no image
-assets, no dependencies beyond a vendored copy of three.js — every planet
-texture, the ship, the starfield, and the engine audio are generated in code
-when the page loads.
+A space-flight toy that runs from **one HTML page**. No build step, no
+dependencies beyond a vendored copy of three.js — the starfield, the galaxies,
+the engine audio and the whole score are generated in code when the page loads.
+The hand-built things are Blender output: eleven ship hulls under `ship/`,
+`enemies/` and `npc/`, and five landable worlds under `planets/`, each with a
+baked height grid so landing works without raycasting the terrain.
 
 **🚀 Fly it now: [thumm110.github.io/SpaceSuck](https://thumm110.github.io/SpaceSuck/)**
 
@@ -23,8 +25,13 @@ when the page loads.
 | Shift | Boost |
 | Space | Fire blasters |
 | E | Answer a hail — hire a neutral raider as your wingman |
+| G | Landing assist — flies you onto the pad, launches you off it, press again to abort |
 | V | Cycle view: cockpit → chase → chase far → cinematic |
 | M | Music on / off (sound effects stay up) |
+| H | Show / hide the controls panel |
+| P or ESC | Pause + settings |
+| 1 / 2 / 3 | Buy an upgrade (docked at the outfitter) |
+| 4 / 5 / 6 | Accept a dispatch contract (docked at Charleston) |
 
 Touch devices get on-screen thrust/brake/reverse buttons, a big red **FIRE**
 button, and drag steering. Hold FIRE with your right thumb while your left
@@ -50,9 +57,9 @@ and touchdowns rumble the controller, as do junk kills close aboard.
 - **Procedural planets** — seeded value noise + fractal Brownian motion
   sampled on the sphere, driving color, bump, and roughness maps
   (ocean → beach → plains → mountains → snow, with latitude ice caps)
-- **A solar system** — star, rocky/terrestrial/gas planets, two hand-built
-  landable worlds, orbiting moons (Earth's one, RUBICON's three), rings, and a
-  700-rock asteroid belt in a single draw call
+- **A solar system** — a star, a banded gas giant, and five hand-built landable
+  worlds, orbiting moons (Earth's one, AZURE's one, RUBICON's three), rings, and
+  a 1,000-rock asteroid belt in a single draw call
 - **Shootable space junk** — asteroids, dead satellites (solar wings, dish,
   a beacon still blinking), and loose debris tangled out of pipes, plates,
   and tanks. The field lives in a bubble that travels with you and respawns
@@ -65,8 +72,9 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   Manmade junk shatters on the hull; an asteroid over 26 units is a wall you
   bounce off. Damage scales with closing speed × mass, so the throttle is the
   risk dial: idling through the field is basically free, and a blind run at
-  full boost kills you in a few minutes. Nothing one-shots a full hull. Land
-  anywhere to patch up. Hull hits zero and you're towed back to Earth — an
+  full boost kills you in a few minutes. Nothing one-shots a full hull. Landing
+  patches you up — but *where* you land matters: open water on Earth and AZURE,
+  CINDER's magma and VERDANT's closed canopy all bite instead of repairing. Hull hits zero and you're towed back to Earth — an
   involuntary trip home, not a game-over screen
 - **Scrap + a tractor beam** — shot-down junk drops glowing gold scrap, and
   a beam reels in anything nearby; the CARGO counter climbs as it hits your
@@ -84,7 +92,7 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   it. A lethal hit tows you to Earth and the spill stays at the wreck
 - **Scavenger pirates — the field shoots back** — you're not the only junker
   out here. A Blender-built raider — a flat-black forward-swept dagger with
-  blood-red trim, deliberately the player ship's opposite (`raider.glb`,
+  blood-red trim, deliberately the player ship's opposite (`enemies/raider.glb`,
   source + build script in `raider/`, primitives as the loading fallback) —
   spawns off the radar's rim (two if you linger) — a falling two-note ping
   and a glowing red blip are your
@@ -114,8 +122,9 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   risk: rams spill it, a closed tab loses it. Park on the Charleston pad and
   the hold pays out into the **BANK**, a few units a tick — banked scrap is
   the number that only goes up, and it's kept in the browser across sessions
-  (open `space-flight.html#reset` to zero it). Any landing still repairs;
-  only the spaceport pays. The moment there's loot aboard, a gold **HOME**
+  (open `space-flight.html#reset` to zero it). Any landing still repairs.
+  Charleston alone pays 1:1, runs the outfitter and posts contracts — but
+  RUBICON's RustHollow will fence your hold at 70%. The moment there's loot aboard, a gold **HOME**
   marker on the HUD edge points back to the bank — and if you set down on
   the wrong continent, the landing tag tells you where the money lives.
   Take off mid-payout and the remainder simply stays in the hold
@@ -144,18 +153,18 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   a dissonant arpeggio — then melts away when the sky is clear. Neutrals
   and your own wingmen don't scare the band. **M** mutes the music; the
   engine and effects stay up
-- **Ship + camera rig** — a Blender-designed fighter (`ussthumm.glb`) with an
+- **Ship + camera rig** — a Blender-designed fighter (`ship/uss-thumm.glb`) with an
   authored idle-float animation, cockpit view, and a chase cam with easing
-  lag so you see the ship bank through turns. `build_icon.py` renders that
+  lag so you see the ship bank through turns. `build/build_icon.py` renders that
   same model into `icon.png` for the desktop launcher — same deal as the
-  planet: `blender -b -P build_icon.py`, fresh icon.
-- **EARTH, a landable Blender-built world** — `build_earth.py` generates
-  `earth.glb` (low-poly continents, polar ice, cloud banks, and a landing
-  pad + beacon at Charleston, SC) plus `earth_height.json`, a baked height
+  planet: `blender -b -P build/build_icon.py`, fresh icon.
+- **EARTH, a landable Blender-built world** — `build/build_earth.py` generates
+  `planets/earth.glb` (low-poly continents, polar ice, cloud banks, and a landing
+  pad + beacon at Charleston, SC) plus `planets/earth_height.json`, a baked height
   grid. Gravity pulls inside three radii and the grid says exactly where
   the terrain is: touch down slow and you park (**LANDED** tag), throttle
   up to leave. Open `space-flight.html#earth` to spawn on the doorstep.
-  Edit the script, re-run `blender -b -P build_earth.py`, fresh planet.
+  Edit the script, re-run `blender -b -P build/build_earth.py`, fresh planet.
 - **A landing helper that respects the physics** — Earth orbits the sun at
   ~170 u/s and spins, so "stop" in world coordinates used to let the pad
   slide out from under you. Close in, the ship is now carried with the
@@ -165,8 +174,8 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   with range and a closing-rate arrow, turning green and reading **ALIGNED**
   once you're over the spaceport — the HOME chevron hands off to it as you
   get close
-- **RUBICON, a second world on the far rim** — `build_rubicon.py` bakes a
-  bigger, redder cousin of Earth (`rubicon.glb` + `rubicon_height.json`): a
+- **RUBICON, a second world on the far rim** — `build/build_rubicon.py` bakes a
+  bigger, redder cousin of Earth (`planets/rubicon.glb` + `planets/rubicon_height.json`): a
   rust-desert super-Earth (3200u to Earth's 2500) of canyons, dune plateaus,
   and dry basins under a thin polar dust cap, wrapped in an orange dust haze
   and trailing **three moons of three sizes** on tilted orbits. It rides the
@@ -176,7 +185,7 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   bank and no city out here: Charleston keeps its monopoly. Open
   `space-flight.html#rubicon` (or `./play.sh rubicon`) to spawn on its
   doorstep. Same deal as Earth — edit the script, re-run
-  `blender -b -P build_rubicon.py`, fresh planet.
+  `blender -b -P build/build_rubicon.py`, fresh planet.
 
 ## Run it locally
 
@@ -198,18 +207,19 @@ python3 -m http.server 8123
 then open <http://localhost:8123/space-flight.html>.
 
 **Serving it over http isn't optional.** Double-clicking `space-flight.html`
-still flies, but browsers block `fetch()` on `file://` — so `ussthumm.glb` and
-`earth.glb` never load, and the game quietly falls back to the primitive
+still flies, but browsers block `fetch()` on `file://` — so `ship/uss-thumm.glb` and
+`planets/earth.glb` never load, and the game quietly falls back to the primitive
 placeholder ship and a procedural Earth. If the fighter looks like programmer
 art, that's why: check the URL, not the model.
 
 ## History
 
-Forty-eight versions across 62 commits, each `vN:` tagged in the log — `git log`
+Seventy-odd versions across 120-odd commits, each `vN:` tagged in the log — `git log`
 tells the story from "v1: first flight — mouse steer, throttle physics" to a
 Blender fighter — flying tight, its momentum gripping to the nose, framed in a
 cockpit gunsight — mining a junk field for scrap, banking it at Charleston,
 spending it on upgrades, and hiring a raider off the field to fly your wing,
-across two hand-built worlds you can land on: Earth, and the red desert of
-RUBICON on the far rim — all of it under a generative score that hears the
-radar.
+across five hand-built worlds you can land on: Earth, the red desert of
+RUBICON, the scorched lava fields of CINDER, the drowned archipelago of AZURE,
+and the closed jungle canopy of VERDANT — all of it under a generative score
+that hears the radar.
