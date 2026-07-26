@@ -792,7 +792,7 @@
     }
 
     function frameModel(obj) {
-      const box = new THREE.Box3().setFromObject(obj);
+      const box = modelBox(obj);   // exact, from vertices — shared with the game, see lib/hull-plating.js
       const sph = box.getBoundingSphere(new THREE.Sphere());
       obj.position.sub(sph.center);                 // recenter on the origin
       const r = sph.radius || 1;

@@ -2648,7 +2648,7 @@ function loadPlayerShip(def) {
     // scale to the hangar row's presence (nose to tail, in units)
     // read the authored burner colour BEFORE dressHullMats touches emissives
     const shipGlowHex = modelGlowHex(model, 0x6ee7d8);
-    const bbox = new THREE.Box3().setFromObject(model);
+    const bbox = modelBox(model);   // exact, from vertices — see lib/hull-plating.js
     const size = bbox.getSize(new THREE.Vector3());
     const sscale = def.len / size.z;
     model.scale.setScalar(sscale);
@@ -4746,7 +4746,7 @@ if (THREE.GLTFLoader) {
       // normalize to the primitives' footprint, so PIRATE_SCALE (on the
       // group) still lands the hull at player parity and the 12u hit
       // sphere keeps meaning what it means
-      const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+      const size = modelBox(model).getSize(new THREE.Vector3());   // exact — see lib/hull-plating.js
       model.scale.setScalar((10 / PIRATE_SCALE) / size.z);
 
       // same material pass as the ship swap: *Glow mats glow, the hull
@@ -4956,7 +4956,7 @@ for (let si = 0; si < haulerSlotDefs.length; si++) {
 if (THREE.GLTFLoader) for (const h of haulers) {
   new THREE.GLTFLoader().load(h.def.file + ASSET_V, gltf => {
     const model = gltf.scene;
-    const bbox = new THREE.Box3().setFromObject(model);
+    const bbox = modelBox(model);   // exact, from vertices — see lib/hull-plating.js
     const size = bbox.getSize(new THREE.Vector3());
     const hlen = h.def.len || HAULER_LEN;
     const hscale = hlen / size.z;
@@ -5626,7 +5626,7 @@ if (THREE.GLTFLoader) for (const g of gunships) {
         }
       });
     }
-    const bbox = new THREE.Box3().setFromObject(model);
+    const bbox = modelBox(model);   // exact, from vertices — see lib/hull-plating.js
     const size = bbox.getSize(new THREE.Vector3());
     const gscale = g.len / size.z;
     model.scale.setScalar(gscale);
