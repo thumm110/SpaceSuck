@@ -174,10 +174,11 @@
     <div id="ramp"></div>
     <div class="rampend"><span id="rampLo">—</span><span id="rampHi">—</span></div>
     <div class="row"><span>RES</span>
-      <div class="seg" style="width:132px">
-        <button data-res="192">LOW</button><button data-res="384" class="on">MED</button><button data-res="768">HIGH</button>
+      <div class="seg" style="width:178px">
+        <button data-res="192">LOW</button><button data-res="384" class="on">MED</button><button data-res="768">HIGH</button><button data-res="0">LOCAL</button>
       </div></div>
     <div class="read"><span>SAMPLING</span><span id="dRes">—</span></div>
+    <div class="read"><span>PATCH</span><span id="dPatch">—</span></div>
     <div class="row"><span>HAZARD MASK</span>
       <div class="seg" style="width:96px"><button data-t="hazard" class="on">OFF</button><button data-t="hazard">ON</button></div></div>
     <div class="row"><span>PADS / VENTS</span>
@@ -209,8 +210,8 @@
 <div id="hint">
   <b>drag</b> orbit (up = tilt to horizon) &nbsp; <b>shift+drag</b> move over the surface<br>
   <b>wheel</b> zoom &nbsp; <b>1-5</b> world<br>
-  <b>R</b> reload &nbsp; <b>G</b> grid &nbsp; <b>H</b> hazard &nbsp; <b>W</b> wire &nbsp;
-  <b>space</b> spin &nbsp; <b>tab</b> panel
+  <b>R</b> reload &nbsp; <b>G</b> grid &nbsp; <b>P</b> full-res patch &nbsp; <b>H</b> hazard &nbsp;
+  <b>W</b> wire &nbsp; <b>space</b> spin &nbsp; <b>tab</b> panel
 </div>
 
 <script>
@@ -614,20 +615,152 @@ function gridRadius(bx, by, bz) {
   return cfg.radius * (g.min + (g.max - g.min) * sampleGrid(g, bx, by, bz) / 255);
 }
 
+function gridMaterial() {
+  return gridMode === "wire"
+    ? new THREE.MeshBasicMaterial({ vertexColors: true, wireframe: true, transparent: true, opacity: 0.75 })
+    : new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.55,
+                                    depthWrite: false, side: THREE.DoubleSide });
+}
+
 function buildGridMesh() {
   const g = body.height;
-  if (!g || gridMode === "off") return null;
+  if (!g || gridMode === "off") { patchInfo = null; fillRes(); return null; }
+  if (gridRes === 0) return buildPatchMesh();     // RES = LOCAL — see below
+  patchInfo = null;
   const cols = Math.min(gridRes, g.w), rows = Math.max(2, Math.floor(cols / 2));
   const span = (g.max - g.min) || 1;
   const geo = displacedSphere(cols, rows, (x, y, z) => {
     const r = gridRadius(x, y, z);
     return { r, c: rampColor((r / cfg.radius - g.min) / span) };
   }, true);
-  const mat = gridMode === "wire"
-    ? new THREE.MeshBasicMaterial({ vertexColors: true, wireframe: true, transparent: true, opacity: 0.75 })
-    : new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.55,
-                                    depthWrite: false, side: THREE.DoubleSide });
-  return new THREE.Mesh(geo, mat);
+  fillRes();
+  return new THREE.Mesh(geo, gridMaterial());
+}
+
+/* ============ OVERLAY 1b — THE FULL-RES LOCAL PATCH ===============
+   RES = LOCAL trades the whole-globe sphere for the ground under the
+   pivot, sampled at the collision grid's OWN cell spacing or finer.
+
+   Why it has to exist: the global sphere is a compromise. EARTH's grid
+   is 2048 wide and MED draws 384 columns, so one drawn vertex averages
+   ~5 grid cells. At 400 units up that smooths away exactly the ridge you
+   came to look at — which means a close-up "the grid misses this" could
+   be the OVERLAY cutting the corner rather than the grid. You can't
+   settle that argument at 1:5.3. Cranking the globe to a true 1:1 would
+   be 2.1M vertices for a surface you're looking at 1% of, so instead the
+   detail follows the camera.
+
+   The patch calls the same gridRadius() the collision system calls, on a
+   tangent-plane lattice centred on the pivot and sized to what the
+   camera can see. Close in it goes FINER than one vertex per cell, which
+   draws the bilinear surface BETWEEN cells — the actual thing you land
+   on, including the one-cell skirt where a pad cone cuts in.
+
+   In this mode the coarse sphere isn't drawn at all: nothing to z-fight
+   with, and outside the disc there is honestly no data to show. The hard
+   circular edge IS the statement about where the data stops.           */
+const PATCH_MAX = 448;    // 449² ≈ 200k verts — a rebuild you don't feel
+const PATCH_MIN = 48;     // floor, so a hard zoom-in still gets a real mesh
+const PATCH_A_MAX = 0.5;  // widest half-footprint, tangent units (~27° of arc)
+let patchInfo = null;     // stats for the readout + the "has it drifted" check
+
+function buildPatchMesh() {
+  const g = body.height;
+  const c = toBaked(pivotDir(new THREE.Vector3()));      // centre, baked frame
+  const C = new THREE.Vector3(c.x, c.y, c.z).normalize();
+
+  // compass basis at the centre; cross() degenerates exactly on a pole
+  const east = new THREE.Vector3();
+  if (Math.abs(C.y) > 0.9999) east.set(1, 0, 0);
+  else east.crossVectors(WORLD_Y, C).normalize();
+  const north = new THREE.Vector3().crossVectors(C, east).normalize();
+
+  /* FOOTPRINT. dist is measured from the ground point, so ~1.7× it is a bit
+     wider than a 70° FOV covers looking straight down. Tilt toward the horizon
+     and the far half of the frame runs off past any finite patch — that's the
+     honest limit of a local tool, and the disc edge shows you where it lands. */
+  const A = Math.min(PATCH_A_MAX,
+                     Math.max(cfg.radius * 0.004, dist * 1.7) / cfg.radius);
+
+  /* CELL SPACING in ground angle. A longitude cell subtends cos(lat)× what a
+     latitude cell does, so approaching a pole they crowd into nothing —
+     resolving them there is meaningless, so the demand is capped at 5×. */
+  const lat = Math.asin(Math.max(-1, Math.min(1, C.y)));
+  const cellLat = Math.PI / g.h;
+  const cellLon = Math.cos(lat) * 2 * Math.PI / g.w;
+  const cell = Math.min(cellLat, Math.max(cellLon, cellLat * 0.2));
+
+  const n = Math.max(PATCH_MIN, Math.min(PATCH_MAX, Math.ceil(2 * A / cell)));
+  const step = 2 * A / n;      // achieved angular step — coarsest at the centre
+  const N = n + 1, nv = N * N;
+
+  const pos = new Float32Array(nv * 3), col = new Float32Array(nv * 3);
+  const span = (g.max - g.min) || 1;
+  const v = new THREE.Vector3();
+  let lo = Infinity, hi = -Infinity, k = 0;
+  for (let j = 0; j < N; j++) {
+    const dv = (j / n * 2 - 1) * A;
+    for (let i = 0; i < N; i++) {
+      const du = (i / n * 2 - 1) * A;
+      /* Offsets are TANGENT-plane, normalized back onto the sphere — the
+         gnomonic projection. Its one quirk works in our favour: the true
+         angle is atan(du), so samples bunch slightly toward the rim rather
+         than thinning out. The centre is the coarsest point, which is the
+         one the ratio below is computed from. */
+      v.set(C.x + east.x * du + north.x * dv,
+            C.y + east.y * du + north.y * dv,
+            C.z + east.z * du + north.z * dv).normalize();
+      const r = gridRadius(v.x, v.y, v.z);
+      if (r < lo) lo = r;
+      if (r > hi) hi = r;
+      pos[k * 3] = v.x * r; pos[k * 3 + 1] = v.y * r; pos[k * 3 + 2] = v.z * r;
+      const rc = rampColor((r / cfg.radius - g.min) / span);
+      col[k * 3] = rc[0]; col[k * 3 + 1] = rc[1]; col[k * 3 + 2] = rc[2];
+      k++;
+    }
+  }
+
+  // quads whose centre falls outside the unit disc are dropped, so the
+  // footprint reads as a deliberate circle of data, not a clipped square
+  const idx = new Uint32Array(n * n * 6);
+  let t = 0;
+  for (let j = 0; j < n; j++) {
+    const cv = (j + 0.5) / n * 2 - 1;
+    for (let i = 0; i < n; i++) {
+      const cu = (i + 0.5) / n * 2 - 1;
+      if (cu * cu + cv * cv > 1) continue;
+      const a = j * N + i, b = a + 1, d = a + N, e = d + 1;
+      idx[t++] = a; idx[t++] = d; idx[t++] = b;
+      idx[t++] = b; idx[t++] = d; idx[t++] = e;
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  geo.setIndex(new THREE.BufferAttribute(idx.subarray(0, t), 1));
+
+  patchInfo = {
+    cx: C.x, cy: C.y, cz: C.z, A, dist, n, verts: nv, tris: t / 3,
+    ratio: step / cell,                              // <1 = finer than the grid
+    widthU: 2 * cfg.radius * Math.atan(A),           // real ground arc across
+    lo, hi,
+  };
+  fillRes();
+  return new THREE.Mesh(geo, gridMaterial());
+}
+
+/* Has the patch gone stale? It's pinned to the pivot and sized off dist, so
+   panning or zooming eventually walks off it. Rebuilding mid-drag would hitch
+   every frame, so the loop also waits for the view to sit still for a beat. */
+const _pk = new THREE.Vector3();       // its own scratch — the loop owns _t
+function patchStale() {
+  if (gridRes !== 0 || gridMode === "off" || !body || !body.height) return false;
+  if (!patchInfo) return true;
+  const c = toBaked(pivotDir(_pk));
+  const dot = c.x * patchInfo.cx + c.y * patchInfo.cy + c.z * patchInfo.cz;
+  if (dot < Math.cos(patchInfo.A * 0.3)) return true;    // walked off centre
+  return dist > patchInfo.dist * 1.35 || dist < patchInfo.dist * 0.7;
 }
 
 /* ============ OVERLAY 2 — THE HAZARD MASK =========================
@@ -924,15 +1057,35 @@ function fmt(n, d) { return n.toLocaleString(undefined, { maximumFractionDigits:
    are looking at roughly 1 vertex per 5 grid cells. It smooths detail the real
    sampler keeps, which means a close-up "the grid misses this ridge" can be the
    OVERLAY cutting the corner, not the grid. Say the ratio out loud so the tool
-   can't quietly mislead a detail pass; drop to HIGH before believing a fine one. */
+   can't quietly mislead a detail pass; drop to HIGH — or to LOCAL, which puts
+   the ratio at 1:1 or better by only drawing the ground you're looking at. */
 function fillRes() {
   const g = body && body.height;
-  if (!g) return void ($("dRes").textContent = "—");
+  if (!g) { $("dRes").textContent = "—"; $("dPatch").textContent = "—"; return; }
+  if (gridRes === 0) {
+    const p = patchInfo;
+    if (!p) {
+      $("dRes").innerHTML = '<span style="color:var(--dimmer)">local — grid is off</span>';
+      $("dPatch").textContent = "—";
+      return;
+    }
+    // <1 means the patch resolves BETWEEN grid cells: the bilinear surface the
+    // collision sampler actually returns, not a polygon approximation of it
+    const badge = p.ratio <= 1.001
+      ? '<span class="ok">' + (p.ratio < 0.8 ? (1 / p.ratio).toFixed(1) + "× FINE" : "1:1") + "</span>"
+      : '<span class="miss">1:' + p.ratio.toFixed(1) + "</span>";
+    $("dRes").innerHTML = p.n + "×" + p.n +
+      ' <span style="color:var(--dimmer)">of ' + g.w + "×" + g.h + "</span> " + badge;
+    $("dPatch").innerHTML = fmt(p.widthU) + " u across" +
+      '<br><span style="color:var(--dim)">' + fmt(p.hi - p.lo, 1) + " u of relief here</span>";
+    return;
+  }
   const cols = Math.min(gridRes, g.w);
   const ratio = g.w / cols;
   $("dRes").innerHTML = cols + "×" + Math.floor(cols / 2) +
     ' <span style="color:var(--dimmer)">of ' + g.w + "×" + g.h + "</span>" +
     (ratio > 1.05 ? ' <span class="miss">1:' + ratio.toFixed(1) + "</span>" : ' <span class="ok">1:1</span>');
+  $("dPatch").innerHTML = '<span style="color:var(--dimmer)">whole globe</span>';
 }
 function fillStats(headRes) {
   const g = body.height;
@@ -1077,9 +1230,20 @@ document.querySelectorAll("[data-grid]").forEach(b => b.addEventListener("click"
   gridMode = b.dataset.grid; segSet(b); rebuildOverlays(["gridMesh"]);
 }));
 document.querySelectorAll("[data-res]").forEach(b => b.addEventListener("click", () => {
-  gridRes = +b.dataset.res; segSet(b); fillRes();
-  if (gridMode !== "off") rebuildOverlays(["gridMesh"]);
+  setRes(+b.dataset.res);
 }));
+/* LOCAL (0) is a mode, not a number, so leaving it has to land somewhere —
+   it goes back to whichever global res you were on, not a hardcoded default. */
+let lastGlobalRes = 384;
+function setRes(n) {
+  if (gridRes) lastGlobalRes = gridRes;
+  gridRes = n;
+  // asking for the full-res patch while the grid is off should show it to you
+  if (n === 0 && gridMode === "off") { gridMode = "solid"; syncGridUI(); }
+  syncResUI();
+  fillRes();
+  if (gridMode !== "off") rebuildOverlays(["gridMesh"]);
+}
 document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("click", () => {
   segSet(b); frameWorld(b.dataset.preset);
 }));
@@ -1115,6 +1279,7 @@ addEventListener("keydown", e => {
     syncGridUI();
     rebuildOverlays(["gridMesh"]);
   }
+  else if (k === "p") setRes(gridRes === 0 ? lastGlobalRes : 0);
   else if (k === " ") { e.preventDefault(); T.spin = !T.spin; syncTogglesUI(); }
   else if (k === "s") shot();
   else if (k === "tab") { e.preventDefault(); $("hud").classList.toggle("hide"); }
@@ -1122,6 +1287,9 @@ addEventListener("keydown", e => {
 // keep the segmented buttons honest after a keyboard or scripted change
 function syncGridUI() {
   document.querySelectorAll("[data-grid]").forEach(b => b.classList.toggle("on", b.dataset.grid === gridMode));
+}
+function syncResUI() {
+  document.querySelectorAll("[data-res]").forEach(b => b.classList.toggle("on", +b.dataset.res === gridRes));
 }
 function syncTogglesUI() {
   document.querySelectorAll("[data-t]").forEach(b => {
@@ -1166,6 +1334,11 @@ window.LAB = {
   },
   setSource(s) { source = s; return loadPlanet(cfg.name); },
   setGrid(m) { gridMode = m; syncGridUI(); rebuildOverlays(["gridMesh"]); },
+  /* 192 | 384 | 768 draw the whole globe; 0 is the full-res LOCAL patch. This
+     rebuilds NOW, which is how the harness gets a patch without waiting out
+     the settle timer — call it again after a goTo() to re-centre on demand. */
+  get patch() { return patchInfo; },
+  setRes,
   toggle(k, v) { T[k] = v; syncTogglesUI(); applyToggle(k); },
   // "settled", not "started" — a half-loaded world would let a caller read
   // parts.model before the .glb has landed and conclude it failed
@@ -1174,6 +1347,12 @@ window.LAB = {
 
 /* ============ LOOP ============ */
 let last = performance.now(), tick = 0;
+/* WALL CLOCK, not accumulated dt — dt is capped at 50 ms to keep spin sane
+   across a stutter, so summing it runs slow whenever the frame rate drops
+   below 20 fps. That's exactly when a heavy patch is on screen, which made
+   this "0.18 s" quietly become several seconds on a slow GPU. */
+const PATCH_SETTLE = 180;             // ms of a still view before a re-cut
+let viewKey = "", viewStillAt = 0;
 function loop(now) {
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
@@ -1189,6 +1368,17 @@ function loop(now) {
     if (parts.glbClouds) parts.glbClouds.rotation.y = cloudY * 0.5;
     placeCamera();
     placeSun();
+    /* Re-centre the LOCAL patch, but only once the view has been still for a
+       beat — a 150k-vertex rebuild mid-drag is a visible hitch, and you'd eat
+       one every few frames while panning. Spin is deliberately NOT part of
+       "still": the patch is glued to the terrain, so under spin the ground
+       slides out from under it and it has to re-cut every few seconds. */
+    const vk = az + "|" + el + "|" + dist + "|" + pitch + "|" + bearing;
+    if (vk !== viewKey) { viewKey = vk; viewStillAt = now; }
+    if (now - viewStillAt > PATCH_SETTLE && patchStale()) {
+      viewStillAt = now;
+      rebuildOverlays(["gridMesh"]);
+    }
     renderer.render(scene, camera);
     if ((tick++ & 3) === 0) updateReadouts();   // DOM writes don't need 60fps
   }
