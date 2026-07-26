@@ -4863,7 +4863,9 @@ const HAULER_DEFS = [
     // below (125/100 × 52 = 65), which lands it correctly BETWEEN the everyday
     // truck (52) and CANARY (68). hitR follows to 32.5, and the hull capsule
     // re-measures itself off the model at load.
-    first: 300, firstRnd: 120, rMin: 420, rMax: 720, len: 65, escort: true },      // priced by its rarity — and
+    first: 300, firstRnd: 120, rMin: 420, rMax: 720, len: 65, escort: true,        // priced by its rarity — and
+    banner: "◆ HEAVY FREIGHT — SS DOUBLE OVERTIME ◆" },                            // v81: rarest truck in the sky
+                                                                                   // (mean period 570s) — it earns a shout
                                                                                    // most shifts it hires security (v57, 10i)
   { file: "collector/ss-packrat.glb",      name: "SS PACKRAT",         hp: 6, bits: 14, val: 7,   // ~100 — the salvage collector,
     first: 150, firstRnd: 90,  rMin: 200, rMax: 420, len: 22, thruster: "ThrusterL",       // mid-size (2x a fighter), its own class
@@ -4876,9 +4878,18 @@ const HAULER_DEFS = [
   // (fighter 10 / HAULER_LEN 52); 130/100 × 52 ≈ 68 keeps it the biggest truck in
   // flight without dragging the whole scale retune in. hitR derives as len/2 = 34.
   { file: "hauler/canary-freight.glb",  name: "SS CANARY",          hp: 8, bits: 18, val: 7,   // 126 — between the everyday
-    first: 210, firstRnd: 110, rMin: 300, rMax: 560, len: 68 },                             // truck and the escorted piñata:
+    first: 210, firstRnd: 110, rMin: 300, rMax: 560, len: 68,                               // truck and the escorted piñata:
+    banner: "◆ CONTAINER RUN — SS CANARY ◆" },     // v81: 430s mean period, and it never
+                                                   // came closer than ~2.7km on a median pass —
+                                                   // without this you meet one and never know
                                                                                             // bigger than both, commoner
 ];                                                                                          // than DOUBLE OVERTIME
+
+/* v81: the rare trucks announce themselves — the gunship banner pattern
+   (gunshipFlash, :5525), gated on a def carrying a `banner`. The everyday OVERTIME stays
+   silent on purpose: at a 165s mean period a banner every other minute is
+   wallpaper, and wallpaper is what "SS CANARY" was already competing with. */
+let freightFlash = 0, freightFlashMsg = "";
 
 const haulTmpA = new THREE.Vector3(), haulTmpB = new THREE.Vector3(), haulTmpC = new THREE.Vector3();
 const haulSeg = new THREE.Vector3(), haulToC = new THREE.Vector3(), haulNearPt = new THREE.Vector3();
@@ -5152,6 +5163,10 @@ function haulerSpawn(h) {
   // priced by risk: a rare full CONVOY (premium freight, 2-3 guns), the
   // usual guarded solo, or an unguarded run carrying the cheap manifest.
   // You have to get close enough to count the blue glows to know which.
+  // v81: it spawns 2600-3400 out and radar reaches 3500, so spawning IS radar
+  // contact — no separate proximity trigger needed. Convoy members never come
+  // through here (spawnConvoy places them directly), so a column gets ONE shout.
+  if (h.def.banner) { freightFlash = 3; freightFlashMsg = h.def.banner; }
   h.payBits = 0; h.convoyId = 0; h.convoyLead = false;
   if (h.def.escort && !h.convoyOnly) {
     if (Math.random() < CONVOY_ODDS) spawnConvoy(h);
@@ -7484,6 +7499,7 @@ function navPlanetLabel(x, y, name, dist, color) {
 // (C) one radar blip for a world-space position; auto-hides beyond range.
 // fade = junk mode: no glow, and alpha thins with distance — full strength
 // inside RADAR_HOT, ~25% at the rim — so threats pop and the field whispers
+const _nBlip = { x: 0, y: 0, set(x, y) { this.x = x; this.y = y; return this; } };
 function navBlipAt(worldPos, cx, cy, r, color, size, fade) {
   _nRel.copy(worldPos).sub(shipObj.position);
   const d = _nRel.length();
@@ -7501,6 +7517,11 @@ function navBlipAt(worldPos, cx, cy, r, color, size, fade) {
   }
   navCtx.beginPath(); navCtx.arc(bx, by, size, 0, 6.2832); navCtx.fill();
   navCtx.shadowBlur = 0; navCtx.globalAlpha = 1;
+  // v81: hand back where the blip landed so a caller can label it. Returns
+  // undefined on the out-of-range path above — callers must null-check.
+  // SHARED scratch, rewritten by the very next call (the junk loop alone runs
+  // 44 of them a frame): read .x/.y into plain numbers before calling again.
+  return _nBlip.set(bx, by);
 }
 /* (D) HOME marker (v32) — only while there's loot aboard. The v29 rule was
    "off-screen shows nothing", and it holds for sightseeing; but the moment
@@ -7868,10 +7889,40 @@ function drawNavHud(dt) {
   for (const p of pirates) if (p.alive)
     navBlipAt(p.group.position, cx, cy, r,
               p.faction === "hostile" ? "#ff5544" : p.faction === "neutral" ? NAV_AMBER : NAV_TEAL, 3);
-  // freight: a fat gold blip — the scrap/HOME gold on purpose: loot on the hoof
-  for (const h of haulers) if (h.alive) navBlipAt(h.group.position, cx, cy, r, NAV_GOLD, 3.5);
+  /* freight: a fat gold blip — the scrap/HOME gold on purpose: loot on the hoof.
+     v81: and the NEAREST one gets its name. Every truck drew the identical dot
+     before this, and def.name existed in exactly one place in the file — a
+     console.warn on a failed load. You could fly past an SS CANARY (median
+     closest approach 2704u, median peak on-screen height 0 px) and never learn
+     which truck it was. Nearest-only because a 4-truck convoy would otherwise
+     stack four identical labels on a scope this small. */
+  let fName = null, fX = 0, fY = 0, fD2 = Infinity;     // scalars, not an object: no per-frame garbage
+  for (const h of haulers) if (h.alive) {
+    const p = navBlipAt(h.group.position, cx, cy, r, NAV_GOLD, 3.5);
+    if (!p) continue;                                   // outside the bubble — no blip, no label
+    const d2 = h.group.position.distanceToSquared(shipObj.position);
+    // read the shared scratch into numbers NOW — the next navBlipAt rewrites it
+    if (d2 < fD2) { fD2 = d2; fName = h.def.name; fX = p.x; fY = p.y; }
+  }
   // capitals: the biggest blip on the scope — red when hot, amber on guard duty
   for (const g of gunships) if (g.alive) navBlipAt(g.group.position, cx, cy, r, g.hostile ? "#ff5544" : NAV_AMBER, 4.5);
+  // the freight name, drawn last so no blip lands on top of it. Flips above the
+  // dot in the lower third of the scope so it never runs off the bottom edge.
+  if (fName) {
+    /* Pinned to the scope's centre COLUMN, not the blip's x. "SS DOUBLE
+       OVERTIME" measures 97.5px at 9px mono — 1.43x the 68px scope diameter on
+       glass — so a rim blip painted the name straight across the thumbstick on
+       an 844x390 phone. layoutNavHud reserves navRadarR and knows nothing about
+       canvas text; that blind spot is how the v78 radar bug got out too.
+       `below` also demands the blip be in the LOWER half: the HOME readout
+       parks within ~2px of the scope centre when home is behind and below you,
+       and a name 12px under a centre blip overprinted it on 16% of headings. */
+    const below = fY >= cy && fY < cy + r * 0.55;
+    c.fillStyle = NAV_GOLD; c.font = "9px " + navFont; c.textAlign = "center";
+    c.shadowColor = "rgba(0,0,0,.9)"; c.shadowBlur = 3;
+    c.fillText(fName, cx, fY + (below ? 12 : -8));
+    c.shadowBlur = 0;
+  }
   c.fillStyle = "rgba(110,231,216,.6)"; c.font = "10px " + navFont; c.textAlign = "center";
   c.fillText("RADAR", cx, cy + r + 14);
   c.restore();
@@ -7927,6 +7978,19 @@ function drawNavHud(dt) {
     c.fillStyle = "#ff5544"; c.shadowColor = "#ff5544"; c.shadowBlur = 8;
     c.font = "16px " + navFont;
     c.fillText(gunshipFlashMsg, W / 2, H * 0.34);
+    c.restore();
+  }
+  // --- H: rare freight on the scope (v81). Gold, one row below the capital
+  // banner. In practice the two never fire together — gunshipSpawnEscort is
+  // deliberately silent (:5709) and only a HOSTILE capital shouts — so the row
+  // is separation against a coincidence, not a designed pairing.
+  if (freightFlash > 0) {
+    freightFlash = Math.max(0, freightFlash - dt);
+    c.save();
+    c.textAlign = "center"; c.globalAlpha = Math.min(1, freightFlash);
+    c.fillStyle = NAV_GOLD; c.shadowColor = NAV_GOLD; c.shadowBlur = 8;
+    c.font = "16px " + navFont;
+    c.fillText(freightFlashMsg, W / 2, H * 0.38);
     c.restore();
   }
 }
