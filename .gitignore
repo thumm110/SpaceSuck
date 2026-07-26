@@ -17,3 +17,11 @@ __pycache__/
 # link — and it leaked into v79.1 via `git add -A`. The symlink itself stays on
 # disk; git just stops tracking it.
 masters
+
+# The world inspector. It's a WORKBENCH, not part of the game — it exists to
+# look hard at a planet BEFORE that planet is fit to ship. This repo is public
+# and Pages serves the whole root, so tracking it published a private tool at a
+# guessable URL. Same slip as the symlink above. The file stays on disk and is
+# used the same way (./play.sh, then localhost:8123/planet-lab.html); git just
+# never carries it again.
+planet-lab.html
