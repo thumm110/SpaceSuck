@@ -254,6 +254,13 @@
   #revtag { color: #ffb066; text-shadow: 0 0 6px rgba(255,176,102,.6); visibility: hidden; }
   #kills { color: #ff9a3c; text-shadow: 0 0 6px rgba(255,154,60,.6); letter-spacing: 2px; }
   #cargo { color: #ffd34d; text-shadow: 0 0 7px rgba(255,211,77,.7); letter-spacing: 2px; font-size: 15px; }
+  /* v82 hold breakdown: deliberately a size down from CARGO — it's the detail
+     under the headline number, and on a phone it has to not eat the panel.
+     The glow is not decoration: every other readout on this HUD has one, and
+     without it these lines read thin and wash out over a lit planet. */
+  #holdlist { font-size: 11px; letter-spacing: 1px; line-height: 1.4;
+              text-shadow: 0 0 6px currentColor, 0 0 2px rgba(0,0,0,.9); }
+  body.touch #holdlist { font-size: 10px; line-height: 1.3; }
   /* the bank is teal — safe money, same color as the hull. Cargo stays gold
      (at risk) so the two numbers read as different kinds of wealth. */
   #bank { color: #6ee7d8; text-shadow: 0 0 7px rgba(110,231,216,.7); letter-spacing: 2px; font-size: 15px; }
@@ -839,6 +846,7 @@
       <div class="shopRow"></div>
       <div class="shopRow"></div>
       <div class="shopRow"></div>
+      <div class="shopRow"></div>
     </div>
     <div id="dispatchboard">
       <div class="title">◆ DISPATCH ◆</div>
@@ -852,9 +860,16 @@
     <span class="big" id="speed">0</span> <span class="dim">u/s</span>
     <span id="revtag">◀ REV</span><br>
     <span class="dim">CARGO</span> <span id="cargo">0</span><br>
+    <!-- v82: the stack breakdown. Empty when the hold is, so it costs no glass
+         until you're carrying something — and once you are, it's the readout
+         that decides which port you fly to. -->
+    <span id="holdlist"></span>
     <span class="dim">BANK</span> <span id="bank">0</span><br>
-    <span class="dim">JUNK DESTROYED</span> <span id="kills">0</span>
-    <br><span class="dim">DISPATCH</span> <span id="jobline">—</span>
+    <!-- v82: wrapped so it can stand down on a phone while you're carrying —
+         see the space budget in refreshCargoHud. A kill counter is vanity; the
+         hold breakdown is a decision input, and only one of them fits. -->
+    <span id="killsrow"><span class="dim">JUNK DESTROYED</span> <span id="kills">0</span><br></span>
+    <span class="dim">DISPATCH</span> <span id="jobline">—</span>
   </div>
   <div id="throttlewrap">
     THR<br>
@@ -1163,9 +1178,16 @@ const BODIES = [
     // `port` (v60) declares what this pad is allowed to do. HOME gets the lot:
     // full 1:1 payout, the outfitter, the job board, the safe harbor, and it's
     // where a hull breach tows you. Exactly one pad in the game sets home:true.
+    // `market` (v82) is an ABSOLUTE rate per good — it does NOT compound with
+    // `pay`, so one readable number per line and a missing key simply falls
+    // through to `pay`. Home lists only CONTRABAND: a legitimate port won't
+    // touch hot goods, and that single 0.45 is what gives the fence at
+    // RustHollow a reason to exist beyond impatience. Everything else pays 1.0
+    // here, which is why v81 income is unchanged by the whole goods feature.
     pads: [{ lat: 32.9, lon: -80.0, ang: 0.026, top: 1.0175,
              port: { name: "CHARLESTON SPACEPORT", home: true,
-                     pay: 1.0, shop: true, dispatch: true } }],
+                     pay: 1.0, shop: true, dispatch: true,
+                     market: { contra: 0.45 } } }],
     atmosphere: 0x5f9dff, atmoStrength: 1.05,
     atmoAlt: 1400,                  // v65: was 1000. Already roomy — a modest lift.
     // Luna-true proportions: real Moon = 0.27 Earth radii. Orbits just
@@ -1251,8 +1273,14 @@ const BODIES = [
     // it takes the hold at 70c on the credit, sells nothing and posts no work.
     // Dump it here for less right now, or haul it home for full. You can still
     // land on open desert anywhere else, and get nothing for it.
+    // v82: the 0.7 stops being a flat discount and becomes a CHARACTER. The
+    // fence pays 1.5 for hot goods — better than home, and 3.3x what home
+    // gives you — while dumping on honest freight at 0.45. So the spread the
+    // economy has been missing is now one sentence: contraband comes here,
+    // everything else goes home, and a mixed hold is a routing decision.
     pads: [{ lat: -18.5, lon: 15.0, ang: 0.016, top: 1.013,
-             port: { name: "RUSTHOLLOW", pay: 0.7, shop: false, dispatch: false } }],
+             port: { name: "RUSTHOLLOW", pay: 0.7, shop: false, dispatch: false,
+                     market: { contra: 1.5, alloy: 0.9, volatile: 0.55, ore: 0.45 } } }],
     atmosphere: 0xd98a4f, atmoStrength: 1.0,   // thin orange dust haze
     atmoAlt: 1600,                  // v65: was 1280. Biggest world, already had the
                                     // most room — the smallest proportional lift.
@@ -2580,14 +2608,14 @@ const SHIPS = [
   { file: "ship/uss-thumm.glb", name: "USS THUMM", len: 10,
     blurb: "THE FACTORY FIGHTER — QUICK ON THE STICK",
     accel: 220, boost: 2.5, turn: 1.6, grip: 2.5,
-    hullMul: 1.0, beamMul: 1.0, spillMul: 1.0,
+    hullMul: 1.0, beamMul: 1.0, spillMul: 1.0, holdMul: 1.0,   // holdMul v82 — the baseline hold
     muzzles: ["ProngTipL", "ProngTipR"],
     pips: { AGILITY: 4, THRUST: 3, HULL: 2, BEAM: 3 } },
   { file: "ship/uss-boo.glb", name: "USS BOO", len: 11.5,
     blurb: "QUAD-ENGINE HEAVY — TAKES A HIT, TURNS LIKE A TRUCK",
     // turn 1.25 stays above PIRATE_TURN (1.1): even the truck out-turns a raider
     accel: 260, boost: 2.2, turn: 1.25, grip: 2.0,
-    hullMul: 1.5, beamMul: 1.15, spillMul: 0.8,
+    hullMul: 1.5, beamMul: 1.15, spillMul: 0.8, holdMul: 1.4,   // the truck of the hangar — it carries
     muzzles: ["GunTipC", "GunTipC"],   // one chin cannon — both bolts, small spread
     /* v72: colour and burner count are both DISCOVERED off the .glb now —
        pink from its EngineGlow material, all four engines from its Thruster*
@@ -2602,7 +2630,7 @@ const SHIPS = [
     // still nimble — but turn 1.55 leaves THUMM the quickest turner, and the
     // stubby tractor (beamMul 0.8) is the price: you salvage up close.
     accel: 300, boost: 3.0, turn: 1.55, grip: 2.4,
-    hullMul: 1.2, beamMul: 0.8, spillMul: 1.0,
+    hullMul: 1.2, beamMul: 0.8, spillMul: 1.0, holdMul: 0.8,   // all throttle, least room
     // twin chin gatlings — outer green muzzle tip of each barrel bundle
     muzzles: ["ChinGunLMuz0", "ChinGunRMuz0"],
     pips: { AGILITY: 4, THRUST: 5, HULL: 3, BEAM: 2 } },
@@ -2613,7 +2641,7 @@ const SHIPS = [
     // INTO the fight, not a hoover. turn 1.2 still clears PIRATE_TURN (1.1):
     // even the brick out-turns a raider.
     accel: 240, boost: 2.2, turn: 1.2, grip: 2.0,
-    hullMul: 1.7, beamMul: 0.7, spillMul: 1.0,
+    hullMul: 1.7, beamMul: 0.7, spillMul: 1.0, holdMul: 1.1,   // boxy brawler — a little room to spare
     muzzles: ["GunTipL", "GunTipR"],   // twin boom gatlings — the heavy forward gun bank
     // v72: orange comes off the model's own EngineGlow (#ff6007) and all six
     // seats are discovered. Only the centre quad's size is a judgement call.
@@ -3928,13 +3956,44 @@ let vacuumR = 260;             // reel-in range — THE upgradeable knob, and in
 const VACUUM_ACCEL = 900;      // pull strength at point-blank, easing to 0 at the rim
 const PICKUP_R = 22;           // into the intake — a hair past the 12u hull
 const SCRAP_COLOR = new THREE.Color(0xffd34d);   // gold, to read as loot — clear of the orange embers and aqua bolts
+
+/* ---- GOODS (v82, §1.1a) --------------------------------------------------
+   A good is a LABEL, not a value multiplier, and that's the whole guard that
+   keeps this honest. Every `value` in the game keeps the exact number it had
+   before goods existed — asteroid 1, satellite 4, pirate 5x8, DOUBLE OVERTIME
+   8x20 — we only TAG them. Charleston then pays 1.0 across the board, so
+   income at home is bit-for-bit what it was in v81 and all the differentiation
+   lives in the port rates. Income-neutral by construction; if it flops, the
+   rollback is a flat table rather than a re-tune of every drop in the game.
+   `color` is the readout tint only — the scrap sprite stays gold, because a
+   bit you can't identify at 200u would just be five confusing colours.
+   Picked AGAINST the HUD, not in isolation: the first pass used a mid brown
+   for ore and a mid purple for contraband and both were effectively invisible
+   at 11px over a lit planet. Everything here is bright enough to carry its own
+   glow — the label does the identifying, the colour only groups. */
+const GOODS = {
+  scrap:    { name: "SCRAP",      color: "#ffd34d" },   // rock, debris, dead pirates — the bread and butter
+  alloy:    { name: "ALLOY",      color: "#bcd8ec" },   // satellites and military hardware
+  ore:      { name: "ORE",        color: "#ff9f5a" },   // what the everyday freight run is carrying
+  volatile: { name: "VOLATILES",  color: "#7ee0c0" },   // CANARY's container run
+  contra:   { name: "CONTRABAND", color: "#ff8bf5" },   // hot goods. Home won't touch it; the fence pays triple
+};
+const GOOD_IDS = Object.keys(GOODS);
+/* `hold` is the truth, `cargo` is its running total. Keeping the total as a
+   plain number means every v81 reader of `cargo` — the spill severity, the
+   HUD, the drain loop, the docs — keeps working untouched. Both are updated
+   together, always; nothing writes one without the other. */
+const hold = {};
+for (const g of GOOD_IDS) hold[g] = 0;
+
 // value by type. Manmade junk is worth more than rock, and a rock is worth a
 // LITTLE, never zero — rocks are most of what's in front of you, so at zero
 // the game would be teaching you not to shoot. Scarcity is the ratio, not a 0.
+// `good` (v82) is the label only — the values are the v81 numbers, unchanged.
 const SCRAP_DROP = {
-  asteroid:  { bits: 1, value: 1 },   //  1
-  debris:    { bits: 4, value: 1 },   //  4
-  satellite: { bits: 6, value: 4 },   // 24
+  asteroid:  { bits: 1, value: 1, good: "scrap" },   //  1
+  debris:    { bits: 4, value: 1, good: "scrap" },   //  4
+  satellite: { bits: 6, value: 4, good: "alloy" },   // 24 — a dead satellite is salvaged ALLOY, not loose scrap
 };
 /* Ramming knocks cargo loose (v31). It scatters as live scrap you can chase
    back down, so we can be dramatic with the amount — the real loss is only
@@ -3946,8 +4005,20 @@ const SPILL_DMG_FULL = 30;     // hull damage where severity tops out
 const SPILL_MAX_BITS = 12;     // cap the scatter so a huge hold can't flood the 72-pool
 const scrapTmp = new THREE.Vector3(), scrapTmp2 = new THREE.Vector3();   // dedicated — never share junkTmp* with re-entrant code
 const cargoEl = document.getElementById("cargo");
+const holdlistEl = document.getElementById("holdlist");
+const killsRowEl = document.getElementById("killsrow");   // v82: yields to the hold list on glass
 let cargo = 0;
 let cargoFlash = 0;            // seconds left flashing the CARGO readout red after a spill
+/* The hold has a CEILING as of v82, and "full is full" is the whole rule: no
+   jettison verb, no auto-displace. A full hold simply stops accepting — the
+   beam lets bits drift past instead of eating them, so nothing is ever taken
+   without paying for it. That turns the cap into ONE decision, "when do I turn
+   for home", which is the 20-minute hook rather than an inventory chore. The
+   sharp edge is real and known: full of 1-value scrap when contraband floats
+   by and the cap punishes the right call. Add a jettison only if it nags. */
+let holdMax = 150;             // set by applyShipStats: SHOP[3] tier x the hull's holdMul
+let holdFullFlash = 0;         // seconds left pulsing the CARGO readout amber after a bounced pickup
+let holdListShown = "";        // last breakdown string drawn, so the HUD only touches the DOM on change
 
 const scrap = [];
 for (let i = 0; i < SCRAP_COUNT; i++) {
@@ -3956,14 +4027,19 @@ for (let i = 0; i < SCRAP_COUNT; i++) {
     depthWrite: false, blending: THREE.AdditiveBlending,
   });
   const s = new THREE.Sprite(mat); s.visible = false; scene.add(s);
-  scrap.push({ s, mat, vel: new THREE.Vector3(), value: 0, life: 0, phase: Math.random() * 6.28, alive: false });
+  scrap.push({ s, mat, vel: new THREE.Vector3(), value: 0, good: "scrap", life: 0, phase: Math.random() * 6.28, alive: false });
 }
 let scrapCursor = 0;
-function emitScrap(pos, vel, value) {
+/* v82: `good` is the fourth argument and it defaults, so every call site that
+   doesn't care still reads exactly as it did. This one function is the ONLY
+   way cargo enters the game — 5 call sites: the junk field, a ram spill, a
+   dead hauler, a dead gunship, a dead pirate — which is what made goods a
+   cheap feature instead of a refactor. */
+function emitScrap(pos, vel, value, good) {
   const p = scrap[scrapCursor];                 // ring buffer: heavy spam recycles the oldest bit, never allocates
   scrapCursor = (scrapCursor + 1) % SCRAP_COUNT;
   p.s.position.copy(pos); p.vel.copy(vel);
-  p.value = value; p.life = SCRAP_LIFE; p.alive = true;
+  p.value = value; p.good = good || "scrap"; p.life = SCRAP_LIFE; p.alive = true;
   p.s.scale.setScalar(SCRAP_SIZE); p.mat.opacity = 1; p.s.visible = true;
 }
 // only ever called from junkKill — a shot-down piece pays, a rammed one doesn't
@@ -3975,7 +4051,7 @@ function junkDropScrap(j) {
     // inherit the piece's drift + a gentle outward puff, so scrap roughly
     // hangs where the kill happened instead of racing off out of reach
     scrapTmp.multiplyScalar(8 + Math.random() * 18).add(j.vel);
-    emitScrap(j.group.position, scrapTmp, d.value);
+    emitScrap(j.group.position, scrapTmp, d.value, d.good);
   }
 }
 
@@ -3989,34 +4065,106 @@ function spillCargo(dmg) {
   if (cargo <= 0) return;
   const sev = Math.min(1, dmg / SPILL_DMG_FULL);
   const spill = Math.min(cargo, Math.max(1, Math.round(cargo * spillFraction * sev)));
+  /* v82: the TOTAL is the v81 number — a ram costs exactly what it always did
+     — but it now comes off every stack IN PROPORTION. That matters: if a ram
+     dropped only the cheap stack it would become a free way to launder a hold
+     down to just the valuable part, which is the opposite of a cost. Largest
+     remainder, so the per-good parts sum back to `spill` exactly and rounding
+     can neither invent nor destroy a unit. */
+  const parts = [];
+  let assigned = 0;
+  for (const g of GOOD_IDS) {
+    if (hold[g] <= 0) continue;
+    const exact = spill * hold[g] / cargo;     // the parts sum to exactly `spill`...
+    const n = Math.floor(exact);
+    parts.push({ good: g, n, rem: exact - n });
+    assigned += n;
+  }
+  parts.sort((a, b) => b.rem - a.rem);         // ...so the shortfall is < parts.length: one pass settles it
+  for (let i = 0; assigned < spill && i < parts.length; i++) { parts[i].n++; assigned++; }
+  for (const p of parts) { hold[p.good] -= p.n; }
   cargo -= spill;
-  cargoEl.textContent = cargo;
+  refreshCargoHud();      // the breakdown has to move too — stacks just changed
   cargoFlash = 0.5;
   cargoSpillSound();
-  const bits = Math.min(spill, SPILL_MAX_BITS);
-  const base = Math.floor(spill / bits), extra = spill % bits;   // values sum back to spill exactly
-  for (let i = 0; i < bits; i++) {
-    randUnit(scrapTmp);
-    scrapTmp2.copy(shipObj.position).addScaledVector(scrapTmp, 42 + Math.random() * 45);  // start outside the intake
-    scrapTmp.multiplyScalar(35 + Math.random() * 50).add(ship.velocity);                  // scatter + your momentum
-    emitScrap(scrapTmp2, scrapTmp, base + (i < extra ? 1 : 0));
+  /* Sprites are shared out by how much of each good is going, floor of one per
+     good so a small stack still visibly leaves the ship. Worst case (5 goods)
+     this overshoots SPILL_MAX_BITS by 4 — that cap exists to keep a huge hold
+     from flooding the 72-slot pool, and 16 doesn't flood it. */
+  const live = parts.filter(p => p.n > 0);
+  const budget = Math.min(spill, SPILL_MAX_BITS);
+  for (const p of live) {
+    const bits = Math.max(1, Math.min(p.n, Math.round(budget * p.n / spill)));
+    const base = Math.floor(p.n / bits), extra = p.n % bits;   // values sum back to p.n exactly
+    for (let i = 0; i < bits; i++) {
+      randUnit(scrapTmp);
+      scrapTmp2.copy(shipObj.position).addScaledVector(scrapTmp, 42 + Math.random() * 45);  // start outside the intake
+      scrapTmp.multiplyScalar(35 + Math.random() * 50).add(ship.velocity);                  // scatter + your momentum
+      emitScrap(scrapTmp2, scrapTmp, base + (i < extra ? 1 : 0), p.good);
+    }
   }
+}
+/* The CARGO readout and the stack breakdown under it. The breakdown lists only
+   non-empty stacks, so an empty hold costs no glass — and it's the whole point
+   of goods: you can't decide where to fly without knowing what you're holding.
+   Guarded on the rendered string so a per-frame call doesn't touch innerHTML. */
+/* The phone's space budget, measured at 844x390 rather than guessed — every
+   number here came off a real rect:
+     #flightdata is BOTTOM-anchored (bottom 208), so the list grows UPWARD into
+     the CONTROLS button at y 8-30. Empty hold + a callsign is already ~155px
+     tall, which leaves 23px under CONTROLS — ONE row. Five stacks pushed the
+     panel to y -4 (HULL clipped off screen); three pushed it to y 7.6, printing
+     the hull bar through the button.
+   So on glass the hold breakdown TRADES rather than adds: two rows, and JUNK
+   DESTROYED stands down while you're carrying. A kill counter is vanity, the
+   hold is what picks your destination, and only one of them fits.
+   The overflow is never silent — the "+N" is the count, because a cap you
+   can't see reads as "that's all you're carrying", and that's a lie the
+   routing decision gets made on. Desktop has the room and shows every stack. */
+const HOLD_ROWS_TOUCH = 2;
+function refreshCargoHud() {
+  cargoEl.textContent = cargo + "/" + holdMax;
+  // Biggest stack first — it's the one that decides which port you fly to, and
+  // on glass it's the one that has to survive the row cap.
+  const live = GOOD_IDS.filter(g => hold[g] > 0).sort((a, b) => hold[b] - hold[a]);
+  const glass = document.body.classList.contains("touch");
+  if (glass) killsRowEl.style.display = live.length ? "none" : "";
+  const cap = glass ? HOLD_ROWS_TOUCH : live.length;
+  let s = "";
+  for (let i = 0; i < live.length && i < cap; i++) {
+    const g = live[i], last = (i === cap - 1 && live.length > cap);
+    s += '<span style="color:' + GOODS[g].color + '">' + GOODS[g].name + " " + hold[g] + "</span>"
+       + (last ? ' <span class="dim">+' + (live.length - cap) + "</span>" : "") + "<br>";
+  }
+  if (s !== holdListShown) { holdlistEl.innerHTML = s; holdListShown = s; }
 }
 function updateScrap(dt) {
   const R2 = vacuumR * vacuumR, P2 = PICKUP_R * PICKUP_R;
   let collected = 0;
+  /* v82: a full hold stops the BEAM as well as the intake, and that pairing is
+     the point. Stopping only the intake would leave bits you can't take glued
+     to your nose; stopping the beam lets them drift past like any other debris
+     and keeps the "full is full" rule readable from the seat. Nothing is ever
+     consumed without being paid for — a bit that only partly fits leaves its
+     remainder in the world. */
+  const full = cargo >= holdMax;
   for (const p of scrap) {
     if (!p.alive) continue;
     p.life -= dt;
     if (p.life <= 0) { p.alive = false; p.s.visible = false; continue; }
     scrapTmp.subVectors(shipObj.position, p.s.position);
     const d2 = scrapTmp.lengthSq();
-    if (d2 < P2) {                              // into the intake
-      cargo += p.value; collected++;
-      p.alive = false; p.s.visible = false;
-      continue;
+    if (d2 < P2) {                              // at the intake
+      if (full) {
+        holdFullFlash = 0.6;                    // it bounced — say so, don't just silently ignore it
+      } else {
+        const take = Math.min(p.value, holdMax - cargo);
+        hold[p.good] += take; cargo += take; collected++;
+        p.value -= take;
+        if (p.value <= 0) { p.alive = false; p.s.visible = false; continue; }
+      }
     }
-    if (d2 < R2) {                              // in the beam — accelerate inward, harder up close
+    if (d2 < R2 && !full) {                     // in the beam — accelerate inward, harder up close
       const d = Math.sqrt(d2) || 1;
       scrapTmp.multiplyScalar(1 / d);           // now a unit vector toward the ship
       p.vel.addScaledVector(scrapTmp, VACUUM_ACCEL * (1 - d / vacuumR) * dt);
@@ -4030,7 +4178,7 @@ function updateScrap(dt) {
     if (p.life < 1) p.mat.opacity = p.life;     // fade out the last second
   }
   if (collected) {
-    cargoEl.textContent = cargo;
+    refreshCargoHud();
     scrapPickupSound(collected);
   }
 }
@@ -4154,11 +4302,15 @@ if (banked < 0) banked = 0;
 if (location.hash === "#reset") { banked = 0; try { localStorage.removeItem("spacesuck.bank"); } catch (e) {} }
 bankEl.textContent = banked;
 let bankFlow = 0;              // fractional cargo accumulated toward the next whole unit
-let soldHere = 0, paidHere = 0;   // v60: cargo handed over at this port, and credits
-                                  // paid for it. The payout is computed against the
+const soldHere = {};              // v60: cargo handed over at this port, and credits
+let paidHere = 0;                 // paid for it. The payout is computed against the
                                   // RUNNING TOTAL rather than per chunk, so a fence
                                   // rate below 1.0 can't lose (or invent) a credit
                                   // to float rounding over a long drain.
+                                  // v82: the running total has to be PER GOOD, because
+                                  // each good settles at its own rate — one shared total
+                                  // would let a mixed hold's rounding leak between rates.
+for (const g of GOOD_IDS) soldHere[g] = 0;
 let soldPort = null;              // which port that ledger belongs to. Kept across a
                                   // takeoff so a part-drained hold isn't re-floored on
                                   // the next visit; cleared when you sell somewhere new.
@@ -4191,6 +4343,22 @@ function onSpaceport(body, n) {
   for (const pad of body.pads)
     if (nx * pad.dx + n.y * pad.dy + nz * pad.dz > pad.districtCos) return pad.port || null;
   return null;
+}
+/* What THIS port pays for ONE unit of a good (v82, §1.1a).
+   The rate is ABSOLUTE, not a multiplier on `pay` — compounding two numbers
+   made every entry a mental arithmetic problem to tune. A missing entry falls
+   through to the port's general `pay`, which is what makes a port with no
+   `market` at all behave exactly as it did in v81: the same regression guard
+   `port` itself was built on in v60, and the reason adding a market to a world
+   stays a two-line edit.
+   It accepts BOTH a bare number and a `{ sell, buy }` object, and that is the
+   trader hook: when a buy side is wanted it drops into this same dict, no
+   rewrite here, and no port that doesn't want one has to change. */
+function portRate(port, good) {
+  if (!port) return 0;
+  const m = port.market && port.market[good];
+  if (m === undefined || m === null) return port.pay || 0;
+  return typeof m === "number" ? m : (typeof m.sell === "number" ? m.sell : (port.pay || 0));
 }
 
 /* ---- bank sounds: quiet ticks while the hold drains, a little
@@ -4245,14 +4413,23 @@ const SHOP = [
     next: l => "+" + (SHOP[1].vals[l + 1] - SHOP[1].vals[l]) + " MAX HULL" },
   { name: "CARGO CLAMPS", vals: [0.35, 0.28, 0.21, 0.14], costs: [100, 240, 550],
     next: l => "-" + Math.round((SHOP[2].vals[l] - SHOP[2].vals[l + 1]) * 100) + "% SPILL" },
+  /* v82: the hold cap's release valve, and the first NEW money sink the game
+     has had. Measured before it landed, the entire lifetime sink was ~3,920
+     (this shop 3,620 + 300 of wingmen) against a ~1,200 convoy clear — three
+     convoys bought the whole game. This adds 1,630, which doesn't close that
+     wall but stops the goods work widening it. Base 150 is a comfortable haul
+     (the drain comment upstairs prices a 100 haul at ~4s), so tier 0 has to
+     feel like a hold, not a handicap. */
+  { name: "CARGO HOLD", vals: [150, 220, 310, 420, 560], costs: [90, 200, 440, 900],
+    next: l => "+" + (SHOP[3].vals[l + 1] - SHOP[3].vals[l]) + " CAPACITY" },
 ];
-let upLvl = [0, 0, 0];
+let upLvl = [0, 0, 0, 0];
 try {
   const u = JSON.parse(localStorage.getItem("spacesuck.up") || "[]");
   for (let i = 0; i < SHOP.length; i++)
     upLvl[i] = Math.min(SHOP[i].costs.length, Math.max(0, Math.floor(+u[i]) || 0));
 } catch (e) {}
-if (location.hash === "#reset") { upLvl = [0, 0, 0]; try { localStorage.removeItem("spacesuck.up"); } catch (e) {} }
+if (location.hash === "#reset") { upLvl = [0, 0, 0, 0]; try { localStorage.removeItem("spacesuck.up"); } catch (e) {} }
 function saveUpgrades() { try { localStorage.setItem("spacesuck.up", JSON.stringify(upLvl)); } catch (e) {} }
 // stat apply (v53): the shop's tier value × the hangar row's multiplier.
 // Called at load, on an outfitter buy, and when the start-screen picker
@@ -4264,11 +4441,13 @@ function applyShipStats() {
   vacuumR = Math.round(SHOP[0].vals[upLvl[0]] * d.beamMul);
   ship.hullMax = Math.round(SHOP[1].vals[upLvl[1]] * d.hullMul);
   spillFraction = SHOP[2].vals[upLvl[2]] * d.spillMul;
+  holdMax = Math.round(SHOP[3].vals[upLvl[3]] * d.holdMul);   // v82 — see the hold cap note in 10d
 }
 // load-time apply: a fresh session starts with everything you paid for,
 // hull charged to its (possibly plated) max
 applyShipStats();
 ship.hull = ship.hullMax;
+refreshCargoHud();      // v82: the readout carries the cap, so it can't start blank
 
 const shopEl = document.getElementById("shop");
 const shopRows = Array.from(shopEl.querySelectorAll(".shopRow"));
@@ -4301,6 +4480,7 @@ function buyUpgrade(i) {
   const wasMax = ship.hullMax;
   applyShipStats();                       // re-derive through the ship's multipliers
   if (i === 1) ship.hull += ship.hullMax - wasMax;   // the plating arrives charged
+  if (i === 3) refreshCargoHud();                    // v82: the cap is IN the readout, so it has to redraw
   bankEl.textContent = banked;
   saveBank(); saveUpgrades();
   shopBuySound();
@@ -4602,6 +4782,13 @@ const PIRATE_SAFE_R = 2;         // radii around the pads world — atmosphere +
 const PIRATE_HARBOR_GONE = 1200; // fled this far while you're in harbor → quietly gone
 const PIRATE_RAM_HURT = 6;       // hull per 100 u/s closing — a fighter, not a boulder
 const PIRATE_SCRAP_BITS = 8, PIRATE_SCRAP_VAL = 5;   // 40 — richest kill that shoots back (satellite = 24; v50 freight pays more, but freight runs)
+/* v82: the only source of CONTRABAND, and the roll is per KILL rather than per
+   bit — a wreck drops one manifest, not a mixed bag, so "this one was running
+   hot" is a fact you can read off the hold instead of a statistical smear.
+   The VALUE is unchanged either way (8 bits x 5); what changes is where it's
+   worth taking. Home pays 0.45 for hot goods and RustHollow pays 1.5, so a
+   contraband kill is the game's first real "which way do I turn" moment. */
+const PIRATE_CONTRA_ODDS = 0.35;
 const PIRATE_NAMES = ["RUST VULTURE", "SCRAPJACK", "THE MAGPIE", "KESSLER'S GHOST"];
 /* ---- Stage 2 (v47): factions. A spawn rolls neutral or hostile. Neutrals
    loiter in the field about their own business — amber light, no warn ping,
@@ -4854,7 +5041,7 @@ const PAY_CONVOY_BITS = 24;      // ×8 = 192 a truck — earned through the gun
 const HAULER_DEFS = [
   //                                             hp: no guns, so durability IS the fight
   { file: "hauler/ss-overtime.glb",         name: "SS OVERTIME",        hp: 4, bits: 10, val: 6,   // 60 — the everyday truck
-    first: 70,  firstRnd: 40,  rMin: 110, rMax: 220 },
+    first: 70,  firstRnd: 40,  rMin: 110, rMax: 220, good: "ore" },   // v82: the everyday run hauls ORE
   { file: "hauler/ss-double-overtime.glb",     name: "SS DOUBLE OVERTIME", hp: 9, bits: 20, val: 8,   // 160 — the loot piñata,
     // len 65 (v70). This entry had NO len at all, so it fell through to
     // HAULER_LEN 52 and the "double" truck flew at exactly the same size as the
@@ -4863,13 +5050,15 @@ const HAULER_DEFS = [
     // below (125/100 × 52 = 65), which lands it correctly BETWEEN the everyday
     // truck (52) and CANARY (68). hitR follows to 32.5, and the hull capsule
     // re-measures itself off the model at load.
-    first: 300, firstRnd: 120, rMin: 420, rMax: 720, len: 65, escort: true,        // priced by its rarity — and
+    first: 300, firstRnd: 120, rMin: 420, rMax: 720, len: 65, escort: true, good: "ore",   // priced by its rarity — and
     banner: "◆ HEAVY FREIGHT — SS DOUBLE OVERTIME ◆" },                            // v81: rarest truck in the sky
                                                                                    // (mean period 570s) — it earns a shout
                                                                                    // most shifts it hires security (v57, 10i)
   { file: "collector/ss-packrat.glb",      name: "SS PACKRAT",         hp: 6, bits: 14, val: 7,   // ~100 — the salvage collector,
     first: 150, firstRnd: 90,  rMin: 200, rMax: 420, len: 22, thruster: "ThrusterL",       // mid-size (2x a fighter), its own class
-    role: "salvage" },                                                                     // and it WORKS the field (v57)
+    // v82: the collector's hold is full of what it just picked up — SCRAP. Shooting
+    // the salvager for its salvage is the most on-theme drop in the game.
+    role: "salvage", good: "scrap" },                                                      // and it WORKS the field (v57)
   // SS CANARY (v69) — the container run. Biggest hull in the fleet, and the only
   // hauler carrying its cargo on the OUTSIDE: 12 separately-named Cargo00..Cargo11
   // crates in an open ribbed spine, so a future "shoot it and it sheds one" is a
@@ -4878,7 +5067,7 @@ const HAULER_DEFS = [
   // (fighter 10 / HAULER_LEN 52); 130/100 × 52 ≈ 68 keeps it the biggest truck in
   // flight without dragging the whole scale retune in. hitR derives as len/2 = 34.
   { file: "hauler/canary-freight.glb",  name: "SS CANARY",          hp: 8, bits: 18, val: 7,   // 126 — between the everyday
-    first: 210, firstRnd: 110, rMin: 300, rMax: 560, len: 68,                               // truck and the escorted piñata:
+    first: 210, firstRnd: 110, rMin: 300, rMax: 560, len: 68, good: "volatile",             // truck and the escorted piñata:
     banner: "◆ CONTAINER RUN — SS CANARY ◆" },     // v81: 430s mean period, and it never
                                                    // came closer than ~2.7km on a median pass —
                                                    // without this you meet one and never know
@@ -5250,7 +5439,7 @@ function haulerKill(h, dist) {
   for (let i = 0; i < bits; i++) {
     randUnit(haulTmpA);
     haulTmpA.multiplyScalar(10 + Math.random() * 24).add(h.vel);
-    emitScrap(h.group.position, haulTmpA, h.def.val);
+    emitScrap(h.group.position, haulTmpA, h.def.val, h.def.good);   // v82: the truck's manifest
   }
 }
 
@@ -5759,7 +5948,7 @@ function gunshipKill(g, dist) {
   for (let i = 0; i < bits; i++) {
     randUnit(gunTmpA);
     gunTmpA.multiplyScalar(12 + Math.random() * 28).add(g.vel);
-    emitScrap(pos, gunTmpA, val);
+    emitScrap(pos, gunTmpA, val, "alloy");   // v82: military hardware salvages as ALLOY
   }
 }
 
@@ -6181,10 +6370,11 @@ function pirateKill(p, dist) {
   killsEl.textContent = ++junkKills;
   // the bounty: same scatter as junkDropScrap — inherit the wreck's drift
   // plus a gentle outward puff, so the loot hangs where the fight was
+  const dropGood = Math.random() < PIRATE_CONTRA_ODDS ? "contra" : "scrap";   // v82: one manifest per wreck
   for (let i = 0; i < PIRATE_SCRAP_BITS; i++) {
     randUnit(pirTmpA);
     pirTmpA.multiplyScalar(8 + Math.random() * 18).add(p.vel);
-    emitScrap(p.group.position, pirTmpA, PIRATE_SCRAP_VAL);
+    emitScrap(p.group.position, pirTmpA, PIRATE_SCRAP_VAL, dropGood);
   }
   // (10h) dispatch: shooting the marked raider down collects the contract.
   // Ram never gets here (pirateDestroy is the ram twin) — so ramming pays 0.
@@ -7044,6 +7234,7 @@ addEventListener("keydown", e => {
     if (e.code === "Digit1") buyUpgrade(0);
     else if (e.code === "Digit2") buyUpgrade(1);
     else if (e.code === "Digit3") buyUpgrade(2);
+    else if (e.code === "Digit4") buyUpgrade(3);   // v82: CARGO HOLD
   }
   // docked at the dispatch board, 4/5/6 accept an offered contract (v56)
   if (dispatchEl.style.display === "block" && !keys[e.code]) {
@@ -9011,17 +9202,29 @@ function animate() {
       // drain split across two visits settles the same as one long one (10 units
       // at 0.7 pays 7, not 3+3). Changing ports starts a fresh ledger — a
       // Charleston remainder must never settle at a fence's rate.
-      if (onPort !== soldPort) { soldPort = onPort; soldHere = 0; paidHere = 0; }
+      if (onPort !== soldPort) { soldPort = onPort; for (const g of GOOD_IDS) soldHere[g] = 0; paidHere = 0; }
       banking = true;
       bankFlow += BANK_RATE * dt;
-      const move = Math.min(cargo, Math.floor(bankFlow));
+      let move = Math.min(cargo, Math.floor(bankFlow));
       if (move > 0) {
         bankFlow -= move;
-        cargo -= move;
-        soldHere += move;
-        const owed = Math.floor(soldHere * onPort.pay) - paidHere;
+        /* v82: the hold drains BEST-PAYING-FIRST for this port. Drain order is
+           invisible on a full sale, but it's the whole difference when a takeoff
+           cuts one short — leaving with the stuff this port was underpaying for
+           is strictly the better outcome, and it costs three lines. */
+        const order = GOOD_IDS.filter(g => hold[g] > 0)
+                              .sort((a, b) => portRate(onPort, b) - portRate(onPort, a));
+        for (const g of order) {
+          if (move <= 0) break;
+          const n = Math.min(move, hold[g]);
+          hold[g] -= n; cargo -= n; soldHere[g] += n; move -= n;
+        }
+        // settle every good against ITS running total, then pay the difference
+        let gross = 0;
+        for (const g of GOOD_IDS) gross += Math.floor(soldHere[g] * portRate(onPort, g));
+        const owed = gross - paidHere;
         if (owed > 0) { banked += owed; paidHere += owed; }
-        cargoEl.textContent = cargo;
+        refreshCargoHud();
         bankEl.textContent = banked;
         bankTickSound();
         if (cargo === 0) bankDoneSound();
@@ -9088,9 +9291,13 @@ function animate() {
     dmgFlash = Math.max(0, dmgFlash - dt * 2.2);
     dmgFlashEl.style.opacity = dmgFlash;
   }
-  if (cargoFlash > 0) {                              // flash CARGO red when a ram knocks some loose
+  if (cargoFlash > 0 || holdFullFlash > 0) {         // flash CARGO red when a ram knocks some loose
     cargoFlash = Math.max(0, cargoFlash - dt);
-    cargoEl.style.color = cargoFlash > 0 ? "#ff5544" : "";   // "" → back to the CSS gold
+    // v82: amber when a pickup BOUNCED off a full hold. Red outranks it —
+    // losing cargo is the louder event than failing to gain some.
+    holdFullFlash = Math.max(0, holdFullFlash - dt);
+    cargoEl.style.color = cargoFlash > 0 ? "#ff5544"
+                        : holdFullFlash > 0 ? "#ffa53a" : "";   // "" → back to the CSS gold
   }
   if (breachUntil && clock.elapsedTime > breachUntil) {
     breachUntil = 0;
