@@ -4738,7 +4738,7 @@ for (let i = 0; i < PIRATE_COUNT; i++) {
    the neutral LOITER state — the one state that sits still enough to show
    it. */
 if (THREE.GLTFLoader) {
-  new THREE.GLTFLoader().load("enemies/raider.glb" + ASSET_V, gltf => {
+  new THREE.GLTFLoader().load("fighter/raider.glb" + ASSET_V, gltf => {
     for (const p of pirates) {
       const model = gltf.scene.clone(true);
       model.traverse(o => { if (o.isMesh && o.material) o.material = o.material.clone(); });
@@ -4853,9 +4853,9 @@ const PAY_CONVOY_BITS = 24;      // ×8 = 192 a truck — earned through the gun
 
 const HAULER_DEFS = [
   //                                             hp: no guns, so durability IS the fight
-  { file: "npc/ss-overtime.glb",         name: "SS OVERTIME",        hp: 4, bits: 10, val: 6,   // 60 — the everyday truck
+  { file: "hauler/ss-overtime.glb",         name: "SS OVERTIME",        hp: 4, bits: 10, val: 6,   // 60 — the everyday truck
     first: 70,  firstRnd: 40,  rMin: 110, rMax: 220 },
-  { file: "npc/ss-double-overtime.glb",     name: "SS DOUBLE OVERTIME", hp: 9, bits: 20, val: 8,   // 160 — the loot piñata,
+  { file: "hauler/ss-double-overtime.glb",     name: "SS DOUBLE OVERTIME", hp: 9, bits: 20, val: 8,   // 160 — the loot piñata,
     // len 65 (v70). This entry had NO len at all, so it fell through to
     // HAULER_LEN 52 and the "double" truck flew at exactly the same size as the
     // everyday one — a bug, not a choice: fleet.json specs it at 125 against
@@ -4865,7 +4865,7 @@ const HAULER_DEFS = [
     // re-measures itself off the model at load.
     first: 300, firstRnd: 120, rMin: 420, rMax: 720, len: 65, escort: true },      // priced by its rarity — and
                                                                                    // most shifts it hires security (v57, 10i)
-  { file: "npc/ss-packrat.glb",      name: "SS PACKRAT",         hp: 6, bits: 14, val: 7,   // ~100 — the salvage collector,
+  { file: "collector/ss-packrat.glb",      name: "SS PACKRAT",         hp: 6, bits: 14, val: 7,   // ~100 — the salvage collector,
     first: 150, firstRnd: 90,  rMin: 200, rMax: 420, len: 22, thruster: "ThrusterL",       // mid-size (2x a fighter), its own class
     role: "salvage" },                                                                     // and it WORKS the field (v57)
   // SS CANARY (v69) — the container run. Biggest hull in the fleet, and the only
@@ -4875,7 +4875,7 @@ const HAULER_DEFS = [
   // (fighter 25 / hauler 100-130) while the live game still runs the OLD scale
   // (fighter 10 / HAULER_LEN 52); 130/100 × 52 ≈ 68 keeps it the biggest truck in
   // flight without dragging the whole scale retune in. hitR derives as len/2 = 34.
-  { file: "npc/canary-freight.glb",  name: "SS CANARY",          hp: 8, bits: 18, val: 7,   // 126 — between the everyday
+  { file: "hauler/canary-freight.glb",  name: "SS CANARY",          hp: 8, bits: 18, val: 7,   // 126 — between the everyday
     first: 210, firstRnd: 110, rMin: 300, rMax: 560, len: 68 },                             // truck and the escorted piñata:
                                                                                             // bigger than both, commoner
 ];                                                                                          // than DOUBLE OVERTIME
@@ -5441,7 +5441,7 @@ function updateHaulers(dt) {
 /* ================= end 10f: FREIGHT TRAFFIC ================= */
 
 /* ================= 10i: GUNSHIPS (v57) =================
-   Capital warships — the gothic SS TIMECLOCK class (enemies/ss-timeclock.glb).
+   Capital warships — the gothic SS TIMECLOCK class (gunship/ss-timeclock.glb).
    One hull, two jobs, four slots:
      [0]    THE FOE — a rare roaming mini-boss. The pirate's three-state
             brain in a heavy body: opens up at 900u with paired spinal
@@ -5537,7 +5537,7 @@ for (let i = 0; i < 4; i++) {
     model: null, mixer: null, mats: [], tellMats: [],   // no model → no spawns (hauler rule)
     muzzles: null,
     // per-ship spec — data-driven so a second capital rides the same brain (v58)
-    glb: "enemies/ss-timeclock.glb", len: GUNSHIP_LEN, hitR: GUNSHIP_HIT_R,
+    glb: "gunship/ss-timeclock.glb", len: GUNSHIP_LEN, hitR: GUNSHIP_HIT_R,
     // hull capsule (v70) — replaced with real measurements when the GLB lands;
     // capHalf 0 reproduces today's sphere exactly until then
     capR: GUNSHIP_HIT_R, capHalf: 0, ramCool: 0,
@@ -5587,7 +5587,7 @@ for (let i = 0; i < 4; i++) {
     group: g, engineGlow, engineGlows: [engineGlow], glowK: 1, beacon, phase: Math.random() * 6.28,
     model: null, mixer: null, mats: [], tellMats: [],
     muzzles: null,
-    glb: "enemies/ss-shrinkage.glb", len: SHRINK_LEN, hitR: SHRINK_HIT_R,
+    glb: "gunship/ss-shrinkage.glb", len: SHRINK_LEN, hitR: SHRINK_HIT_R,
     capR: SHRINK_HIT_R, capHalf: 0, ramCool: 0,   // hull capsule (v70), real values at GLB load
     maxHp: SHRINK_HP, bits: SHRINK_BITS, val: SHRINK_VAL,
     respawnMin: SHRINK_RESPAWN_MIN, respawnMax: SHRINK_RESPAWN_MAX,
