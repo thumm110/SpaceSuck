@@ -381,6 +381,11 @@
   .mktRow.head > span { color: #9a8f6e; font-size: 10px; letter-spacing: 2px; }
   .mktRow.idle > span { opacity: .42; }         /* not carrying it — data, not a decision */
   .mktRow.move .away  { color: #ffd34d; }       /* worth more somewhere else, and you're holding it */
+  /* v84 — is this a good price BY THIS PORT'S OWN STANDARDS? Costs no column, and
+     the phone dock sheet has none to give. HERE only: the away column already
+     speaks gold for "move it", and two colour languages in one table is noise. */
+  .mktRow .n.hi { color: #8fe3a8; }             /* running hot — sell into it */
+  .mktRow .n.lo { color: #d98a6a; }             /* off its usual — glutted, or a soft market */
   #marketboard .mktSep { grid-column: 1 / -1; height: 1px; margin: 1px 0 3px;
                          background: rgba(255,211,77,.18); }
   #marketboard .mktFoot {
@@ -388,6 +393,17 @@
     text-align: center; border-top: 1px solid rgba(255,211,77,.18);
   }
   #marketboard .mktFoot b { color: #ffd34d; font-weight: normal; }
+  /* the saturation note (v84) — the one line that explains why a price sagged.
+     WRAPS, unlike everything else in this panel: the panel is white-space:nowrap
+     and five glutted goods would push it clean off a phone. Same trick .jobHint
+     already uses next door. */
+  #marketboard .mktNote {
+    margin-top: 5px; font-size: 10px; letter-spacing: 1px; color: #d98a6a;
+    /* 230px is just under the table's own width, so the note can never be the
+       thing that decides how wide this panel is — it wraps inside what the rows
+       already claimed. Docked, the sheet sets the width, so the cap comes off. */
+    text-align: center; white-space: normal; max-width: 230px;
+  }
   /* the dispatch board (v56) — Charleston's job faucet. Same dock gate as the
      outfitter, parked to the LEFT so the two panels don't share the centreline. */
   #dispatchboard {
@@ -701,6 +717,8 @@
      Rows here are read, never tapped, so they keep out of the 44px rule below. */
   body.docked #marketboard { font-size: 12px; padding: 10px 10px 12px; }
   body.docked #marketboard .mktGrid { gap: 5px 8px; }
+  /* the dock sheet decides the width here, so the note gets all of it */
+  body.docked #marketboard .mktNote { max-width: none; }
   /* 44px targets — the flight-sized 20px rows were unhittable with a thumb */
   /* 44px targets — the flight-sized 20px rows were unhittable with a thumb.
      The price is a `float: right` in flight, which on a 390px-wide portrait
@@ -4357,21 +4375,32 @@ if (banked < 0) banked = 0;
 if (location.hash === "#reset") { banked = 0; try { localStorage.removeItem("spacesuck.bank"); } catch (e) {} }
 bankEl.textContent = banked;
 let bankFlow = 0;              // fractional cargo accumulated toward the next whole unit
-const soldHere = {};              // v60: cargo handed over at this port, and credits
-let paidHere = 0;                 // paid for it. The payout is computed against the
-                                  // RUNNING TOTAL rather than per chunk, so a fence
-                                  // rate below 1.0 can't lose (or invent) a credit
-                                  // to float rounding over a long drain.
-                                  // v82: the running total has to be PER GOOD, because
-                                  // each good settles at its own rate — one shared total
-                                  // would let a mixed hold's rounding leak between rates.
-for (const g of GOOD_IDS) soldHere[g] = 0;
-let soldPort = null;              // which port that ledger belongs to. Kept across a
-                                  // takeoff so a part-drained hold isn't re-floored on
-                                  // the next visit; cleared when you sell somewhere new.
-                                  // (floor, not round: rounding up would let a 1-unit
-                                  // haul collect a full credit at a 0.7 fence — a
-                                  // discount port quietly paying the home rate.)
+/* The change drawer (v84). Credits owed but not yet whole, in exact integer
+   HUNDREDTHS — the fractional remainder of a drain, carried instead of thrown
+   away. Every unit that leaves the hold adds `n × rate-in-cents`; whole credits
+   are paid out and the fraction stays here for the next unit.
+
+   This replaced v60/v82's running-total ledger (`soldHere` per good + `paidHere`,
+   settling `Σ floor(soldHere × rate)` each tick) and it had to. That mechanism
+   re-priced everything already sold at the CURRENT rate every tick, so the day
+   rates started moving, a rate that fell mid-drain made `gross` fall below
+   `paidHere` and the `owed > 0` guard silently stopped paying. The carry can't:
+   nothing is ever re-priced, only added.
+
+   It keeps every promise the old ledger made, and one more:
+     · 10 units at 0.7 pays 7, not 3+3 — the remainder survives a takeoff, so a
+       drain split across two visits settles exactly like one long one.
+     · A mixed hold can't leak rounding between rates: each good is added at its
+       OWN rate as it moves, and only the total is floored.
+     · Floor, not round — a 1-unit haul still collects nothing at a 0.7 fence
+       instead of a full credit at the home rate.
+   Integer cents, not floats, because ten 0.7s added in a row is 6.999999999999999,
+   and that floors to 6. Rates are rounded to 2dp at source (portLive) precisely
+   so this can be exact. */
+let owedCents = 0;
+let soldPort = null;              // which port the drawer belongs to. Changing ports
+                                  // starts a fresh one — a Charleston remainder must
+                                  // never settle at a fence's rate.
 let wasBanking = false;        // edge-detect: save when a drain finishes or is interrupted
 function saveBank() { try { localStorage.setItem("spacesuck.bank", banked); } catch (e) {} }
 addEventListener("pagehide", saveBank);   // quit mid-drain: what moved is kept
@@ -4399,7 +4428,7 @@ function onSpaceport(body, n) {
     if (nx * pad.dx + n.y * pad.dy + nz * pad.dz > pad.districtCos) return pad.port || null;
   return null;
 }
-/* What THIS port pays for ONE unit of a good (v82, §1.1a).
+/* What THIS port's TABLE says one unit of a good is worth (v82, §1.1a).
    The rate is ABSOLUTE, not a multiplier on `pay` — compounding two numbers
    made every entry a mental arithmetic problem to tune. A missing entry falls
    through to the port's general `pay`, which is what makes a port with no
@@ -4408,12 +4437,133 @@ function onSpaceport(body, n) {
    stays a two-line edit.
    It accepts BOTH a bare number and a `{ sell, buy }` object, and that is the
    trader hook: when a buy side is wanted it drops into this same dict, no
-   rewrite here, and no port that doesn't want one has to change. */
-function portRate(port, good) {
+   rewrite here, and no port that doesn't want one has to change.
+   v84 renamed this out of `portRate`: it is now the BASE the market moves
+   AROUND, and the thing to call for "what does this port normally pay". Anything
+   that PAYS, prices or displays wants portRate() below. */
+function portBase(port, good) {
   if (!port) return 0;
   const m = port.market && port.market[good];
   if (m === undefined || m === null) return port.pay || 0;
   return typeof m === "number" ? m : (typeof m.sell === "number" ? m.sell : (port.pay || 0));
+}
+
+/* ---- the market moves (v84, §1.1c) --------------------------------------
+   Two things push a rate off its table value, and they are different in KIND on
+   purpose — one is the world's and one is yours.
+
+   DRIFT is the world's: a slow, bounded, mean-zero wander that happens whether
+   you're there or not. It's what makes the board worth re-reading instead of
+   memorising once, and it's what gives §5's "buy intel" something to sell.
+   It is DETERMINISTIC — two sines of a world clock, phased off a hash of the
+   port name and the good — for three reasons that all matter here. It can't run
+   away. Its mean over a cycle is exactly the table value, so RULE 1's income
+   neutrality survives a moving market. And a headless test can flatten it with
+   `priceDrift = () => 0` instead of mocking a random number generator.
+
+   GLUT is yours: dump a lot of one good at one port and that port stops paying
+   for it, recovering over a few minutes. It's the first thing in the game that
+   makes rotating your ports pay, and the first reason to take HONEST freight to
+   a fence. Because the player caused it, the board can name it — see the note
+   line in refreshMarket.
+
+   Rates are ROUNDED TO 2 DECIMALS here, at the source. That isn't cosmetic: it
+   is what lets the exchange settle in exact integer hundredths (see `owedCents`),
+   so the number on the board is the number in the bank, digit for digit. */
+let marketTime = 0;              // world clock, seconds — stops with the game (see animate)
+/* DRIFT IS A TIDE, NOT CHOP, and both numbers here are load-bearing.
+   The board's remote column is LIVE, and the two ports are ~130,000u apart —
+   about two minutes of boosted cruise. So the periods have to be long against a
+   two-minute flight, or the number you read is uncorrelated with the number you
+   land on and v83's whole feature turns into a coin flip. At ~10 and ~6 minutes
+   a trip advances the wander by a fifth of a cycle: enough to matter, not enough
+   to lie. (They're also not multiples of each other, so the beat never reads as
+   a metronome you can count against.)
+   The BAND is ±8% for the same reason plus one more: Charleston pays 1.00 for
+   alloy and RustHollow 0.90, an 11% gap. A ±18% band inverted that roughly a
+   third of the time, which put a ▲ on a row where flying there LOSES money. At
+   ±8% the widest ratio drift alone can manufacture is 1.08/0.92 = 1.17, which
+   MOVE_MARGIN below is set to sit above. */
+const DRIFT_BAND = 0.08;
+const DRIFT_P1 = 610, DRIFT_P2 = 377;
+/* SATURATION, and the one number that decides whether it exists at all.
+   Glut accumulates only if you deliver one good faster than it fades, i.e. above
+   GLUT_UNITS/GLUT_RECOVER units per second. At 300/200 that was 1.5 units/sec of
+   a SINGLE good sustained across the whole fill-fly-drain loop — which nothing in
+   the game can supply, so the mechanic would have been arithmetically invisible.
+   At 300/600 the break-even is 0.5/sec: a scrap-focused run clears it and a
+   diversified hold doesn't, which is exactly the shape wanted — specialising in
+   one good at one port is what saturates it. */
+const GLUT_DEPTH = 0.40;         // a fully saturated port pays 60% of its table rate
+const GLUT_UNITS = 300;          // units of ONE good to saturate: one full base hold = half
+const GLUT_RECOVER = 600;        // seconds from full saturation back to the table value
+const RATE_FLOOR = 0.05;         // nothing a port trades in ever becomes literally worthless
+/* A NOTE ON THE ▲, because a margin was tried here and taken back out.
+   The worry was real: at the first cut's ±18% band and 97/61s periods, alloy
+   (0.90 at the fence against 1.00 at home — an 11% gap) inverted about a third
+   of the time, and by the time you'd flown the two minutes the reading was
+   uncorrelated with what you'd get. A ▲ pointing at a coin flip.
+   A "must be 12% better" margin looked like the fix and isn't: at the fence,
+   alloy sits at 1.11 of home and scrap at 1.43, and any band wide enough to be
+   worth having swings both across every threshold that separates them. Worse, a
+   margin tight enough to still mark a SATURATED home's scrap (0.60 vs 0.70, a
+   ratio of 1.17) is looser than the near-tie it was meant to filter.
+   The band and the periods are the real fix, and they're above. At ±8% over ten
+   minutes a two-minute flight keeps ~60% of the reading, so a marked edge is a
+   real edge. So the ▲ means exactly what the two numbers beside it say: right is
+   bigger than left. No hidden threshold, and nothing on the board the player
+   can't check by looking at it. */
+
+// a stable phase pair per (port, good): the same port wanders the same way every
+// session, so "RustHollow runs hot on contraband" stays learnable
+function priceSeed(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ((h >>> 0) / 4294967296) * Math.PI * 2;
+}
+const driftPhase = {};
+function priceDrift(port, good) {
+  const k = port.name + "/" + good;
+  const ph = driftPhase[k] || (driftPhase[k] = [priceSeed(k), priceSeed(k + "|b")]);
+  return DRIFT_BAND * (Math.sin(marketTime * (Math.PI * 2 / DRIFT_P1) + ph[0]) * 0.62 +
+                       Math.sin(marketTime * (Math.PI * 2 / DRIFT_P2) + ph[1]) * 0.38);
+}
+/* How saturated this port is on this good, 0..1. A missing `glut` reads 0, so a
+   port invented at runtime (a test's third market) behaves like a fresh one
+   instead of throwing. */
+function portGlut(port, good) {
+  return (port && port.glut && port.glut[good]) || 0;
+}
+// what the port would pay RIGHT NOW, if you asked it
+function portLive(port, good) {
+  const b = portBase(port, good);
+  if (b <= 0) return 0;          // a pad that doesn't trade stays not trading
+  const r = b * (1 + priceDrift(port, good)) * (1 - GLUT_DEPTH * portGlut(port, good));
+  return Math.round(Math.max(RATE_FLOOR, r) * 100) / 100;
+}
+
+/* ---- the price is what it was when you touched down ----
+   A quote is struck on ARRIVAL and held for the whole visit. That is what keeps
+   RULE 4 true with a market that moves: the board and the drain read the same
+   frozen number, so the footer can't quote you one price while the bank pays
+   another. It also kills the obvious degenerate play before it exists — you
+   can't sit on the pad waiting for a better number, because the number you
+   landed on is the number you get, and the drain starts without asking.
+   It doesn't make bouncing off the pad free, it PRICES it: every re-read costs
+   you 26 units sold at the number you were trying to get away from.
+   The board's REMOTE column stays LIVE on purpose: what the other port pays is
+   a reading off a ticker, and it may well have moved by the time you get there. */
+let quotePort = null;
+const quote = {};
+function strikeQuote(port) {
+  quotePort = port;
+  if (port) for (const g of GOOD_IDS) quote[g] = portLive(port, g);
+}
+// THE rate. Everything that pays, prices or displays calls this one.
+function portRate(port, good) {
+  if (!port) return 0;
+  if (port === quotePort && quote[good] !== undefined) return quote[good];
+  return portLive(port, good);
 }
 
 /* ---- who else buys (v83, §1.1b) ----
@@ -4425,7 +4575,14 @@ function portRate(port, good) {
 const PORTS = [];
 for (const b of BODIES)
   for (const pad of (b.pads || []))
-    if (pad.port && pad.port.pay > 0) PORTS.push(pad.port);
+    if (pad.port && pad.port.pay > 0) {
+      // v84: saturation is per port per good, and it lives ON the port — the same
+      // live object everything else already compares by identity. Initialised here
+      // rather than lazily so `glut` is never half a table.
+      pad.port.glut = {};
+      for (const g of GOOD_IDS) pad.port.glut[g] = 0;
+      PORTS.push(pad.port);
+    }
 
 /* "CHARLESTON SPACEPORT" doesn't fit a table column. Derived rather than a
    per-port `short` key, so adding a market to a world stays the two-line edit
@@ -4593,15 +4750,65 @@ let marketCargoShown = -1;     // the hold the rows were drawn against. `cargo` 
                                // ever writes a stack without it (the hold/cargo
                                // contract) — and the drain moves it ~26/s, so this
                                // is what stops a full innerHTML rewrite per frame.
-function refreshMarket(port) {
-  /* Gather every good's numbers FIRST: the header can't be written until we know
-     whether one port wins the remote column for all of them. With two markets it
-     always does, and repeating "CHARLESTON" down five rows is noise — so the name
-     goes in the column head instead. The day a third specialty market makes that
-     untrue, the rows start naming their own and nothing else changes. */
-  const rows = GOOD_IDS.map(g => ({
+let marketSig = "";            // v84: and the NUMBERS the rows were drawn against. A
+let marketSigAt = 0;           // rate that drifts on its own moves neither the hold nor
+                               // the port, so neither flag above notices it — this one
+                               // is polled a few times a second (see the dock loop).
+
+/* Every good's numbers, gathered FIRST: the header can't be written until we know
+   whether one port wins the remote column for all of them. With two markets it
+   always does, and repeating "CHARLESTON" down five rows is noise — so the name
+   goes in the column head instead. The day a third specialty market makes that
+   untrue, the rows start naming their own and nothing else changes. */
+function marketRows(port) {
+  return GOOD_IDS.map(g => ({
     g, n: hold[g], here: portRate(port, g), away: bestElsewhere(port, g),
   }));
+}
+/* v84 — the port says so itself when a sag is YOUR doing. It's the only place the
+   game ever explains saturation, so it has to be true at the moment it's read.
+
+   It is FORWARD-LOOKING, and that is the whole trick. Glut climbs while you sell,
+   but the price you're being paid was frozen when you touched down — so a note
+   about the CURRENT price would fire mid-drain, next to a HERE column that
+   disagrees with it, and teach the player the word means nothing. Quoting NEXT
+   VISIT's number instead makes the same line true in both moments: watch it tick
+   down as you dump a hold (cause and effect, in one drain), and read it as the
+   explanation for a rust HERE column when you come back into the sag.
+
+   Threshold 0.12 lines up with the colour deadband in rateClass — 0.12 of glut is
+   a 4.8% cut, just past the 4% a rate has to move before the number goes rust. */
+function marketNote(port) {
+  const g = GOOD_IDS.filter(k => portGlut(port, k) > 0.12);
+  // NBSP between a name and its price: this is the one line in the panel that
+  // WRAPS, and a plain space let it break between "SCRAP" and "0.62" — the number
+  // orphaned on the next row, which is the one thing you're reading it for.
+  return g.length ? "GLUTTED — NEXT VISIT: " +
+    g.map(k => GOODS[k].name + " " + portLive(port, k).toFixed(2)).join(" · ") : "";
+}
+/* Is this a good price, by this port's OWN standards? Colour only, and only on the
+   HERE column: it costs no column, and the phone's three-panel dock sheet has none
+   to give (spelling out a port name overflowed it by 26px once already). The away
+   column keeps its gold ▲ treatment — two colour languages in one table is a
+   Christmas tree, not a readout. 4% deadband so a one-cent wobble can't flicker it. */
+function rateClass(port, good, rate) {
+  const b = portBase(port, good);
+  if (!b) return "";
+  if (rate > b * 1.04) return " hi";
+  if (rate < b * 0.96) return " lo";
+  return "";
+}
+// exactly what's on screen, as a string. The only honest test for "would redrawing
+// change anything" — cheap enough to build a few times a second.
+function marketSignature(port, rows) {
+  let s = marketNote(port) + "|";
+  for (const r of rows)
+    s += r.n + ":" + r.here + ":" + (r.away ? r.away.rate + r.away.port.name : "-") + "|";
+  return s;
+}
+function refreshMarket(port) {
+  const rows = marketRows(port);
+  marketSig = marketSignature(port, rows);
   const names = new Set();
   for (const r of rows) if (r.away) names.add(r.away.port.name);
   const remote = names.size > 0;
@@ -4623,20 +4830,28 @@ function refreshMarket(port) {
              (remote && !uniform ? '<span class="w">PORT</span>' : "") + "</div>" +
              '<div class="mktSep"></div>';
 
-  let hereTotal = 0, bestTotal = 0;
+  let hereCents = 0, bestCents = 0;
   for (const r of rows) {
-    // floored PER GOOD, exactly the way the drain settles it — so these are the
-    // credits you will actually be paid, not an estimate that argues with the bank
-    hereTotal += Math.floor(r.n * r.here);
-    bestTotal += Math.floor(r.n * (r.away && r.away.rate > r.here ? r.away.rate : r.here));
+    /* Accumulated in exact CENTS and floored ONCE at the end, which is exactly how
+       the change drawer settles it (v84) — so these are the credits you will be
+       paid, not an estimate that argues with the bank. Rates are 2dp at source, so
+       the number you can read off the column IS the number in this sum. */
+    const hc = Math.round(r.here * 100), ac = r.away ? Math.round(r.away.rate * 100) : 0;
+    hereCents += r.n * hc;
     /* "take it elsewhere" is marked only when it's ACTIONABLE. A better price
        somewhere else for something you aren't carrying is trivia, and marking it
-       would teach you to ignore the mark. */
+       would teach you to ignore the mark. Otherwise it is exactly what the two
+       numbers beside it say — see the note on the ▲ up by DRIFT_BAND for why
+       there is deliberately no margin here. */
     const move = r.n > 0 && r.away && r.away.rate > r.here;
+    // ROUTED counts the trips the board actually MARKED. A total that assumes
+    // journeys it declined to recommend is a different number wearing the same
+    // label, and the row-by-row answer and the one-line answer must agree.
+    bestCents += r.n * (move ? ac : hc);
     html += '<div class="mktRow' + (r.n ? "" : " idle") + (move ? " move" : "") + '">' +
             '<span class="g" style="color:' + GOODS[r.g].color + '">' + GOODS[r.g].name + "</span>" +
             '<span class="n">' + (r.n || "·") + "</span>" +
-            '<span class="n">' + r.here.toFixed(2) + "</span>" +
+            '<span class="n' + rateClass(port, r.g, r.here) + '">' + r.here.toFixed(2) + "</span>" +
             (remote ? '<span class="n away">' + (r.away ? r.away.rate.toFixed(2) : "—") + "</span>" +
                       '<span class="mv">' + (move ? "▲" : "") + "</span>" : "") +
             (remote && !uniform ? '<span class="w">' + (r.away ? portShort(r.away.port) : "") + "</span>" : "") +
@@ -4648,12 +4863,22 @@ function refreshMarket(port) {
      port. Equal means you're standing in the right place — say so, rather than
      printing the same number twice and letting it read as a tie you must solve. */
   html += "</div>";                     // close .mktGrid
+  /* The change drawer is part of what you're owed HERE. It survives a takeoff, so
+     a hold you started selling last visit comes back with a fraction of a credit
+     already banked against it, and a footer that ignored it quoted one credit
+     less than the drain then paid — on roughly half of all resumed drains. ROUTED
+     doesn't get it: flying somewhere else changes soldPort, which empties the
+     drawer, so routing genuinely forfeits the change. */
+  if (port === soldPort) hereCents += owedCents;
+  const hereTotal = Math.floor(hereCents / 100), bestTotal = Math.floor(bestCents / 100);
   html += '<div class="mktFoot">' +
           (cargo === 0 ? "HOLD EMPTY"
             : bestTotal > hereTotal
               ? 'HOLD <b>' + hereTotal + '</b> HERE · <b>' + bestTotal + '</b> ROUTED'
               : 'HOLD <b>' + hereTotal + '</b> · BEST PRICE IS HERE') +
           "</div>";
+  const note = marketNote(port);
+  if (note) html += '<div class="mktNote">' + note + "</div>";
   marketEl.innerHTML = html;
 }
 
@@ -7394,8 +7619,14 @@ addEventListener("keydown", e => {
   if (e.target && e.target.tagName === "INPUT") return;
   if (e.code === "KeyV" && !keys["KeyV"]) toggleView(); // fire once per press
   if (e.code === "KeyH" && !keys["KeyH"]) ctrlMenu.classList.toggle("open"); // controls menu
-  if (e.code === "KeyE" && !keys["KeyE"]) tryRecruit(); // answer a hail — hire the wingman (v47)
-  if (e.code === "KeyG" && !keys["KeyG"]) tryAssist();  // landing assist / leave pad (v68)
+  /* v84 — the two keys that MOVE THE WORLD are gated on the pause. This handler
+     runs above the pause return, which is right for a view or a volume toggle and
+     wrong for these: `[G]` launching from a frozen game let you read the price
+     board through the menu backdrop, lift off, land again and re-roll the quote in
+     3.6 seconds of game time with the drain stopped. A pause menu that leaves the
+     launch button live is a hole whatever prices are doing. */
+  if (e.code === "KeyE" && !keys["KeyE"] && !paused) tryRecruit(); // answer a hail (v47)
+  if (e.code === "KeyG" && !keys["KeyG"] && !paused) tryAssist();  // landing assist / leave pad (v68)
   if (e.code === "KeyM" && !keys["KeyM"]) toggleMusic(); // music on/off (v48) — effects stay up
   if (e.code === "Space") e.preventDefault();           // Space fires; don't scroll
   // docked at the outfitter, 1/2/3 buy the rows (fire once per press)
@@ -8550,6 +8781,19 @@ function animate() {
     return;
   }
 
+  /* ---- the market ticks (v84, §1.1c) ----
+     Deliberately BELOW both gates above: prices don't move at the start screen
+     and they don't move while you're paused. The clock is game time, so it's the
+     same one everything else in this loop runs on.
+     The decay is every port × every good every frame — ten iterations today, and
+     it stays cheap because it's bounded by how many markets exist, not by how
+     much is in the sky. */
+  marketTime += dt;
+  const glutFade = dt / GLUT_RECOVER;
+  for (const p of PORTS)
+    if (p.glut) for (const g of GOOD_IDS)
+      if (p.glut[g] > 0) p.glut[g] = Math.max(0, p.glut[g] - glutFade);
+
   /* ---- gamepad: polled every frame ---- */
   let padLX = 0, padYaw = 0, padThrust = 0, padReverse = 0, padStop = false, padBoost = false, padFire = false, padLookBack = false;
   let lookTargetYaw = 0, lookTargetPitch = 0;   // 0 unless the stick says otherwise
@@ -9359,48 +9603,61 @@ function animate() {
   /* ---- the exchange (Stage 4, re-cut v60): parked in a port's district, the
      hold drains and pays out at THAT port's rate. Cargo still moves in whole
      units at BANK_RATE — drain speed is friction, not a decision, so it never
-     varies — but credits are settled against the running total, so a 0.7 fence
-     pays exactly 0.7 of what you handed over.
+     varies — but credits are settled through the change drawer, so a 0.7 fence
+     pays exactly 0.7 of what you handed over, remainder and all.
      `pay: 0` (or no port config at all) means no exchange here. */
   let banking = false, onPort = null;
   if (landedOn && landedOn.pads) {
     bankTmp.subVectors(shipObj.position, landedOn.group.position).normalize();
     onPort = onSpaceport(landedOn, bankTmp);
-    if (onPort && onPort.pay > 0 && cargo > 0) {
-      // the running total is scoped to THIS port and survives a takeoff, so a
-      // drain split across two visits settles the same as one long one (10 units
-      // at 0.7 pays 7, not 3+3). Changing ports starts a fresh ledger — a
-      // Charleston remainder must never settle at a fence's rate.
-      if (onPort !== soldPort) { soldPort = onPort; for (const g of GOOD_IDS) soldHere[g] = 0; paidHere = 0; }
-      banking = true;
-      bankFlow += BANK_RATE * dt;
-      let move = Math.min(cargo, Math.floor(bankFlow));
-      if (move > 0) {
-        bankFlow -= move;
-        /* v82: the hold drains BEST-PAYING-FIRST for this port. Drain order is
-           invisible on a full sale, but it's the whole difference when a takeoff
-           cuts one short — leaving with the stuff this port was underpaying for
-           is strictly the better outcome, and it costs three lines. */
-        const order = GOOD_IDS.filter(g => hold[g] > 0)
-                              .sort((a, b) => portRate(onPort, b) - portRate(onPort, a));
-        for (const g of order) {
-          if (move <= 0) break;
-          const n = Math.min(move, hold[g]);
-          hold[g] -= n; cargo -= n; soldHere[g] += n; move -= n;
-        }
-        // settle every good against ITS running total, then pay the difference
-        let gross = 0;
-        for (const g of GOOD_IDS) gross += Math.floor(soldHere[g] * portRate(onPort, g));
-        const owed = gross - paidHere;
-        if (owed > 0) { banked += owed; paidHere += owed; }
-        refreshCargoHud();
-        bankEl.textContent = banked;
-        bankTickSound();
-        if (cargo === 0) bankDoneSound();
+  }
+  /* v84: strike the quote the moment you're standing in the district, and drop it
+     the moment you're not. Hoisted OUT of the block above so the airborne case
+     clears it — and placed ahead of the drain, because everything below prices
+     itself through portRate() and must get the frozen number, not a live one. */
+  if (onPort !== quotePort) strikeQuote(onPort);
+  if (onPort && onPort.pay > 0 && cargo > 0) {
+    // the drawer is scoped to THIS port and survives a takeoff, so a drain split
+    // across two visits settles the same as one long one (10 units at 0.7 pays 7,
+    // not 3+3). Changing ports starts a fresh one.
+    if (onPort !== soldPort) { soldPort = onPort; owedCents = 0; }
+    banking = true;
+    bankFlow += BANK_RATE * dt;
+    let move = Math.min(cargo, Math.floor(bankFlow));
+    if (move > 0) {
+      bankFlow -= move;
+      /* v82: the hold drains BEST-PAYING-FIRST for this port. Drain order is
+         invisible on a full sale, but it's the whole difference when a takeoff
+         cuts one short — leaving with the stuff this port was underpaying for
+         is strictly the better outcome, and it costs three lines. */
+      const order = GOOD_IDS.filter(g => hold[g] > 0)
+                            .sort((a, b) => portRate(onPort, b) - portRate(onPort, a));
+      for (const g of order) {
+        if (move <= 0) break;
+        const n = Math.min(move, hold[g]);
+        hold[g] -= n; cargo -= n; move -= n;
+        // priced at the rate you were QUOTED on landing, in exact cents
+        owedCents += n * Math.round(portRate(onPort, g) * 100);
+        /* v84: and the port notices. The glut rises as the units land, but the
+           quote is already struck — so what you dump today sags the price for
+           your NEXT visit, not this one. That's the whole mechanic: the market
+           remembers, and it forgets again in a few minutes. */
+        if (onPort.glut) onPort.glut[g] = Math.min(1, onPort.glut[g] + n / GLUT_UNITS);
       }
+      const owed = Math.floor(owedCents / 100);
+      if (owed > 0) { banked += owed; owedCents -= owed * 100; }
+      refreshCargoHud();
+      bankEl.textContent = banked;
+      bankTickSound();
+      /* The drawer is NOT emptied here. An earlier cut cleared it on a dry hold
+         so the board and the bank couldn't disagree — but the board reads it now
+         (see refreshMarket), so clearing it only threw the change away, and it
+         killed a v82 property worth keeping: ten separate 1-unit sales at a 0.7
+         fence still add up to 7 credits instead of paying nothing ten times. */
+      if (cargo === 0) bankDoneSound();
     }
   }
-  if (!banking) bankFlow = 0;   // (soldHere/paidHere persist — see the ledger note above)
+  if (!banking) bankFlow = 0;   // (owedCents persists — see the change-drawer note above)
   if (wasBanking && !banking) saveBank();   // drain finished — or takeoff cut it short
   wasBanking = banking;
 
@@ -9438,9 +9695,25 @@ function animate() {
      sound signature for the hold, because nothing writes a stack without it. */
   const canMarket = !!(onPort && onPort.pay > 0);
   marketEl.style.display = canMarket ? "block" : "none";
-  if (canMarket && (marketDirty || cargo !== marketCargoShown)) {
-    refreshMarket(onPort);
-    marketCargoShown = cargo; marketDirty = false;
+  if (canMarket) {
+    let redraw = marketDirty || cargo !== marketCargoShown;
+    /* v84: neither of those notices DRIFT. A remote rate moving is the world's
+       doing, not yours — no port change, no hold change, and the board would sit
+       there being quietly wrong. So it's POLLED: rebuild the numbers a few times
+       a second and compare. Asking costs five multiplications; the wrong answer
+       costs a board you can't trust. 4/sec is well under the eye's threshold for
+       a number that moves this slowly, and it's one frame in fifteen. */
+    if (!redraw) {
+      marketSigAt += dt;
+      if (marketSigAt >= 0.25) {
+        marketSigAt = 0;
+        redraw = marketSignature(onPort, marketRows(onPort)) !== marketSig;
+      }
+    }
+    // reset the poll clock on EVERY redraw, not just the polled one — otherwise a
+    // drain (which redraws every frame) leaves it holding a stale count, and the
+    // first poll after the hold empties fires instantly instead of 250ms later
+    if (redraw) { refreshMarket(onPort); marketCargoShown = cargo; marketDirty = false; marketSigAt = 0; }
   }
 
   /* dock sheet (v79) — parked at a real PORT on glass is its own mode. Gated on
