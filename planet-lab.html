@@ -147,6 +147,7 @@
     <div class="read" style="margin-top:8px"><span>ALT</span><span class="big" id="rAlt">—</span></div>
     <div class="read"><span>OVER</span><span id="rOver">—</span></div>
     <div class="read"><span>LAT / LON</span><span id="rLatLon">—</span></div>
+    <div class="read"><span>PITCH · BEARING</span><span id="rPitch">—</span></div>
   </div>
 
   <div class="sec"><div class="lbl">RENDER</div>
@@ -176,6 +177,7 @@
       <div class="seg" style="width:132px">
         <button data-res="192">LOW</button><button data-res="384" class="on">MED</button><button data-res="768">HIGH</button>
       </div></div>
+    <div class="read"><span>SAMPLING</span><span id="dRes">—</span></div>
     <div class="row"><span>HAZARD MASK</span>
       <div class="seg" style="width:96px"><button data-t="hazard" class="on">OFF</button><button data-t="hazard">ON</button></div></div>
     <div class="row"><span>PADS / VENTS</span>
@@ -205,7 +207,8 @@
 
 <div id="msg"></div>
 <div id="hint">
-  <b>drag</b> orbit &nbsp; <b>wheel</b> zoom &nbsp; <b>1-5</b> world<br>
+  <b>drag</b> orbit (up = tilt to horizon) &nbsp; <b>shift+drag</b> move over the surface<br>
+  <b>wheel</b> zoom &nbsp; <b>1-5</b> world<br>
   <b>R</b> reload &nbsp; <b>G</b> grid &nbsp; <b>H</b> hazard &nbsp; <b>W</b> wire &nbsp;
   <b>space</b> spin &nbsp; <b>tab</b> panel
 </div>
@@ -428,8 +431,13 @@ let body = null;        // { height, hazardGrid, pads, trees, cfgs… } — mirr
 let parts = {};         // { model, gridMesh, hazMesh, sites, trees, atmo, cloudShell, glbClouds }
 let loadSeq = 0, spinY = 0, cloudY = 0, loading = false;
 
-// camera orbit state
-let az = 0.6, el = 0.35, dist = 1;
+/* CAMERA — orbits a PIVOT ON THE SURFACE, not the planet's core.
+   az/el say WHERE on the globe you're studying. pitch/bearing say where you're
+   standing relative to that spot, and dist how far off. pitch 0 is straight
+   down (the old behaviour, and still what ORBIT gives you); pitch 90 puts you
+   level with the ground looking at the horizon. Pointing at the core is what
+   made every zoom a nadir shot — you could never see anything in profile. */
+let az = 0.6, el = 0.35, dist = 1, pitch = 0, bearing = 0;
 
 const $ = id => document.getElementById(id);
 
@@ -704,7 +712,9 @@ function labelSprite(text, colorCss) {
     sizeAttenuation: false,          // constant on screen — it's a label, not an object
   }));                               // depth-tested on purpose: a label showing THROUGH
                                      // the planet would read as a pad on the near side
-  spr.scale.set(cnv.width / 3400, cnv.height / 3400, 1);
+  // ~8% of viewport width for a 20-char name. sizeAttenuation off means this
+  // scale lands in NDC directly, so it's a screen fraction, not a world size.
+  spr.scale.set(cnv.width / 1150, cnv.height / 1150, 1);
   spr.renderOrder = 10;
   return spr;
 }
@@ -821,21 +831,21 @@ function applyWire() {
 
 /* ============ CAMERA ============ */
 const skyTop = () => cfg.radius + (cfg.atmoAlt != null ? cfg.atmoAlt : cfg.radius * 0.4);
+/* Each preset picks a distance AND an angle, because "surface" meant nothing
+   while the camera was pinned to the core — you just got the same overhead
+   shot from lower down. SURF now stands you next to the thing. */
 function frameWorld(preset) {
   const R = cfg.radius, sky = skyTop() - R;
-  if (preset === "orbit") dist = R + sky * 2.6;
-  else if (preset === "sky") dist = R + sky;
-  else if (preset === "low") dist = R + sky * 0.10;
-  else dist = R + Math.max(R * 0.004, sky * 0.012);
+  if (preset === "orbit")     { dist = sky * 2.6; pitch = 0; }
+  else if (preset === "sky")  { dist = sky;       pitch = 0.35; }   // ~20°
+  else if (preset === "low")  { dist = sky * 0.10; pitch = 0.96; }  // ~55°
+  else { dist = Math.max(R * 0.012, sky * 0.035); pitch = 1.36; }   // ~78°, eye level
   clampDist();
 }
 function clampDist() {
-  const R = cfg.radius;
-  const minA = Math.max(1, R * 0.0015), maxA = (skyTop() - R) * 14 + R * 2;
-  dist = Math.min(R + maxA, Math.max(R + minA, dist));
+  const R = cfg.radius, sky = skyTop() - R;
+  dist = Math.min(sky * 14 + R * 2, Math.max(Math.max(2, R * 0.0015), dist));
 }
-const _cn = new THREE.Vector3();
-function camDir() { return _cn.copy(camera.position).normalize(); }
 // world dir -> baked frame, exactly the game's toBakedFrame
 function toBaked(n) {
   const yaw = holder ? holder.rotation.y : 0;
@@ -843,25 +853,87 @@ function toBaked(n) {
   const cy = Math.cos(yaw), sy = Math.sin(yaw);
   return { x: n.x * cy - n.z * sy, y: n.y, z: n.x * sy + n.z * cy };
 }
+const _up = new THREE.Vector3(), _east = new THREE.Vector3(), _north = new THREE.Vector3(),
+      _h = new THREE.Vector3(), _d = new THREE.Vector3(), _sUp = new THREE.Vector3(),
+      _P = new THREE.Vector3(), _pos = new THREE.Vector3(), _t = new THREE.Vector3();
+const WORLD_Y = new THREE.Vector3(0, 1, 0);
+
+function pivotDir(out) {                       // the spot we're studying, world frame
+  const ce = Math.cos(el);
+  return out.set(ce * Math.sin(az), Math.sin(el), ce * Math.cos(az));
+}
+function groundAt(n) {                         // world dir -> ground radius there
+  if (!body || !body.height) return cfg.radius;
+  const b = toBaked(n);
+  return gridRadius(b.x, b.y, b.z);
+}
+
 function placeCamera() {
-  const ce = Math.cos(el), se = Math.sin(el);
-  camera.position.set(dist * ce * Math.sin(az), dist * se, dist * ce * Math.cos(az));
-  camera.lookAt(0, 0, 0);
-  // near/far track altitude so you can sit on the deck without clipping through it
-  const alt = Math.max(1, dist - cfg.radius);
-  camera.near = Math.max(0.05, alt * 0.02);
-  camera.far = dist * 3 + cfg.radius * 4 + 200000;
+  pivotDir(_up);
+  _P.copy(_up).multiplyScalar(groundAt(_up));   // the pivot sits ON the ground
+
+  // local compass frame at the pivot (cross() degenerates exactly on a pole)
+  if (Math.abs(_up.y) > 0.9999) _east.set(1, 0, 0);
+  else _east.crossVectors(WORLD_Y, _up).normalize();
+  _north.crossVectors(_up, _east).normalize();
+  _h.copy(_north).multiplyScalar(Math.cos(bearing)).addScaledVector(_east, Math.sin(bearing));
+
+  /* d = where the camera stands relative to the pivot, sUp = which way is up on
+     screen. They stay orthonormal at EVERY pitch (dot = cos·sin − sin·cos = 0),
+     which is the whole reason this is built by hand: lookAt() with an up vector
+     parallel to the view direction is degenerate, and straight-down is exactly
+     that case. pitch 0 gives north-up map view, pitch 90 gives sky-up horizon. */
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  _d.copy(_up).multiplyScalar(cp).addScaledVector(_h, -sp);
+  _sUp.copy(_up).multiplyScalar(sp).addScaledVector(_h, cp);
+
+  _pos.copy(_P).addScaledVector(_d, dist);
+  // a low pitch near the deck would otherwise bury the camera in the hillside
+  const r = _pos.length() || 1;
+  _t.copy(_pos).multiplyScalar(1 / r);
+  const floor = groundAt(_t) + Math.max(2, cfg.radius * 0.0008);
+  if (r < floor) _pos.copy(_t).multiplyScalar(floor);
+
+  camera.position.copy(_pos);
+  camera.up.copy(_sUp);
+  camera.lookAt(_P);
+
+  camera.near = Math.max(0.05, Math.min(dist, camera.position.length() - floor + 2) * 0.02);
+  camera.far = camera.position.length() * 3 + cfg.radius * 4 + 200000;
   camera.updateProjectionMatrix();
 }
 function placeSun() {
-  const a = T.follow ? az + sunOff : sunOff;
-  const e = T.follow ? Math.max(-0.9, Math.min(1.1, el * 0.4 + 0.30)) : 0.30;
-  const ce = Math.cos(e);
-  sunLight.position.set(SUN_DIST * ce * Math.sin(a), SUN_DIST * Math.sin(e), SUN_DIST * ce * Math.cos(a));
+  if (T.follow) {
+    // keyed off the CAMERA now, not the pivot — at high pitch those diverge,
+    // and "follow" has to mean "lights what I'm looking at" either way
+    _t.copy(camera.position).normalize();
+    const c = Math.cos(sunOff), s = Math.sin(sunOff);
+    _pos.set(_t.x * c + _t.z * s, _t.y + 0.35, -_t.x * s + _t.z * c).normalize();
+    sunLight.position.copy(_pos).multiplyScalar(SUN_DIST);
+  } else {
+    const ce = Math.cos(0.30);
+    sunLight.position.set(SUN_DIST * ce * Math.sin(sunOff), SUN_DIST * Math.sin(0.30),
+                          SUN_DIST * ce * Math.cos(sunOff));
+  }
 }
 
 /* ============ READOUTS ============ */
 function fmt(n, d) { return n.toLocaleString(undefined, { maximumFractionDigits: d == null ? 0 : d }); }
+/* BE HONEST ABOUT THE DOWNSAMPLE. The overlay draws a lat/lon sphere at
+   `gridRes` columns, but EARTH's collision grid is 2048 wide — so at MED you
+   are looking at roughly 1 vertex per 5 grid cells. It smooths detail the real
+   sampler keeps, which means a close-up "the grid misses this ridge" can be the
+   OVERLAY cutting the corner, not the grid. Say the ratio out loud so the tool
+   can't quietly mislead a detail pass; drop to HIGH before believing a fine one. */
+function fillRes() {
+  const g = body && body.height;
+  if (!g) return void ($("dRes").textContent = "—");
+  const cols = Math.min(gridRes, g.w);
+  const ratio = g.w / cols;
+  $("dRes").innerHTML = cols + "×" + Math.floor(cols / 2) +
+    ' <span style="color:var(--dimmer)">of ' + g.w + "×" + g.h + "</span>" +
+    (ratio > 1.05 ? ' <span class="miss">1:' + ratio.toFixed(1) + "</span>" : ' <span class="ok">1:1</span>');
+}
 function fillStats(headRes) {
   const g = body.height;
   const len = headRes && headRes.ok ? +headRes.headers.get("content-length") : 0;
@@ -876,6 +948,7 @@ function fillStats(headRes) {
     $("rampLo").textContent = fmt(g.min * cfg.radius, 0) + " u";
     $("rampHi").textContent = fmt(g.max * cfg.radius, 0) + " u";
   } else { $("dRelief").textContent = "—"; $("rampLo").textContent = "—"; $("rampHi").textContent = "—"; }
+  fillRes();
   $("dSky").textContent = fmt(skyTop() - cfg.radius) + " u  (R " + fmt(cfg.radius) + ")";
   const np = (cfg.pads || []).length, nv = (cfg.vents || []).length, nt = body.trees ? body.trees.count : 0;
   $("dSites").textContent = np + " pad" + (np === 1 ? "" : "s") +
@@ -889,14 +962,25 @@ function fillStats(headRes) {
 }
 function updateReadouts() {
   if (!cfg || !body) return;
-  const n = camDir(), b = toBaked(n);
+  // LAT/LON + OVER describe the PIVOT — the spot you're studying. Once you can
+  // pitch over, "under the camera" and "what I'm looking at" are two different
+  // places, and the one you care about is the target.
+  pivotDir(_t);
+  const b = toBaked(_t);
   const gr = body.height ? gridRadius(b.x, b.y, b.z) : cfg.radius;
-  $("rAlt").textContent = fmt(dist - gr, 0) + " u";
+  // ALT stays the CAMERA's own clearance: the honest "am I about to clip
+  // something" number, which at high pitch is nowhere near the pivot.
+  _t.copy(camera.position).normalize();
+  const cb = toBaked(_t);
+  const camGround = body.height ? gridRadius(cb.x, cb.y, cb.z) : cfg.radius;
+  $("rAlt").textContent = fmt(camera.position.length() - camGround, 0) + " u";
+  $("rPitch").textContent = (pitch * 180 / Math.PI).toFixed(0) + "° · " +
+    (((bearing * 180 / Math.PI) % 360 + 360) % 360).toFixed(0) + "°";
   const lat = Math.asin(Math.max(-1, Math.min(1, b.y))) * 180 / Math.PI;
   const lon = Math.atan2(-b.z, b.x) * 180 / Math.PI;
   $("rLatLon").textContent = lat.toFixed(1) + "° / " + lon.toFixed(1) + "°";
 
-  // what is under the camera? same three rules the game's hazardLevel uses
+  // what is under the pivot? same three rules the game's hazardLevel uses
   let over = "—";
   const hz = cfg.hazard;
   let padName = null;
@@ -927,12 +1011,27 @@ cvs.addEventListener("pointerdown", e => {
 });
 cvs.addEventListener("pointermove", e => {
   if (!dragging || !cfg) return;
-  // sensitivity scales with altitude: close to the deck, drags get fine-grained
-  const alt = Math.max(1, dist - cfg.radius);
-  const k = Math.max(0.05, Math.min(1, alt / cfg.radius)) * 0.008;
-  az -= (e.clientX - px) * k;
-  el = Math.max(-1.5, Math.min(1.5, el + (e.clientY - py) * k));
+  const dx = e.clientX - px, dy = e.clientY - py;
   px = e.clientX; py = e.clientY;
+  if (e.shiftKey) {
+    // SHIFT = fly the pivot across the surface. Scaled by how much globe is on
+    // screen, so one drag is a sensible step from orbit AND from the deck.
+    const k = Math.max(0.00004, Math.min(0.01, dist / cfg.radius * 0.006));
+    az -= dx * k;
+    el = Math.max(-1.5, Math.min(1.5, el + dy * k));
+  } else {
+    /* plain drag = orbit the spot, and the SCENE FOLLOWS YOUR HAND — same as
+       Blender's orbit and as the shift-pan above, which is what makes the two
+       halves of this gesture agree instead of fighting.
+       Why the signs: at pitch 0 the camera sits above the pivot with north
+       up-screen, and raising pitch slides it SOUTH — down-screen — so the
+       ground rises. Drag UP to tilt toward the horizon, DOWN to go overhead.
+       Likewise at pitch 90 the camera stands south looking north, and raising
+       bearing walks it west (its own left), so the scene tracks right with a
+       rightward drag. Both were flipped in the first pass and felt inverted. */
+    bearing += dx * 0.008;
+    pitch = Math.max(0, Math.min(1.52, pitch - dy * 0.006));   // 0 .. ~87°
+  }
 });
 const endDrag = e => { dragging = false; try { cvs.releasePointerCapture(e.pointerId); } catch (_) {} };
 cvs.addEventListener("pointerup", endDrag);
@@ -940,10 +1039,9 @@ cvs.addEventListener("pointercancel", endDrag);
 cvs.addEventListener("wheel", e => {
   if (!cfg) return;
   e.preventDefault();
-  // zoom on ALTITUDE, not distance — so the last 50 units take as many
-  // clicks as the first 50,000 and you can ease onto the surface
-  const alt = dist - cfg.radius;
-  dist = cfg.radius + alt * Math.exp(e.deltaY * 0.0014);
+  // dist is measured from the PIVOT (on the ground), so this is already
+  // altitude-like: the last 50 units take as many clicks as the first 50,000
+  dist *= Math.exp(e.deltaY * 0.0014);
   clampDist();
 }, { passive: false });
 
@@ -979,7 +1077,8 @@ document.querySelectorAll("[data-grid]").forEach(b => b.addEventListener("click"
   gridMode = b.dataset.grid; segSet(b); rebuildOverlays(["gridMesh"]);
 }));
 document.querySelectorAll("[data-res]").forEach(b => b.addEventListener("click", () => {
-  gridRes = +b.dataset.res; segSet(b); if (gridMode !== "off") rebuildOverlays(["gridMesh"]);
+  gridRes = +b.dataset.res; segSet(b); fillRes();
+  if (gridMode !== "off") rebuildOverlays(["gridMesh"]);
 }));
 document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("click", () => {
   segSet(b); frameWorld(b.dataset.preset);
@@ -1038,8 +1137,33 @@ function syncTogglesUI() {
    assertion that proves this overlay isn't drawing a pretty lie. */
 window.LAB = {
   get cfg() { return cfg; }, get body() { return body; }, get parts() { return parts; },
-  get bodies() { return BODIES; }, get view() { return { az, el, dist, gridMode, gridRes, T }; },
-  gridRadius, sampleGrid, dirOf, load: loadPlanet,
+  get camera() { return camera; },
+  get bodies() { return BODIES; },
+  get view() { return { az, el, dist, pitch, bearing, gridMode, gridRes, T }; },
+  setView(v) {
+    if (v.pitch != null) pitch = Math.max(0, Math.min(1.52, v.pitch * Math.PI / 180));
+    if (v.bearing != null) bearing = v.bearing * Math.PI / 180;
+    if (v.dist != null) { dist = v.dist; clampDist(); }
+  },
+  preset: frameWorld,
+  gridRadius, sampleGrid, dirOf, toBaked, load: loadPlanet,
+  /* Aim at a baked lat/lon — LAB.goTo(32.9, -80, 400, 78) stands you 400 units
+     off Charleston at 78° of tilt, looking at the spaceport with the horizon
+     behind it. Same degrees the pad/vent configs use, spun forward through the
+     holder's rotation the way fromBakedFrame does. dist is from the GROUND
+     POINT now, not the planet centre. */
+  goTo(lat, lon, alt, pitchDeg, bearingDeg) {
+    const d = dirOf(lat * Math.PI / 180, lon * Math.PI / 180);
+    const yaw = holder ? holder.rotation.y : 0;
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const wx = d.x * cy + d.z * sy, wz = -d.x * sy + d.z * cy;
+    el = Math.asin(Math.max(-1, Math.min(1, d.y)));
+    az = Math.atan2(wx, wz);
+    if (alt != null) dist = alt;
+    if (pitchDeg != null) pitch = Math.max(0, Math.min(1.52, pitchDeg * Math.PI / 180));
+    if (bearingDeg != null) bearing = bearingDeg * Math.PI / 180;
+    clampDist();
+  },
   setSource(s) { source = s; return loadPlanet(cfg.name); },
   setGrid(m) { gridMode = m; syncGridUI(); rebuildOverlays(["gridMesh"]); },
   toggle(k, v) { T[k] = v; syncTogglesUI(); applyToggle(k); },
