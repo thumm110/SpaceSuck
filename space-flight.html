@@ -88,10 +88,60 @@
   .pipRow .p { color: #6ee7d8; }
   .pipRow .p .off { opacity: .25; }
   @media (max-width: 480px) { .ss-title { font-size: 42px; letter-spacing: 8px; } }
+
+  /* ==== THE FRONT DOOR HAS TO FIT (v79.4) =============================
+     Found by Tanner on a phone: in LANDSCAPE the menu is 580px of content in a
+     390px viewport, so START sat 37px below the fold — and `html, body
+     { overflow: hidden }` means there is nothing to scroll. The game was
+     literally unstartable in landscape unless you rotated or knew a #hash.
+     That is a front-door blocker, not polish.
+
+     Two independent fixes, because one of them must never be the only one:
+
+     1. THE SCREEN SCROLLS. A safety net at ANY size, for any future content
+        that grows past the fold. `margin: auto` on the inner keeps it centred
+        while it fits and lets it start at the top once it doesn't — which
+        `align-items: center` alone will not do (it centres the overflow too,
+        making the TOP unreachable instead of the bottom).
+     2. IT FITS WITHOUT SCROLLING. On a short screen the column becomes two:
+        the title block on the left, the whole menu on the right. Landscape is
+        short and WIDE, so the width is there for free — the same axis argument
+        as the docked panels and the throttle. */
+  #startscreen { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .ss-inner { margin: auto; }
+
+  @media (max-height: 560px) {
+    #startscreen { padding-top: 0; align-items: center; }
+    .ss-inner {
+      display: grid; grid-template-columns: auto auto;
+      align-items: center; justify-items: center;
+      gap: 2px 26px; padding: 10px 14px;
+    }
+    .ss-title { grid-column: 1; grid-row: 1; font-size: 34px; letter-spacing: 6px; }
+    .ss-tag   { grid-column: 1; grid-row: 2; font-size: 9px; letter-spacing: 1.5px;
+                max-width: 300px; }
+    .ss-hint  { grid-column: 1; grid-row: 3; font-size: 8px; letter-spacing: 3px;
+                margin-top: 6px; }
+    #menuButtons { grid-column: 2; grid-row: 1 / span 3; gap: 7px; margin-top: 0; }
+    /* the menu column carries the height, so every row in it comes down a size */
+    .ss-input { padding: 7px 14px; width: 210px; font-size: 15px; }
+    #shipCard { width: 210px; padding: 6px 10px 7px; }
+    #shipName { font-size: 12px; letter-spacing: 2px; }
+    #shipBlurb { font-size: 8px; margin: 2px 0 4px; min-height: 0; }
+    .pipRow { font-size: 9px; line-height: 1.35; }
+    .ss-arrow { font-size: 17px; padding: 5px 9px 7px; }
+    #shiprow { gap: 7px; }
+    .ss-btn { font-size: 14px; letter-spacing: 4px; padding: 8px 30px; }
+    .ss-btn.sub { font-size: 11px; letter-spacing: 3px; padding: 6px 22px; }
+  }
   /* while the menu is up the flight HUD, radar canvas and touch pads stay
      hidden — the front door owns the whole screen. */
   body.menu #hud, body.menu #navhud { display: none; }
   body.menu .touchbtn { display: none !important; }
+  /* the stick is its own top-level layer, NOT a .touchbtn and not inside #hud,
+     so it slipped through both rules above and its ghost ring sat on the front
+     door. Anything new added outside #hud needs a line here too. */
+  body.menu #stick { display: none !important; }
   /* a quieter sibling of the big START button — menu rows that aren't the
      main event (SETTINGS today, whatever slots in tomorrow) */
   .ss-btn.sub { font-size: 13px; letter-spacing: 4px; padding: 9px 30px; opacity: .85; }
