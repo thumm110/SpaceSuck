@@ -486,6 +486,42 @@
      the short-screen rule below shortens the bar rather than let them collide. */
   body.touch #throttlewrap { bottom: 214px; }
 
+  /* v79.3 — THROTTLE ACROSS THE BOTTOM (Tanner's call). The right-hand strip
+     was always a compromise: it's the tallest thing on that edge and it had to
+     dodge FIRE, so v78 shoved it up next to VIEW where it read as clutter. Now
+     that the scope has moved into the left lane, the bottom centre is the one
+     genuinely empty band on the glass — under the ship, between both thumbs.
+
+     Gated on width, not on `touch`, because a PORTRAIT phone has the button
+     cluster sitting in that exact band (REVERSE reaches x194-264, y750-820 on a
+     390px screen) — there is no room, so it keeps the right-hand strip. Same
+     rule as the scope's lane: take the good position when it exists, don't
+     force it when it doesn't.
+
+     The bar itself is the same three divs; only the axis changes. Every
+     override below has to reset the property the vertical version set, or the
+     old value survives and the fill grows the wrong way. */
+  @media (min-width: 600px) {
+    body.touch #throttlewrap {
+      left: 50%; right: auto; bottom: 12px; transform: translateX(-50%);
+      text-align: center; font-size: 8px; letter-spacing: 2px; opacity: .85;
+    }
+    body.touch #throttlebar {
+      width: 172px; height: 9px; margin: 4px auto 0;
+    }
+    body.touch #throttlefwd {
+      top: 0; bottom: 0; left: 33%; right: auto; height: auto; width: 0;
+      background: linear-gradient(to right, #14b8a6, #6ee7d8);
+    }
+    body.touch #throttlerev {
+      top: 0; bottom: 0; right: 67%; left: auto; height: auto; width: 0;
+      background: linear-gradient(to left, #d98d3a, #ffb066);
+    }
+    body.touch #throttlezero {
+      left: 33%; right: auto; top: -3px; bottom: -3px; width: 1px; height: auto;
+    }
+  }
+
   /* A phone is small in whichever direction it's held. Landscape is SHORT
      (~390px tall) and portrait is NARROW (~390px wide) — a 144px ring simply
      does not fit a 164px-wide stick zone. Both cases get the small rig. The JS
@@ -495,7 +531,12 @@
     #stickbase { width: 116px; height: 116px; }
     #stickknob { width: 48px; height: 48px; }
   }
-  @media (max-height: 460px) {
+  /* Short AND narrow — i.e. still on the vertical right-hand bar. The width
+     clause is load-bearing: a landscape phone is short but WIDE, so it has
+     already been laid out horizontally above, and without `max-width` this
+     block would come later in the sheet at equal specificity and silently
+     shove the bar back up the right edge. */
+  @media (max-height: 460px) and (max-width: 599px) {
     body.touch #throttlewrap { bottom: 208px; }
     body.touch #throttlebar { height: 74px; }
   }
@@ -7114,6 +7155,18 @@ function layoutNavHud() {
   navRadarUp = Math.max(92, Math.min(navRadarUp, innerHeight - shipLine - navRadarR - 10));
 }
 
+/* Which way the throttle bar grows. Measured ONCE per resize, not per frame:
+   offsetWidth forces a layout flush, and this only changes when the window
+   does. CSS owns whether the bar is tall or wide; this just reads back which
+   one CSS picked, so the two can't disagree. */
+let thrHoriz = false;
+function layoutThrottle() {
+  // looked up here rather than closed over: `throttleBar` is declared further
+  // down the file, and this runs at boot — a captured const would be in its TDZ
+  const bar = document.getElementById("throttlebar");
+  thrHoriz = bar.offsetWidth > bar.offsetHeight;
+}
+
 /* Where the ship RESTS in frame as a fraction of screen height. The chase camera
    sits above the hull and looks along its NOSE, so the ship hangs atan2(y, z)
    below the lens axis; through the view's FOV that lands at a fixed fraction,
@@ -7145,8 +7198,9 @@ stickRest();
 applyTouchFraming();
 layoutNavHud();
 layoutAssistPill();
+layoutThrottle();
 // an orientation flip moves the corner, the scope AND the pill that rides it
-addEventListener("resize", () => { stickRest(); layoutNavHud(); layoutAssistPill(); });
+addEventListener("resize", () => { stickRest(); layoutNavHud(); layoutAssistPill(); layoutThrottle(); });
 
 /* Does this touch belong to the stick? Anything you can PRESS keeps its own
    touch (buttons, the controls menu, the docked panels), the pause menu keeps
@@ -8932,12 +8986,21 @@ function animate() {
   speedEl.textContent = Math.round(spd);
   jobEl.textContent = activeJob ? "⟡ " + activeJob.name + "  +" + activeJob.reward : "—";
   revTag.style.visibility = ship.throttle < -0.01 ? "visible" : "hidden";
+  /* The bar is VERTICAL on desktop and HORIZONTAL on a wide touch screen
+     (v79.3), so the fill grows along a different axis. Both properties are
+     written every time — clearing the unused one — because the axis can flip
+     under you when the orientation changes, and a stale `height: 40%` left on a
+     horizontal bar reads as a throttle setting that isn't there. */
+  const setThrottleFill = (el, pct) => {
+    el.style.width  = thrHoriz ? pct : "";
+    el.style.height = thrHoriz ? "" : pct;
+  };
   if (ship.throttle >= 0) {
-    throttleFwd.style.height = (ship.throttle * 67) + "%";
-    throttleRev.style.height = "0%";
+    setThrottleFill(throttleFwd, (ship.throttle * 67) + "%");
+    setThrottleFill(throttleRev, "0%");
   } else {
-    throttleFwd.style.height = "0%";
-    throttleRev.style.height = (Math.abs(ship.throttle) / 0.5 * 33) + "%";
+    setThrottleFill(throttleFwd, "0%");
+    setThrottleFill(throttleRev, (Math.abs(ship.throttle) / 0.5 * 33) + "%");
   }
 
   let nearest = null, nearestDist = Infinity;
