@@ -348,6 +348,46 @@
   .shopRow.broke:hover, .shopRow.maxed:hover { background: none; }
   /* gamepad cursor: the highlighted row the D-pad is sitting on */
   .shopRow.cursor { background: rgba(110,231,216,.18); outline: 1px solid rgba(110,231,216,.55); }
+  /* the price board (v83) — the third dock panel, berthed RIGHT so dispatch keeps
+     the left and the outfitter keeps the centreline. Fixed sides on purpose: the
+     panel is in the same place at every port, so you learn where to look instead
+     of re-finding it each landing.
+     Amber because it's the money one — teal outfitter, violet dispatch, gold
+     market. At a glance the colour alone says which panel you're reading. */
+  #marketboard {
+    position: absolute; top: 31%; right: 24px;
+    display: none; pointer-events: auto;
+    background: rgba(20, 14, 2, .8);
+    border: 1px solid rgba(255,211,77,.42);
+    padding: 8px 12px 10px; font-size: 12px; letter-spacing: 1px;
+    color: #e8dcc0; text-align: left; white-space: nowrap;
+  }
+  #marketboard .title { color: #ffd34d; letter-spacing: 3px; font-size: 11px;
+                        text-align: center; margin-bottom: 7px; }
+  #marketboard .title b { color: #fff0b8; font-weight: normal; }
+  /* A real GRID, not flex rows. Flex sizes every row on its own, so the column
+     HEADINGS drifted off the numbers they label — "RUSTHOLLOW" is three times the
+     width of the 0.70 underneath it, and the head ended up reading as one run-on
+     word. Grid is the only thing here that shares a column width down the whole
+     table. The rows are `display: contents` so a row still carries its own class
+     (idle / move) while its cells belong to the grid.
+     The column count comes from refreshMarket as an inline template, because how
+     many columns there are depends on how many markets exist. */
+  #marketboard .mktGrid { display: grid; gap: 3px 10px; align-items: baseline; }
+  .mktRow { display: contents; }
+  .mktRow .n  { text-align: right; }
+  .mktRow .mv { font-size: 9px; color: #ffd34d; }   /* own column, so the ▲ can't shift the numbers */
+  .mktRow .w  { color: #b9a97e; }
+  .mktRow.head > span { color: #9a8f6e; font-size: 10px; letter-spacing: 2px; }
+  .mktRow.idle > span { opacity: .42; }         /* not carrying it — data, not a decision */
+  .mktRow.move .away  { color: #ffd34d; }       /* worth more somewhere else, and you're holding it */
+  #marketboard .mktSep { grid-column: 1 / -1; height: 1px; margin: 1px 0 3px;
+                         background: rgba(255,211,77,.18); }
+  #marketboard .mktFoot {
+    margin-top: 6px; padding-top: 5px; font-size: 11px; color: #b9a97e;
+    text-align: center; border-top: 1px solid rgba(255,211,77,.18);
+  }
+  #marketboard .mktFoot b { color: #ffd34d; font-weight: normal; }
   /* the dispatch board (v56) — Charleston's job faucet. Same dock gate as the
      outfitter, parked to the LEFT so the two panels don't share the centreline. */
   #dispatchboard {
@@ -645,14 +685,22 @@
     display: flex; gap: 16px; justify-content: center; align-items: stretch;
     padding: 0 20px; pointer-events: none;
   }
-  body.docked #shop, body.docked #dispatchboard {
+  body.docked #shop, body.docked #dispatchboard, body.docked #marketboard {
     position: static; transform: none; flex: 1 1 0; max-width: 430px;
     min-width: 0; white-space: normal; overflow-y: auto;
     padding: 10px 14px 12px; font-size: 13px;
   }
-  body.docked #shop .title, body.docked #dispatchboard .title {
+  body.docked #shop .title, body.docked #dispatchboard .title,
+  body.docked #marketboard .title {
     font-size: 12px; margin-bottom: 10px;
   }
+  /* The market is a TABLE, so it's the one panel that can't absorb a third of a
+     844px sheet by wrapping — it overflows sideways instead. Charleston is the
+     three-column case (outfitter + dispatch + market); tighten the columns there
+     rather than let the numbers slide out from under their own headings.
+     Rows here are read, never tapped, so they keep out of the 44px rule below. */
+  body.docked #marketboard { font-size: 12px; padding: 10px 10px 12px; }
+  body.docked #marketboard .mktGrid { gap: 5px 8px; }
   /* 44px targets — the flight-sized 20px rows were unhittable with a thumb */
   /* 44px targets — the flight-sized 20px rows were unhittable with a thumb.
      The price is a `float: right` in flight, which on a 390px-wide portrait
@@ -676,9 +724,12 @@
   @media (max-width: 560px) {
     body.docked #dockcols { flex-direction: column; align-items: center;
                             overflow-y: auto; gap: 12px; }
-    body.docked #shop, body.docked #dispatchboard {
+    body.docked #shop, body.docked #dispatchboard, body.docked #marketboard {
       flex: 0 0 auto; width: 100%; max-width: 460px; overflow-y: visible;
     }
+    /* stacked, the width pressure is gone — give the table its room back */
+    body.docked #marketboard { font-size: 13px; padding: 10px 14px 12px; }
+    body.docked #marketboard .mktGrid { gap: 7px 14px; }
   }
 
   /* the readout used to sit exactly where the stick now lives — lift and
@@ -851,6 +902,10 @@
     <div id="dispatchboard">
       <div class="title">◆ DISPATCH ◆</div>
     </div>
+    <!-- the price board (v83). Built entirely in refreshMarket() — the row count
+         is the goods table's, not a fixed set of divs like the outfitter's, so
+         adding a good can't desync a DOM snapshot here. -->
+    <div id="marketboard"></div>
   </div>
   <div id="flightdata">
     <span id="pilotrow" style="display:none"><span class="dim">PILOT</span> <span id="pilot"></span><br></span>
@@ -4361,6 +4416,40 @@ function portRate(port, good) {
   return typeof m === "number" ? m : (typeof m.sell === "number" ? m.sell : (port.pay || 0));
 }
 
+/* ---- who else buys (v83, §1.1b) ----
+   Every market in the system, gathered ONCE off BODIES. Safe to hold: BODIES is
+   static config, and buildBody's pad map spreads `port` through BY REFERENCE, so
+   these are the very same objects onSpaceport() hands back — the identity tests
+   the ledger and the panel cache both run on still work.
+   A pad with no `port`, or a port that doesn't pay, isn't a market. */
+const PORTS = [];
+for (const b of BODIES)
+  for (const pad of (b.pads || []))
+    if (pad.port && pad.port.pay > 0) PORTS.push(pad.port);
+
+/* "CHARLESTON SPACEPORT" doesn't fit a table column. Derived rather than a
+   per-port `short` key, so adding a market to a world stays the two-line edit
+   it is today — one that can't be half-done. */
+function portShort(port) {
+  if (!port) return "—";
+  const w = port.name.split(" ");
+  return w[0].length > 3 ? w[0] : w.slice(0, 2).join(" ");   // "NEW SAVANNAH", not "NEW"
+}
+
+/* The best price for `good` at any port OTHER than `here`. Null when `here` is
+   the only market in the game — the board drops its remote column rather than
+   inventing a comparison, which is also what keeps it honest if a future save
+   ever gates ports behind discovery. */
+function bestElsewhere(here, good) {
+  let best = null;
+  for (const p of PORTS) {
+    if (p === here) continue;
+    const r = portRate(p, good);
+    if (!best || r > best.rate) best = { port: p, rate: r };
+  }
+  return best;
+}
+
 /* ---- bank sounds: quiet ticks while the hold drains, a little
    paid-in-full arpeggio when it runs dry ---- */
 let bankTickAt = 0;
@@ -4487,6 +4576,86 @@ function buyUpgrade(i) {
   shopDirty = true;
 }
 shopRows.forEach((r, i) => r.addEventListener("click", () => buyUpgrade(i)));
+
+/* ---- the price board (v83, §1.1b) ----
+   v82 gave every port an opinion about your cargo and then kept it a secret:
+   the rates lived in a `market` dict nobody could read, so "is it worth flying
+   this contraband to the fence?" was something you memorised or guessed at.
+   This is that dict, at the pad, next to what you're actually holding.
+
+   The REMOTE column is the whole feature. What THIS port pays is only half a
+   decision — with nothing to weigh it against, the board is a receipt. What the
+   other port pays is what turns a mixed hold into a route. */
+const marketEl = document.getElementById("marketboard");
+let marketDirty = true;        // port changed — rebuild on the next docked frame
+let marketCargoShown = -1;     // the hold the rows were drawn against. `cargo` is a
+                               // valid signature for the whole hold because nothing
+                               // ever writes a stack without it (the hold/cargo
+                               // contract) — and the drain moves it ~26/s, so this
+                               // is what stops a full innerHTML rewrite per frame.
+function refreshMarket(port) {
+  /* Gather every good's numbers FIRST: the header can't be written until we know
+     whether one port wins the remote column for all of them. With two markets it
+     always does, and repeating "CHARLESTON" down five rows is noise — so the name
+     goes in the column head instead. The day a third specialty market makes that
+     untrue, the rows start naming their own and nothing else changes. */
+  const rows = GOOD_IDS.map(g => ({
+    g, n: hold[g], here: portRate(port, g), away: bestElsewhere(port, g),
+  }));
+  const names = new Set();
+  for (const r of rows) if (r.away) names.add(r.away.port.name);
+  const remote = names.size > 0;
+  const uniform = names.size === 1 ? portShort(rows.find(r => r.away).away.port) : "";
+
+  // the grid's columns are declared here because how many there are depends on how
+  // many markets exist: good · hold · here [· elsewhere · ▲ [· which port]]
+  const cols = "1fr auto auto" + (remote ? " auto auto" : "") + (remote && !uniform ? " auto" : "");
+  /* With exactly two markets "THERE" can only mean one place, and spelling out
+     RUSTHOLLOW costs 80px of column that the phone's three-panel dock sheet does
+     not have — it was the widest cell in the table by a factor of three. Name it
+     the moment there's more than one place it could be. */
+  const awayHead = !uniform ? "BEST" : PORTS.length > 2 ? uniform : "THERE";
+  let html = '<div class="title">◆ MARKET ◆ <b>' + portShort(port) + '</b></div>' +
+             '<div class="mktGrid" style="grid-template-columns:' + cols + '">' +
+             '<div class="mktRow head"><span class="g">GOOD</span>' +
+             '<span class="n">HOLD</span><span class="n">HERE</span>' +
+             (remote ? '<span class="n away">' + awayHead + '</span><span class="mv"></span>' : "") +
+             (remote && !uniform ? '<span class="w">PORT</span>' : "") + "</div>" +
+             '<div class="mktSep"></div>';
+
+  let hereTotal = 0, bestTotal = 0;
+  for (const r of rows) {
+    // floored PER GOOD, exactly the way the drain settles it — so these are the
+    // credits you will actually be paid, not an estimate that argues with the bank
+    hereTotal += Math.floor(r.n * r.here);
+    bestTotal += Math.floor(r.n * (r.away && r.away.rate > r.here ? r.away.rate : r.here));
+    /* "take it elsewhere" is marked only when it's ACTIONABLE. A better price
+       somewhere else for something you aren't carrying is trivia, and marking it
+       would teach you to ignore the mark. */
+    const move = r.n > 0 && r.away && r.away.rate > r.here;
+    html += '<div class="mktRow' + (r.n ? "" : " idle") + (move ? " move" : "") + '">' +
+            '<span class="g" style="color:' + GOODS[r.g].color + '">' + GOODS[r.g].name + "</span>" +
+            '<span class="n">' + (r.n || "·") + "</span>" +
+            '<span class="n">' + r.here.toFixed(2) + "</span>" +
+            (remote ? '<span class="n away">' + (r.away ? r.away.rate.toFixed(2) : "—") + "</span>" +
+                      '<span class="mv">' + (move ? "▲" : "") + "</span>" : "") +
+            (remote && !uniform ? '<span class="w">' + (r.away ? portShort(r.away.port) : "") + "</span>" : "") +
+            "</div>";
+  }
+
+  /* The footer is the board's one-line answer. HERE is what the drain in front of
+     you pays; ROUTED is what the same hold makes if each stack went to its best
+     port. Equal means you're standing in the right place — say so, rather than
+     printing the same number twice and letting it read as a tie you must solve. */
+  html += "</div>";                     // close .mktGrid
+  html += '<div class="mktFoot">' +
+          (cargo === 0 ? "HOLD EMPTY"
+            : bestTotal > hereTotal
+              ? 'HOLD <b>' + hereTotal + '</b> HERE · <b>' + bestTotal + '</b> ROUTED'
+              : 'HOLD <b>' + hereTotal + '</b> · BEST PRICE IS HERE') +
+          "</div>";
+  marketEl.innerHTML = html;
+}
 
 /* purchase = two quick notes up (distinct from the bank's three); denied =
    a flat low buzz. Both quiet — you're parked, the engine's silent. */
@@ -7468,7 +7637,7 @@ function stickClaims(t) {
   if (document.body.classList.contains("docked")) return false;
   const el = t.target;
   if (el && el.closest &&
-      el.closest(".touchbtn, #ctrlmenu, #shop, #dispatchboard, #startscreen, #settings, #dock"))
+      el.closest(".touchbtn, #ctrlmenu, #shop, #dispatchboard, #marketboard, #startscreen, #settings, #dock"))
     return false;
   return t.clientX < innerWidth * STICK_ZONE;
 }
@@ -9242,7 +9411,7 @@ function animate() {
      sitting on row 2 can't act on a shorter list. */
   if (onPort !== curPort) {
     curPort = onPort;
-    shopDirty = jobDirty = true;
+    shopDirty = jobDirty = marketDirty = true;
     shopCursor = jobCursor = 0;
   }
 
@@ -9261,11 +9430,27 @@ function animate() {
   dispatchEl.style.display = canJobs ? "block" : "none";
   if (canJobs && jobDirty) { refreshDispatch(); jobDirty = false; }
 
+  /* the price board (v83) — gated on the EXCHANGE, not on shop/dispatch. That's
+     deliberate: RustHollow sells no gear and posts no work, and it is the port
+     whose entire personality is its prices. A pad that pays nothing gets no
+     board, same safe default as everything else here.
+     Redrawn when the port changes or the hold moves — and `cargo` alone is a
+     sound signature for the hold, because nothing writes a stack without it. */
+  const canMarket = !!(onPort && onPort.pay > 0);
+  marketEl.style.display = canMarket ? "block" : "none";
+  if (canMarket && (marketDirty || cargo !== marketCargoShown)) {
+    refreshMarket(onPort);
+    marketCargoShown = cargo; marketDirty = false;
+  }
+
   /* dock sheet (v79) — parked at a real PORT on glass is its own mode. Gated on
      canShop||canJobs so setting down on an empty plain keeps the flight HUD:
      there'd be nothing to put in the sheet. Toggled only on CHANGE — a
-     classList write every frame is a style recalc every frame for nothing. */
-  const wantDock = !!(landedOn && (canShop || canJobs) &&
+     classList write every frame is a style recalc every frame for nothing.
+     v83: a market counts. RustHollow has neither gear nor work, so before the
+     price board it never raised the sheet at all — the one port on glass whose
+     panel was left floating over the flight HUD. */
+  const wantDock = !!(landedOn && (canShop || canJobs || canMarket) &&
                       document.body.classList.contains("touch"));
   if (wantDock !== docked) {
     docked = wantDock;
