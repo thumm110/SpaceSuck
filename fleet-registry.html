@@ -428,16 +428,26 @@
     </summary>
     <div class="kids">
 
-      <!-- FIGHTER: the Raider -->
+      <!-- FIGHTER: four hulls, two families. v86 — the hull IS the faction. -->
       <details class="cls" open>
         <summary>
           <span class="caret"></span>
           <span class="hullcode">FTR</span>
           <span class="cls-name">Fighter</span>
-          <span class="cls-desc">the raider — one hull, three factions</span>
-          <span class="cls-count">1 hull</span>
+          <span class="cls-desc">four hulls, two families — the burner colour is the side</span>
+          <span class="cls-count">4 hulls</span>
         </summary>
         <div class="ships">
+
+          <p class="note" style="margin:0 0 10px">
+            <b>The hull is the faction (v86).</b> Bandits fly hot burners and always spawn
+            <b style="color:var(--hostile)">hostile</b>; scavengers fly cold ones and always spawn
+            <b style="color:var(--neutral)">neutral</b>. You read the side off the exhaust from behind,
+            at range, before the beacon resolves. Stats are deliberately identical across all four —
+            <b>3</b> hull, <b>280</b> top speed, <b>1.1</b> fight turn, <b>7</b> bolt damage,
+            <b>40</b> scrap (8×5). What changes is what it looks like and whose side it's on.
+            Caps are counted per family: <b>2</b> bandits + <b>2</b> scavengers alive at once.
+          </p>
 
           <article class="ship f-hostile">
             <div class="stripe"></div>
@@ -445,10 +455,10 @@
               <div class="ship-head">
                 <span class="beacon b-hostile"></span>
                 <h4>RAIDER</h4>
-                <span class="tag">PIRATE FIGHTER</span>
-                <span class="model">fighter/raider.glb</span>
+                <span class="tag">BANDIT · HOT ORANGE</span>
+                <span class="model">fighter/bandit/raider.glb</span>
               </div>
-              <p class="blurb">Flat-black forward-swept dagger, blood-red trim — built as your ship's opposite so you read friend from foe by silhouette. Nose-first attack passes: HUNT ▸ ATTACK ▸ BREAK. You out-turn and out-run it — running always works, it just pays nothing.</p>
+              <p class="blurb">Flat-black forward-swept dagger, blood-red trim — built as your ship's opposite so you read friend from foe by silhouette. Nose-first attack passes: HUNT ▸ ATTACK ▸ BREAK. You out-turn and out-run it — running always works, it just pays nothing. Burner <b>#FF4100</b>.</p>
               <dl class="stats">
                 <div class="stat"><dt>Hull</dt><dd>3 <small>hits</small></dd></div>
                 <div class="stat"><dt>Top speed</dt><dd>280</dd></div>
@@ -456,8 +466,74 @@
                 <div class="stat dmg"><dt>Bolt dmg</dt><dd>7</dd></div>
                 <div class="stat pay"><dt>Payout</dt><dd>40 <small>8×5</small></dd></div>
               </dl>
-              <div class="aka">NEUTRAL CALLSIGNS <span>—</span> RUST VULTURE · SCRAPJACK · THE MAGPIE · KESSLER'S GHOST</div>
-              <p class="note"><b>50/50 faction roll on spawn.</b> <b style="color:var(--hostile)">Hostile</b> (fast red strobe) hunts you. <b style="color:var(--neutral)">Neutral</b> (amber blink) loiters and holds fire — fly close with guns cold and it hails you by name; pay <b>150</b> to hire it as an <b style="color:var(--ally)">Ally</b> wingman (2 max, formation only — doesn't fight yet). Shoot a neutral and it turns full bandit.</p>
+              <div class="aka">BANDIT CALLSIGNS <span>—</span> RUST VULTURE · SCRAPJACK · THE MAGPIE · KESSLER'S GHOST · HULL RAT · COLD SOLDER · WIDOWMAKER · THE REPO MAN</div>
+              <p class="note">Fast red strobe, hunts on sight. Never flips — there's no path from bandit to anything else. Carries the dispatch <b>bounty mark</b> when a contract is live; scavenger hulls never do.</p>
+            </div>
+          </article>
+
+          <article class="ship f-hostile">
+            <div class="stripe"></div>
+            <div class="ship-body">
+              <div class="ship-head">
+                <span class="beacon b-hostile"></span>
+                <h4>RAIDER II</h4>
+                <span class="tag">BANDIT · MAGENTA</span>
+                <span class="model">fighter/bandit/raider2.glb</span>
+              </div>
+              <p class="blurb">The second bandit hull — same dagger language, different frame, and a burner you can't mistake for anything friendly. Magenta <b>#FF25A0</b> reads hot at any range, which is the whole job: it fires out the back and tells you what's chasing you before you've turned to look.</p>
+              <dl class="stats">
+                <div class="stat"><dt>Hull</dt><dd>3 <small>hits</small></dd></div>
+                <div class="stat"><dt>Top speed</dt><dd>280</dd></div>
+                <div class="stat"><dt>Turn</dt><dd>1.1 <small>fight</small></dd></div>
+                <div class="stat dmg"><dt>Bolt dmg</dt><dd>7</dd></div>
+                <div class="stat pay"><dt>Payout</dt><dd>40 <small>8×5</small></dd></div>
+              </dl>
+              <div class="aka">BANDIT CALLSIGNS <span>—</span> BLACK FRIDAY · TETANUS · CUTTING TORCH · LAST RIGHTS · RUSTBITE · SIX-PENNY NAIL · DEAD SHORT · LOCKJAW</div>
+              <p class="note">Shares the bandit roster with RAIDER — callsigns are drawn at random per spawn and de-duped against everyone alive, so you'll never see two RUST VULTUREs at once.</p>
+            </div>
+          </article>
+
+          <article class="ship f-neutral">
+            <div class="stripe"></div>
+            <div class="ship-body">
+              <div class="ship-head">
+                <span class="beacon b-neutral"></span>
+                <h4>RAIDER III</h4>
+                <span class="tag">SCAVENGER · CYAN</span>
+                <span class="model">fighter/scav/raider3.glb</span>
+              </div>
+              <p class="blurb">A working stiff in a fighter frame. Cyan burner <b>#00CDFF</b> — the same cold family as the haulers' ion blue, so it reads as traffic, not threat. Loiters on bearing-perturbed wander legs around your shell; never chords through it, which is why it doesn't ram you.</p>
+              <dl class="stats">
+                <div class="stat"><dt>Hull</dt><dd>3 <small>hits</small></dd></div>
+                <div class="stat"><dt>Top speed</dt><dd>280</dd></div>
+                <div class="stat"><dt>Turn</dt><dd>1.1 <small>fight</small></dd></div>
+                <div class="stat dmg"><dt>Bolt dmg</dt><dd>7</dd></div>
+                <div class="stat pay"><dt>Payout</dt><dd>40 <small>8×5</small></dd></div>
+              </dl>
+              <div class="aka">SCAVENGER CALLSIGNS <span>—</span> BORROWED TIME · SMALL MERCY · DUTCH UNCLE · BUSTED KNUCKLE · SLOW LEAK · LUCKY STRIKE · SHORT CHANGE</div>
+              <p class="note">Amber slow-blink, holds fire. Fly close with guns cold and it hails you by name — pay <b>150</b> to hire it as an <b style="color:var(--ally)">ally</b> wingman (2 max, formation only; doesn't fight yet). Shoot one and it turns full bandit — the only moment the hull disagrees with the beacon is one you caused.</p>
+            </div>
+          </article>
+
+          <article class="ship f-neutral">
+            <div class="stripe"></div>
+            <div class="ship-body">
+              <div class="ship-head">
+                <span class="beacon b-neutral"></span>
+                <h4>RAIDER IV</h4>
+                <span class="tag">SCAVENGER · ION BLUE</span>
+                <span class="model">fighter/scav/raider4.glb</span>
+              </div>
+              <p class="blurb">The second scavenger hull, and the busiest of the four — four burner bells (<b>ThrusterQ0-Q3</b>) and a second pair of lower guns. Ion blue <b>#25ABFF</b>, one shade warmer than RAIDER III so the two friendlies still tell apart in a crowded field.</p>
+              <dl class="stats">
+                <div class="stat"><dt>Hull</dt><dd>3 <small>hits</small></dd></div>
+                <div class="stat"><dt>Top speed</dt><dd>280</dd></div>
+                <div class="stat"><dt>Turn</dt><dd>1.1 <small>fight</small></dd></div>
+                <div class="stat dmg"><dt>Bolt dmg</dt><dd>7</dd></div>
+                <div class="stat pay"><dt>Payout</dt><dd>40 <small>8×5</small></dd></div>
+              </dl>
+              <div class="aka">SCAVENGER CALLSIGNS <span>—</span> SHORT NOTICE · ODD LOT · LAST CALL · SECOND SHIFT · HONEST MISTAKE · SLOW NICKEL · CALLED IN SICK</div>
+              <p class="note">Muzzles are <b>discovered</b> off the hull (every node matching <code>GunTip*</code>), so its lower pair fires without a config entry — the hardcoded two-name list this replaced dropped them silently.</p>
             </div>
           </article>
 

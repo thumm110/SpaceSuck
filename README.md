@@ -92,8 +92,8 @@ and touchdowns rumble the controller, as do junk kills close aboard.
   it. A lethal hit tows you to Earth and the spill stays at the wreck
 - **Scavenger pirates — the field shoots back** — you're not the only junker
   out here. A Blender-built raider — a flat-black forward-swept dagger with
-  blood-red trim, deliberately the player ship's opposite (`enemies/raider.glb`,
-  source + build script in `raider/`, primitives as the loading fallback) —
+  blood-red trim, deliberately the player ship's opposite (`fighter/bandit/`,
+  source + build scripts in the shipyard, primitives as the loading fallback) —
   spawns off the radar's rim (two if you linger) — a falling two-note ping
   and a glowing red blip are your
   warning, and a red RAIDER chevron on the HUD edge tracks the nearest one —

@@ -86,10 +86,20 @@ SpaceSuck/
 ├── ship/                  ← the four PLAYABLE hulls
 │   uss-thumm.glb · uss-boo.glb · uss-char.glb · uss-samsam.glb
 │
-├── enemies/               ← raider.glb · ss-timeclock.glb · ss-shrinkage.glb
+│                            (folders below are the ship's CLASS, not its side —
+│                             mirrored in ~/Blender/spacesuck/ships/)
+├── fighter/               ← the only class where hull IS faction (v86)
+│   bandit/                  raider.glb · raider2.glb      (always hostile)
+│   scav/                    raider3.glb · raider4.glb     (always spawn neutral)
 │
-├── npc/                   ← ss-overtime.glb · ss-double-overtime.glb
-│                            canary-freight.glb · ss-packrat.glb
+├── gunship/               ← ss-timeclock.glb · ss-shrinkage.glb
+│                            TIMECLOCK flies BOTH sides off one file — slot 0 is
+│                            the foe, slots 1-3 are the hauler escorts. That's
+│                            why the bandit/scav split stops at fighter/.
+│
+├── hauler/                ← ss-overtime.glb · ss-double-overtime.glb
+│                            canary-freight.glb
+├── collector/             ← ss-packrat.glb
 │
 ├── planets/               ← ~118 MB: the five Blender worlds + their baked data
 │   earth.glb + earth_height.json          (2048×1024 grid)

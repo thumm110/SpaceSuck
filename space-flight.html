@@ -5514,12 +5514,19 @@ function buildPirateMesh() {
    Stats are deliberately identical across all four (hp 3, PIRATE_SCALE, the
    40-scrap bounty). v86 changes what you SEE and which side it's on, nothing
    about how it fights — so if the feel shifts in playtest, it was the cap
-   split, not a stat. Per-hull hp/len/bits are one field each when that's wanted. */
+   split, not a stat. Per-hull hp/len/bits are one field each when that's wanted.
+
+   v86.3: the hulls now live in fighter/bandit/ and fighter/scav/ (mirrored in
+   the shipyard) so the folder says the side out loud — four raider*.glb in one
+   flat folder told you nothing, and Tanner's next four make it eight. The split
+   stops at fighter/ on purpose: this is the only class where hull IS faction.
+   gunship/ss-timeclock.glb flies as both the foe AND the hauler escorts off one
+   file, so a faction-first tree would have to file it under a lie. */
 const RAIDER_DEFS = [
-  { file: "fighter/raider.glb",  key: "raider",  faction: "hostile", names: RAIDER_NAMES },
-  { file: "fighter/raider2.glb", key: "raider2", faction: "hostile", names: RAIDER_NAMES },
-  { file: "fighter/raider3.glb", key: "raider3", faction: "neutral", names: SCAV_NAMES },
-  { file: "fighter/raider4.glb", key: "raider4", faction: "neutral", names: SCAV_NAMES },
+  { file: "fighter/bandit/raider.glb",  key: "raider",  faction: "hostile", names: RAIDER_NAMES },
+  { file: "fighter/bandit/raider2.glb", key: "raider2", faction: "hostile", names: RAIDER_NAMES },
+  { file: "fighter/scav/raider3.glb",   key: "raider3", faction: "neutral", names: SCAV_NAMES },
+  { file: "fighter/scav/raider4.glb",   key: "raider4", faction: "neutral", names: SCAV_NAMES },
 ];
 
 /* Six slots off four hulls — the convoy trick (haulerSlotDefs repeats
