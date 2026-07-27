@@ -5340,7 +5340,11 @@ const PIRATE_AIM_ERR = 0.04;     // aim slop per unit of range — misses are re
 const PIRATE_LEAD = 0.85;        // leads your velocity, imperfectly
 const PIRATE_SPAWN_NEAR = 2600, PIRATE_SPAWN_FAR = 3400;  // inside RADAR_RANGE (3500): blip before contact
 const PIRATE_CULL = 5000;        // outrun it and it slinks off — no bang, no pay
-const PIRATE_RESPAWN_MIN = 60, PIRATE_RESPAWN_MAX = 120;
+// v86.2 (Tanner, playtest): "tone the spawn down just a hair so they don't come
+// one after the other." 60/120 -> 80/150. The bigger half of that complaint was
+// the START stagger and the bucket-retry below, not this window — but a slightly
+// longer wait after a kill is the part you feel as breathing room.
+const PIRATE_RESPAWN_MIN = 80, PIRATE_RESPAWN_MAX = 150;
 /* Safe harbor (v44): the bank's sky is a no-hunt zone. Sitting a radius off
    the pad waiting for you to lift is a strategy (ask any camper), so inside
    PIRATE_SAFE_R of the spaceport world pirates neither spawn nor hunt — a
@@ -5561,7 +5565,14 @@ for (let i = 0; i < RAIDER_SLOTS.length; i++) {
     vel: new THREE.Vector3(),
     hp: 3, maxHp: 3, flash: 0,
     alive: false,
-    respawnIn: (i === 0 ? 45 : 140) + Math.random() * 40,  // staggered: first contact is a lone fighter
+    /* v86.2: staggered so first contact is a LONE fighter — and so the rest
+       don't arrive as a group. v47 had 4 slots and put every one after the
+       first at 140-180s, which was fine when only 2 could be alive: the cap
+       swallowed the clump. v86 has SIX slots and room for 4, so that same line
+       delivered five raiders inside one 40s window and read as a pile-on
+       (Tanner, playtest: "they spawn one after the other"). Each slot now gets
+       its own 50s shelf: 45 · 140 · 190 · 240 · 290 · 340, ±40. */
+    respawnIn: (i === 0 ? 45 : 140 + (i - 1) * 50) + Math.random() * 40,
     state: "HUNT", stateT: 0,      // hostile: "HUNT" | "ATTACK" | "BREAK" · neutral: "LOITER" · ally: "FORM"
     jinkDir: new THREE.Vector3(),  // the extend's escape line, fixed at BREAK entry
     aimErr: new THREE.Vector3(),   // per-burst aim slop — what makes the bolts dodgeable
@@ -6364,7 +6375,20 @@ function updateHaulers(dt) {
    breach despawn, contact toast. */
 const GUNSHIP_LEN = 30;            // OLD scale: ~3x a fighter (fleet.json's 75 is the future spec)
 const GUNSHIP_HIT_R = 15;
-const GUNSHIP_HP = 16;             // a siege, not a scrap — pirates die in 3
+/* v86.2 (Tanner, playtest): "gunships seem to fall pretty easily." They did,
+   and the old number never matched its own comment. You fire TWO bolts every
+   FIRE_COOLDOWN (0.11s) and a gunship takes 1 hp per hit — call it 18 hp/sec
+   with the nose on. 16 hp was NINE-TENTHS OF A SECOND of held fire. "Pirates
+   die in 3" made it sound like 5x a raider; in time-on-target it barely was.
+
+   40 is ~2.2s of perfect fire. You can't hold perfect fire on something you're
+   orbiting inside the nose of, so the real fight lands nearer 5-6s — long
+   enough to have to break off, re-approach and pick an angle, which is what a
+   capital ship is for. SHRINKAGE keeps its 1.5x, so the two still read as
+   different weights of the same class. Payouts deliberately unchanged (198 and
+   300, top of the economy) — if a longer siege should pay more, that's a feel
+   call to make after flying it, not a number to bundle in here. */
+const GUNSHIP_HP = 40;             // ~2.2s of held fire; a raider's 3 hp is 0.17s
 const GUNSHIP_MAX_SPD = 200;       // pirate is 280 — you can ALWAYS run
 const GUNSHIP_ACCEL = 140;
 const GUNSHIP_TURN = 0.45;         // rad/s in the fight — you orbit INSIDE its nose
@@ -6400,7 +6424,7 @@ const ESCORT_SLOT_OFFSETS = [      // GUARD stations in the ward's frame: abeam 
 //     capital on the ladder tunes independently. ---
 const SHRINK_LEN = 36;             // bigger hull than TIMECLOCK's 30 (a wide dreadnought)
 const SHRINK_HIT_R = 18;           // scaled with the hull
-const SHRINK_HP = 24;              // a longer siege than TIMECLOCK's 16
+const SHRINK_HP = 60;              // v86.2: 1.5x TIMECLOCK's 40, the ratio it always had
 const SHRINK_BITS = 30, SHRINK_VAL = 10;                 // 300 — the top payout (TIMECLOCK: 198)
 const SHRINK_RESPAWN_MIN = 180, SHRINK_RESPAWN_MAX = 360; // SAME cadence as TIMECLOCK (spawns just as often)
 const SHRINK_FIRST = 300, SHRINK_FIRST_RND = 240;        // same first-contact window as TIMECLOCK
@@ -7315,7 +7339,12 @@ function updateEnemies(dt) {
         // gate on the bucket this slot's HULL spawns into — a dead slot has no
         // live faction to ask, and def.faction is what pirateSpawn will assign
         const side = p.def.faction;
-        if (aliveIn(side) >= capFor(side)) { p.respawnIn = 8; continue; }   // bucket's full — wait a beat
+        /* v86.2: 8 -> 20. This is the retry for a slot that came due while its
+           bucket was full, and with spare slots always queued behind the cap it
+           is what actually sets the replacement rate: at 8s, something died and
+           its replacement was on you almost immediately. 20s is a beat you
+           notice without the field going empty. */
+        if (aliveIn(side) >= capFor(side)) { p.respawnIn = 20; continue; }   // bucket's full — wait a beat
         pirateSpawn(p);
         if (p.alive) countIn(side);
       }
