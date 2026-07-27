@@ -5288,10 +5288,19 @@ for (const j of junk) junkRespawn(j, true);
    v42 dogfighter, "neutral" loiters until provoked (and hails you the fee
    deal), "ally" is a hired wing — all a faction swap on the same struct,
    exactly as planned. Stage 3 teaches the wing to fight. */
-const PIRATE_COUNT = 4;           // SLOTS, not a swarm cap: 2 possible wingmen + 2 wild.
-                                  // WILD_CAP below keeps the fight itself a duel.
+/* v86: the slot count is no longer a number here — it's RAIDER_SLOTS.length,
+   built off the RAIDER_DEFS hull table below (the HAULER_DEFS pattern). One
+   row per Blender hull, and the row decides which side that hull flies for. */
 const RED_BOLT = 0xff4444;        // aqua and orange both mean "yours" (10b) — red means duck
-const PIRATE_BOLT_COUNT = 16;
+/* v86: 16 -> 32. This is a ring buffer — spawnPirateBolt overwrites the oldest
+   slot with no check on whether it's still flying — and 16 was sized for the
+   v42 duel. One shooter puts ~4-5 bolts in the air at a time (a burst of 4 at
+   0.16s spacing, each living 2.2s, on a ~2.8s cycle), so two raiders fit inside
+   16 comfortably. v86 can put FOUR hostiles on you at once (2 bandits + 2
+   scavengers you provoked), which is 16-20 in flight, and the overflow doesn't
+   look like a full sky — it looks like incoming fire winking out of existence
+   halfway to you. */
+const PIRATE_BOLT_COUNT = 32;
 const PIRATE_BOLT_SPEED = 850;    // ~57% of BOLT_SPEED: dodgeable on purpose
 const PIRATE_BOLT_LIFE = 2.2;
 const PIRATE_BOLT_DMG = 7;
@@ -5348,7 +5357,31 @@ const PIRATE_SCRAP_BITS = 8, PIRATE_SCRAP_VAL = 5;   // 40 — richest kill that
    worth taking. Home pays 0.45 for hot goods and RustHollow pays 1.5, so a
    contraband kill is the game's first real "which way do I turn" moment. */
 const PIRATE_CONTRA_ODDS = 0.35;
-const PIRATE_NAMES = ["RUST VULTURE", "SCRAPJACK", "THE MAGPIE", "KESSLER'S GHOST"];
+/* v86: two rosters, because the hull now tells you which one you're talking to.
+   A bandit wears a bandit's name. A scavenger who opens a channel to sell you
+   his wing shouldn't introduce himself as KESSLER'S GHOST — he's a guy on a
+   shift, and the freight fleet already established that voice (SS OVERTIME,
+   SS PACKRAT, SS TIMECLOCK: people on the clock who'd rather be home).
+
+   Both are POOLS, drawn from at random per spawn rather than pinned per slot,
+   so the same four faces don't come round all session. Two sizing rules:
+     - RAIDER_NAMES must stay >= 3: rollOffers() shuffles it and takes three
+       distinct bounty marks for the dispatch board.
+     - each roster must comfortably exceed the number that can be ALIVE wearing
+       it at once. For scavengers that's NEUTRAL_CAP + ALLY_CAP = 4, because a
+       hired wingman keeps his name. At exactly 3 the dedupe in pirateSpawn ran
+       out of names and two live scavengers could hail you under the same one.
+   Room to spare on both, so adding slots later doesn't quietly re-break it. */
+const RAIDER_NAMES = [
+  "RUST VULTURE", "SCRAPJACK", "THE MAGPIE", "KESSLER'S GHOST",
+  "BLACK FRIDAY", "TETANUS", "CUTTING TORCH", "WIDOWMAKER",
+  "SIX-PENNY NAIL", "THE REPO MAN", "DEAD SHORT", "LOCKJAW",
+];
+const SCAV_NAMES = [
+  "BORROWED TIME", "SMALL MERCY", "DUTCH UNCLE",
+  "SHORT NOTICE", "ODD LOT", "LAST CALL", "SECOND SHIFT",
+  "HONEST MISTAKE", "SLOW NICKEL", "CALLED IN SICK",
+];
 /* ---- Stage 2 (v47): factions. A spawn rolls neutral or hostile. Neutrals
    loiter in the field about their own business — amber light, no warn ping,
    no chevron — and only turn hostile if YOU shoot first (the kill still pays,
@@ -5356,8 +5389,15 @@ const PIRATE_NAMES = ["RUST VULTURE", "SCRAPJACK", "THE MAGPIE", "KESSLER'S GHOS
    fire and they hail you: pay a bank fee, gain a wingman. Combat escorting
    is stage 3 — a v47 wingman flies your wing and stays out of your line of
    fire, nothing more. */
-const WILD_CAP = 2;              // max NON-ally raiders alive at once — the old duel rule
-const NEUTRAL_ODDS = 0.5;        // a spawn's coin flip: scavenger or bandit
+/* v86 split the old single WILD_CAP in two, and it had to ship the same day
+   the hulls did. WILD_CAP counted every non-ally raider in one bucket, which
+   worked only because every spawn rolled its faction 50/50 — the mix
+   self-corrected. Bind the faction to the HULL and that stops being true: two
+   scavengers loitering in the field would hold both wild slots and no bandit
+   could spawn at all. That doesn't read as a bug, it reads as "the game got
+   boring", which is the worst kind. Two buckets, counted separately. */
+const HOSTILE_CAP = 2;           // max bandits alive at once — the v42 duel rule, untouched
+const NEUTRAL_CAP = 2;           // max scavengers alive at once — traffic, not threat
 const NEUTRAL_SPD = 110;         // loiter trawl — slow enough to read as "not hunting"
 const HAIL_R = 420;              // inside this, a neutral opens the channel
 const ALLY_FEE = 150;            // the recruit fee — bank sink between plating-1 and clamps-2
@@ -5440,15 +5480,76 @@ function buildPirateMesh() {
   return { group: g, engineGlow, beacon };
 }
 
+/* ---- v86: THE HULL IS THE FACTION ----------------------------------------
+   Four Blender fighters exist, and Tanner painted them in two families on
+   purpose. The burner colour is the loud signal — it's the part of a ship you
+   spend a dogfight staring at — and it already sorts them:
+
+     raider   EngineGlow #FF4100  hot orange   \  bandits: fire out the back
+     raider2  EngineGlow #FF25A0  magenta      /
+     raider3  EngineGlow #00CDFF  cyan         \  scavengers: the same cold
+     raider4  EngineGlow #25ABFF  ion blue     /  family as the haulers' 0x55aaff
+
+   So the hull TELLS you which side it's on, before the beacon does, from
+   behind, at range. That's a read the 50/50 coin flip could never give you:
+   until now every raider looked identical and only the strobe colour differed.
+
+   This survives the fact that faction FLIPS at runtime, which is the obvious
+   objection. Hostile hulls never flip — there's no path from bandit to
+   anything else. Neutrals flip two ways: to ally when you pay the fee (and a
+   wingman wearing a scavenger hull is exactly right), and to hostile via
+   pirateProvoke — which only fires because YOU shot first. The one moment the
+   hull disagrees with the beacon is a moment you personally caused.
+
+   `faction` here is the SPAWN faction, re-applied on every respawn. It is not
+   the live value — the live value is p.faction, which the recruit and provoke
+   paths still rewrite exactly as they did in v47. Nothing about the AI changed.
+
+   Stats are deliberately identical across all four (hp 3, PIRATE_SCALE, the
+   40-scrap bounty). v86 changes what you SEE and which side it's on, nothing
+   about how it fights — so if the feel shifts in playtest, it was the cap
+   split, not a stat. Per-hull hp/len/bits are one field each when that's wanted. */
+const RAIDER_DEFS = [
+  { file: "fighter/raider.glb",  key: "raider",  faction: "hostile", names: RAIDER_NAMES },
+  { file: "fighter/raider2.glb", key: "raider2", faction: "hostile", names: RAIDER_NAMES },
+  { file: "fighter/raider3.glb", key: "raider3", faction: "neutral", names: SCAV_NAMES },
+  { file: "fighter/raider4.glb", key: "raider4", faction: "neutral", names: SCAV_NAMES },
+];
+
+/* Six slots off four hulls — the convoy trick (haulerSlotDefs repeats
+   HAULER_DEFS[1] three times), and a STOPGAP with a shelf life.
+
+   ALLY_CAP is 2 and there are exactly two friendly hulls, so at four slots
+   hiring a full wing would empty the scavenger lane: both neutral slots become
+   allies, wingmen can't die until stage 3, and no scavenger could ever spawn
+   again that session. You'd have paid 300 of bank to delete the hail content.
+   Doubling the friendlies keeps two in the field after you've hired two.
+
+   Tanner is building two more bandits and two more friendlies. When they land
+   this collapses to `[...RAIDER_DEFS]` with eight rows and the duplicates go
+   away — the slot count doesn't change, so nothing downstream notices. */
+const RAIDER_SLOTS = [...RAIDER_DEFS, RAIDER_DEFS[2], RAIDER_DEFS[3]];
+
 const pirates = [];
-for (let i = 0; i < PIRATE_COUNT; i++) {
+for (let i = 0; i < RAIDER_SLOTS.length; i++) {
+  const def = RAIDER_SLOTS[i];
   const built = buildPirateMesh();
   built.group.visible = false;
   scene.add(built.group);
+  // Opening callsign, drawn per-ROSTER rather than per-slot-index so a bandit
+  // slot never gets handed a junker name. This is only the SEED — pirateSpawn
+  // re-picks a name that no live raider is already wearing, because there are
+  // four scavenger slots against three junker names and NEUTRAL_CAP lets two
+  // fly at once. Without that you get two BORROWED TIMEs hailing you at the
+  // same time. Re-picking also means you meet all three over a session instead
+  // of the same slot always being the same guy.
+  const kin = RAIDER_SLOTS.slice(0, i).filter(d => d.faction === def.faction).length;
+  const slotName = def.names[kin % def.names.length];
   pirates.push({
-    faction: "hostile",       // future: "neutral" / "ally" — AI keys off this, nothing else rewrites
-    name: PIRATE_NAMES[i % PIRATE_NAMES.length],   // for the hails, later
-    baseName: PIRATE_NAMES[i % PIRATE_NAMES.length], // stable slot name; a bounty temporarily overrides .name
+    def,                      // v86: the hull this slot always flies
+    faction: def.faction,     // LIVE faction — recruit/provoke still rewrite it; def.faction is the respawn value
+    name: slotName,                                // for the hails, later
+    baseName: slotName,                            // stable slot name; a bounty temporarily overrides .name
     bounty: false,                                 // (10h) true = this raider is the dispatch mark
     group: built.group,
     engineGlow: built.engineGlow, engineGlows: [built.engineGlow], glowK: 1,
@@ -5463,7 +5564,7 @@ for (let i = 0; i < PIRATE_COUNT; i++) {
     jinkDir: new THREE.Vector3(),  // the extend's escape line, fixed at BREAK entry
     aimErr: new THREE.Vector3(),   // per-burst aim slop — what makes the bolts dodgeable
     burstLeft: 0, fireT: 1.5,
-    muzzles: null,                 // raider.glb GunTipL/R nodes once loaded; null = fire from the nose
+    muzzles: null,                 // every GunTip* node on this slot's hull once loaded; null = fire from the nose
     // ---- stage 2 (v47) ----
     wanderPt: new THREE.Vector3(), // LOITER/FORM flight target — the brain writes it, the physics reads it
     wanderT: 0,                    // seconds until the loiter picks a fresh leg
@@ -5471,35 +5572,45 @@ for (let i = 0; i < PIRATE_COUNT; i++) {
     wingSide: 0,                   // ally slot: -1 left wing, +1 right — the vic
     hailed: false,                 // edge-detect: the hail chirp plays once per contact
     hailLine: 0,                   // which junker line this one opens with
-    mixer: null,                   // raider.glb's authored idle float — runs only while loitering
+    mixer: null,                   // the hull's authored idle float — runs only while loitering
   });
 }
 
-/* ---- the REAL raider: Tanner's Blender fighter (raider.glb) ----
-   Same async swap as the player's uss-thumm.glb: the primitives fly until it
-   arrives and stay as the fallback. One file, CLONED per slot — and the
-   materials cloned per clone, because the hit-flash mutates emissive and
-   shared mats would flash both pirates when you clip one (the junk rule
-   again). The .blend's authored idle float (unwired v43-v46) now runs in
-   the neutral LOITER state — the one state that sits still enough to show
-   it. */
-if (THREE.GLTFLoader) {
-  new THREE.GLTFLoader().load("fighter/raider.glb" + ASSET_V, gltf => {
-    for (const p of pirates) {
+/* ---- the REAL raiders: Tanner's Blender fighters -------------------------
+   Same async swap as the player's uss-thumm.glb: the primitives fly until the
+   file arrives and stay as the fallback if it never does. v86 loads ONE FILE
+   PER HULL instead of one file for the whole pool — four requests, each one
+   cloned into every slot flying that hull (raider3 and raider4 land in two
+   slots each). Materials are cloned per CLONE, not per file, because the
+   hit-flash mutates emissive and shared mats would flash every raider wearing
+   that hull when you clip one — the junk rule, and now it has more ways to
+   bite: two slots share a hull, so sharing mats would visibly pair them up. */
+function loadRaiderHull(def) {
+  const slots = pirates.filter(p => p.def === def);
+  if (!slots.length) return;
+  new THREE.GLTFLoader().load(def.file + ASSET_V, gltf => {
+    for (const p of slots) {
       const model = gltf.scene.clone(true);
       model.traverse(o => { if (o.isMesh && o.material) o.material = o.material.clone(); });
 
-      // normalize to the primitives' footprint, so PIRATE_SCALE (on the
-      // group) still lands the hull at player parity and the 12u hit
-      // sphere keeps meaning what it means
+      /* Normalize to the primitives' footprint, so PIRATE_SCALE (on the group)
+         still lands the hull at player parity and the 12u hit sphere keeps
+         meaning what it means. Every hull normalizes to the SAME 10u length —
+         they are not the same shape underneath (raider is 5.7 x 7.5 raw,
+         raider4 is 9.1 x 10.1, so it flies a third wider at the same length),
+         and that width is the size cue that tells the two apart in a fight.
+         Uniform LENGTH is the deliberate part: these are all fighters, and v42
+         priced the whole dogfight on player parity. */
       const size = modelBox(model).getSize(new THREE.Vector3());   // exact — see lib/hull-plating.js
       model.scale.setScalar((10 / PIRATE_SCALE) / size.z);
 
-      // same material pass as the ship swap: *Glow mats glow, the hull
-      // gets a self-lit floor. The raider's gunmetal is near-black by
-      // design, so it gets a higher floor than the player's 0.15 — the
-      // dagger silhouette stays, the edges still catch
-      dressHullMats(model, { floor: 0.5, weather: true, shipLen: 10 });   // AFTER the clone above
+      // same material pass as the ship swap: *Glow mats glow, the hull gets a
+      // self-lit floor. raider's gunmetal is near-black by design, so it gets a
+      // higher floor than the player's 0.15 — the dagger silhouette stays, the
+      // edges still catch. The three newer hulls carry actual paint (violet,
+      // umber, lime) and read fine on the same floor; it's a per-def field the
+      // day one of them blows out.
+      dressHullMats(model, { floor: def.floor ?? 0.5, weather: true, shipLen: 10 });   // AFTER the clone above
 
       // swap hulls: strip the primitives, KEEP the sprites the game loop
       // holds references to (strobe beacon + engine glow)
@@ -5509,19 +5620,43 @@ if (THREE.GLTFLoader) {
       p.group.add(model);
       p.model = model;   // v74: haulers and gunships already kept theirs
 
-      // re-anchor the engine glow between the twin thrusters, and hand the
-      // fire block the wingtip gun tips as muzzles
       p.group.updateMatrixWorld(true);
-      // v72: bloom takes the hull's own EngineGlow colour, like every ship.
-      // v74: and one sprite PER burner — the raider's twin exhausts used to
-      // average into a single dot floating between them.
+      // v72: bloom takes the hull's own EngineGlow colour, like every ship —
+      // which is the whole v86 trick: the orange and magenta burners come out
+      // hostile and the cyan and blue ones come out civilian with no game-side
+      // table saying so. v74: one sprite PER burner, so raider2's three-engine
+      // bank and raider's twin don't read as the same dot from astern.
       npcBurners(p, model, 0xff6a4d, 0.8);
-      p.muzzles = [model.getObjectByName("GunTipL"), model.getObjectByName("GunTipR")].filter(Boolean);
+
+      /* v86: discover EVERY gun tip rather than the hardcoded pair. raider4
+         mounts four (GunTipL/R + GunTipLowerL/R) and the old two-name lookup
+         dropped half of them silently — the ship would have fired from two of
+         its four barrels and nothing would have looked broken.
+
+         Ordered PORT, STARBOARD, PORT, STARBOARD, because the fire block walks
+         the list with `muzzles[burstLeft % n]` and the whole point of that is
+         the shots alternate sides. Plain alphabetical order would give
+         GunTipL, GunTipLowerL, GunTipLowerR, GunTipR — both port barrels, then
+         both starboard — and a four-gun burst would read as a stutter from one
+         wing and then the other instead of a walking pair. */
+      const tips = [];
+      model.traverse(o => { if (/^GunTip/.test(o.name)) tips.push(o); });
+      tips.sort((a, b) => a.name.localeCompare(b.name));
+      const port = tips.filter(o => /L$/.test(o.name));
+      const stbd = tips.filter(o => /R$/.test(o.name));
+      p.muzzles = [];
+      for (let k = 0; k < Math.max(port.length, stbd.length); k++) {
+        if (port[k]) p.muzzles.push(port[k]);
+        if (stbd[k]) p.muzzles.push(stbd[k]);
+      }
+      // anything not named ...L / ...R still gets to shoot (a chin cannon)
+      for (const o of tips) if (!p.muzzles.includes(o)) p.muzzles.push(o);
       if (!p.muzzles.length) p.muzzles = null;
 
       // the .blend's idle float, unwired since v43 waiting for exactly this:
       // a mixer per clone (bindings resolve by node name, so the clone is
-      // fine), advanced only in LOITER — a dogfight never shows it
+      // fine), advanced only in LOITER — a dogfight never shows it. All four
+      // hulls author the same RaiderRootAction clip.
       if (gltf.animations && gltf.animations.length) {
         p.mixer = new THREE.AnimationMixer(model);
         p.mixer.clipAction(gltf.animations[0]).play();
@@ -5530,8 +5665,11 @@ if (THREE.GLTFLoader) {
       // refresh the hit-flash list for THIS slot's cloned materials
       p.mats = junkCollectMats(p.group);
     }
-  }, undefined, err => console.warn("raider.glb didn't load — flying the primitives", err));
+  }, undefined, err => console.warn(def.file + " didn't load — that slot flies the primitives", err));
 }
+
+// per-hull, so one missing .glb costs you that hull and not the whole pool
+if (THREE.GLTFLoader) for (const def of RAIDER_DEFS) loadRaiderHull(def);
 
 /* ================= 10f: FREIGHT TRAFFIC (v50) =================
    Cargo haulers — the working stiffs of the junk field. Two Blender trucks
@@ -6876,18 +7014,32 @@ function pirateSpawn(p) {
   p.burstLeft = 0; p.fireT = 1.5;
   pirTmpA.subVectors(shipObj.position, p.group.position).normalize();
   p.vel.copy(pirTmpA).multiplyScalar(60);
-  // stage 2: the coin flip. Scavenger or bandit — the beacon color IS the
-  // tell (amber = business, red = duck), so only a bandit earns the ping.
+  /* v86: no coin flip any more. The HULL decides — this slot flies raider or
+     raider2 (hot burners, bandit) or raider3 or raider4 (cold burners, working
+     stiff) and it flies the same side every time it spawns, because that's the
+     read the paint is there to give you. The beacon still carries the tell up
+     close (amber = business, red = duck) and only a bandit earns the ping. */
   p.wingSide = 0; p.hailed = false;
   p.hailLine = (Math.random() * HAIL_LINES.length) | 0;
+  /* Fresh callsign, avoiding anyone already on the field. Four scavenger slots
+     draw on three junker names, and NEUTRAL_CAP lets two fly at once, so a
+     fixed per-slot name would eventually put two BORROWED TIMEs on the radar
+     hailing you in stereo. Re-picking per spawn also means the names circulate:
+     the guy you waved off last time isn't automatically the guy back again. */
+  const taken = new Set(pirates.filter(q => q.alive && q !== p).map(q => q.baseName));
+  const free = p.def.names.filter(n => !taken.has(n));
+  p.baseName = (free.length ? free : p.def.names)[(Math.random() * (free.length || p.def.names.length)) | 0];
   // Dispatch bounty (10h): if a contract's live and the mark isn't already on
   // the field, THIS spawn IS the wanted raider — force it hostile and wear the
   // contract name. Anti-farm: a one-shot target the pirate system already
   // spawns (same speed-capped rules as any raider), never a farmable bubble;
   // it re-spawns as the mark until you collect it.
+  // v86: only a BANDIT hull can be the mark (the caller only offers hostile
+  // slots). A cyan-burner scavenger wearing a red beacon and a wanted poster
+  // would break the one read this whole version exists to buy.
   p.bounty = false;         // clear any stale mark FIRST so bountyOnField() below can't count THIS slot
   p.name = p.baseName;      // default hail name; the mark overrides it just below
-  if (activeJob && activeJob.type === "bounty" && !bountyOnField()) {
+  if (p.def.faction === "hostile" && activeJob && activeJob.type === "bounty" && !bountyOnField()) {
     p.bounty = true;
     p.name = activeJob.name;
     p.faction = "hostile"; p.state = "HUNT";
@@ -6895,11 +7047,12 @@ function pirateSpawn(p) {
     pirateWarnSound();
     return;
   }
-  if (Math.random() < NEUTRAL_ODDS) {
-    p.faction = "neutral"; p.state = "LOITER"; p.wanderT = 0;   // picks a leg first frame
+  p.faction = p.def.faction;
+  if (p.faction === "neutral") {
+    p.state = "LOITER"; p.wanderT = 0;   // picks a leg first frame
     p.beacon.material.color.setHex(BEACON_NEUTRAL);
   } else {
-    p.faction = "hostile"; p.state = "HUNT";
+    p.state = "HUNT";
     p.beacon.material.color.setHex(BEACON_HOSTILE);
     pirateWarnSound();   // the spawn shell sits inside RADAR_RANGE, so the red
                          // blip lands the same frame this ping does — fair warning, twice
@@ -7103,18 +7256,53 @@ function pirateShotSound(dist) {
 
 function updateEnemies(dt) {
   const harbor = pirateInHarbor();   // once per frame, not per pirate
-  // stage 2: 4 slots but never a swarm — count the wild (non-ally) raiders
-  // up front and gate the spawns on WILD_CAP. Wingmen don't crowd out bandits;
-  // bandits don't stack past the old duel.
-  let wildAlive = 0;
-  for (const q of pirates) if (q.alive && q.faction !== "ally") wildAlive++;
+  /* v86: six slots, two buckets, still never a swarm. The old single WILD_CAP
+     counted bandits and scavengers together, which only worked while every
+     spawn rolled its own faction — now the hull decides, so one bucket would
+     let loitering scavengers starve the fight out (see the note at the caps).
+
+     Counted by the SLOT'S HULL, not by its live faction, with allies exempt.
+     Allies exempt is the v47 rule unchanged: wingmen never crowd out spawns.
+
+     The hull is what makes it stable. A provoked scavenger is a bandit in the
+     sky but it is still a scavenger-hull slot, so it goes on holding its own
+     bucket. Counting it by its LIVE faction instead — which is what this did
+     first, and it reads perfectly sensibly — breaks in both directions at once:
+
+       - it VACATES the neutral bucket, so a spare scavenger slot immediately
+         refills behind it. Clip the new one too and another refills. Steady
+         state is 2+2; clip your way through it and you reach SIX live hostiles
+         against a HOSTILE_CAP of 2, which is not a duel, it's a mob.
+       - and it OCCUPIES the hostile bucket, so two provoked scavengers lock
+         raider and raider2 out of the sky entirely — the exact starvation this
+         split was written to prevent, with the sides swapped.
+
+     By hull, both stay bounded: at most 2 bandit-hull and 2 scavenger-hull
+     raiders are ever alive. Shooting scavengers can still put 4 hostile ships
+     on you at once instead of 2 — that's a real escalation and a fair price for
+     shooting first — but it can't ratchet, and it can never starve out the
+     bandits. */
+  let hostileAlive = 0, neutralAlive = 0;
+  for (const q of pirates) {
+    if (!q.alive || q.faction === "ally") continue;
+    if (q.def.faction === "hostile") hostileAlive++;
+    else neutralAlive++;
+  }
+  const capFor = f => (f === "hostile" ? HOSTILE_CAP : NEUTRAL_CAP);
+  const aliveIn = f => (f === "hostile" ? hostileAlive : neutralAlive);
+  const countIn = f => { if (f === "hostile") hostileAlive++; else neutralAlive++; };
   // (10h) dispatch: a live bounty GUARANTEES its mark shows up promptly — bypass
-  // both the WILD_CAP pool limit and the 60-120s respawn cooldown, so accepting a
+  // both the pool limit and the 60-120s respawn cooldown, so accepting a
   // contract never strands you hunting a raider that never comes. The mark is
   // contract content, allowed to exceed the ambient duel cap by one.
+  // v86: it has to claim a BANDIT hull, so the wanted poster and the paint
+  // agree. If both bandit slots are already flying, the mark simply waits for
+  // one to die — and you're mid-fight with two raiders, so nothing feels empty.
   if (activeJob && activeJob.type === "bounty" && !harbor && !landedOn && !bountyOnField()) {
     for (const q of pirates) {
-      if (!q.alive) { pirateSpawn(q); if (q.alive) wildAlive++; break; }   // pirateSpawn tags it the mark
+      if (!q.alive && q.def.faction === "hostile") {
+        pirateSpawn(q); if (q.alive) hostileAlive++; break;   // pirateSpawn tags it the mark
+      }
     }
   }
   let hailBest = null, hailD2 = HAIL_R * HAIL_R;   // nearest open channel this frame
@@ -7122,9 +7310,12 @@ function updateEnemies(dt) {
     if (!p.alive) {
       p.respawnIn -= dt;
       if (p.respawnIn <= 0) {
-        if (wildAlive >= WILD_CAP) { p.respawnIn = 8; continue; }   // pool's full — wait a beat
+        // gate on the bucket this slot's HULL spawns into — a dead slot has no
+        // live faction to ask, and def.faction is what pirateSpawn will assign
+        const side = p.def.faction;
+        if (aliveIn(side) >= capFor(side)) { p.respawnIn = 8; continue; }   // bucket's full — wait a beat
         pirateSpawn(p);
-        if (p.alive) wildAlive++;
+        if (p.alive) countIn(side);
       }
       continue;
     }
@@ -7703,7 +7894,7 @@ const jobEl = document.getElementById("jobline");
 /* three fresh bounty offers on three different raiders (shuffle the roster so
    the board never lists the same name twice) */
 function rollOffers() {
-  const names = PIRATE_NAMES.slice();
+  const names = RAIDER_NAMES.slice();   // v86: bandit roster only — you don't get a bounty on a scavenger
   for (let i = names.length - 1; i > 0; i--) {
     const k = (Math.random() * (i + 1)) | 0;
     const t = names[i]; names[i] = names[k]; names[k] = t;
