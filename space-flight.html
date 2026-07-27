@@ -60,6 +60,10 @@
     text-transform: uppercase; color: #bffef4; caret-color: #6ee7d8;
     background: rgba(10,25,25,.55); border: 1px solid rgba(110,231,216,.3);
     border-radius: 6px; padding: 11px 18px; width: 240px; box-sizing: border-box;
+    /* the column stretches every other row to the widest one, and this is the
+       one row with a fixed width — without this it sits flush left of a menu
+       that reads as centred (v85.1, Tanner) */
+    align-self: center;
   }
   .ss-input:focus { outline: none; border-color: rgba(110,231,216,.65);
                     box-shadow: 0 0 12px rgba(110,231,216,.3); }
@@ -118,11 +122,15 @@
     .ss-inner {
       display: grid; grid-template-columns: auto auto;
       align-items: center; justify-items: center;
-      gap: 2px 26px; padding: 10px 14px;
+      gap: 2px 16px; padding: 8px 10px;
     }
-    .ss-title { grid-column: 1; grid-row: 1; font-size: 34px; letter-spacing: 6px; }
+    /* v85.1: the title column is as wide as its longest line, and on an 844px
+       phone that left the hull 172px to live in — narrow enough that framing it
+       clear of the text pushed the camera far enough to make every OTHER screen
+       worse. Tighter type here buys the turntable ~110px and costs a font size. */
+    .ss-title { grid-column: 1; grid-row: 1; font-size: 27px; letter-spacing: 4px; }
     .ss-tag   { grid-column: 1; grid-row: 2; font-size: 9px; letter-spacing: 1.5px;
-                max-width: 300px; }
+                max-width: 200px; }
     .ss-hint  { grid-column: 1; grid-row: 3; font-size: 8px; letter-spacing: 3px;
                 margin-top: 6px; }
     #menuButtons { grid-column: 2; grid-row: 1 / span 3; gap: 7px; margin-top: 0; }
@@ -144,12 +152,14 @@
      which text sits on the hull.
 
      So on a wide screen the menu stops being centred: the whole column goes
-     LEFT and the ship gets the entire right half at full height. The turntable
-     is aimed to match (see the `wide` branch in the menu frame) — the CSS and
-     the camera are the two halves of one decision, and they key off the same
-     900x561 threshold. Below it, nothing changes: a phone stacks, and a short
-     landscape screen keeps the two-up grid above, which is why the height
-     clause is here.  */
+     LEFT and the ship gets the entire right half at full height. Below this
+     threshold nothing changes here: a phone stacks, and a short landscape
+     screen keeps the two-up grid above, which is why the height clause exists.
+
+     The turntable does NOT key off these numbers. It measures `.ss-inner`'s
+     real rect every frame and frames the hull into whatever is left over — so
+     changing a breakpoint, a font size or a line of copy moves the ship with
+     it and can't put text back on the hull. See the menu frame in animate(). */
   @media (min-width: 900px) and (min-height: 561px) {
     #startscreen { padding-top: 0; justify-content: flex-start; }
     .ss-inner { width: 50vw; margin: auto auto auto 0; }
@@ -442,19 +452,22 @@
   .shopRow.broke:hover, .shopRow.maxed:hover { background: none; }
   /* gamepad cursor: the highlighted row the D-pad is sitting on */
   .shopRow.cursor { background: rgba(110,231,216,.18); outline: 1px solid rgba(110,231,216,.55); }
-  /* the price board (v83) — the money box. Amber throughout: teal outfitter,
-     violet dispatch, gold market, so the colour alone says which one you're
-     reading before you've read a word of it. */
+  /* the price board (v83) — the money box. GREEN since v85.1 (Tanner's call):
+     teal outfitter, violet dispatch, green market, so the colour alone says
+     which one you're reading before you've read a word of it.
+     The panel is green; the MONEY inside it stays gold (the ▲, the away column,
+     the footer totals) — gold means credits everywhere else on this HUD, and
+     against green it separates instead of competing. */
   #marketboard {
-    background: rgba(20, 14, 2, .8);
-    border: 1px solid rgba(255,211,77,.42);
-    color: #e8dcc0;
+    background: rgba(4, 20, 13, .8);
+    border: 1px solid rgba(125,232,168,.42);
+    color: #cfe9d8;
   }
-  #marketboard .dockbar { color: #ffd34d; background: rgba(26,18,3,.97); }
-  #marketboard.open .dockbar { border-bottom: 1px solid rgba(255,211,77,.2); }
-  #marketboard .title { color: #ffd34d; letter-spacing: 3px; font-size: 11px;
+  #marketboard .dockbar { color: #7de8a8; background: rgba(5,28,18,.97); }
+  #marketboard.open .dockbar { border-bottom: 1px solid rgba(125,232,168,.2); }
+  #marketboard .title { color: #7de8a8; letter-spacing: 3px; font-size: 11px;
                         text-align: center; margin-bottom: 7px; }
-  #marketboard .title b { color: #fff0b8; font-weight: normal; }
+  #marketboard .title b { color: #d6ffe6; font-weight: normal; }
   /* A real GRID, not flex rows. Flex sizes every row on its own, so the column
      HEADINGS drifted off the numbers they label — "RUSTHOLLOW" is three times the
      width of the 0.70 underneath it, and the head ended up reading as one run-on
@@ -467,20 +480,22 @@
   .mktRow { display: contents; }
   .mktRow .n  { text-align: right; }
   .mktRow .mv { font-size: 9px; color: #ffd34d; }   /* own column, so the ▲ can't shift the numbers */
-  .mktRow .w  { color: #b9a97e; }
-  .mktRow.head > span { color: #9a8f6e; font-size: 10px; letter-spacing: 2px; }
+  .mktRow .w  { color: #8fae9c; }
+  .mktRow.head > span { color: #6f9382; font-size: 10px; letter-spacing: 2px; }
   .mktRow.idle > span { opacity: .42; }         /* not carrying it — data, not a decision */
   .mktRow.move .away  { color: #ffd34d; }       /* worth more somewhere else, and you're holding it */
   /* v84 — is this a good price BY THIS PORT'S OWN STANDARDS? Costs no column, and
      the phone dock sheet has none to give. HERE only: the away column already
-     speaks gold for "move it", and two colour languages in one table is noise. */
-  .mktRow .n.hi { color: #8fe3a8; }             /* running hot — sell into it */
+     speaks gold for "move it", and two colour languages in one table is noise.
+     v85.1: the panel went green, so "hot" can't be a soft green any more — it's
+     a saturated one with a glow, against numbers that are deliberately pale. */
+  .mktRow .n.hi { color: #4dffa0; text-shadow: 0 0 8px rgba(77,255,160,.55); }
   .mktRow .n.lo { color: #d98a6a; }             /* off its usual — glutted, or a soft market */
   #marketboard .mktSep { grid-column: 1 / -1; height: 1px; margin: 1px 0 3px;
-                         background: rgba(255,211,77,.18); }
+                         background: rgba(125,232,168,.18); }
   #marketboard .mktFoot {
-    margin-top: 6px; padding-top: 5px; font-size: 11px; color: #b9a97e;
-    text-align: center; border-top: 1px solid rgba(255,211,77,.18);
+    margin-top: 6px; padding-top: 5px; font-size: 11px; color: #8fae9c;
+    text-align: center; border-top: 1px solid rgba(125,232,168,.18);
   }
   #marketboard .mktFoot b { color: #ffd34d; font-weight: normal; }
   /* the saturation note (v84) — the one line that explains why a price sagged.
@@ -1773,13 +1788,20 @@ scene.add(new THREE.AmbientLight(0x1c2836, 0.8));
    frame in animate() re-aims them at the ship every tick; startGame() hides
    the group, and an invisible parent is skipped by the renderer entirely, so
    flight lighting is exactly what it always was. */
+/* v85.1 — the whole rig came up about 20%. Tanner, on a phone: "the ships
+   appear pretty dark on the menu screen." Nothing here varies by device (these
+   are directional lights at a fixed offset from the hull, and the game has no
+   mobile rendering branch), so the darkness isn't mobile-specific — it's that
+   the darkest hulls in the hangar, USS CHAR's olive and USS BOO, were reading
+   near-black on any screen that isn't a bright desktop monitor. You are picking
+   a ship on this screen; it has to be legible on the dimmest glass. */
 const menuLights = new THREE.Group();
-const menuKey  = new THREE.DirectionalLight(0xfff2e2, 2.0);   // warm key, camera side
-const menuFill = new THREE.DirectionalLight(0x8fb4ff, 0.85);  // cool fill, opposite
-const menuRim  = new THREE.DirectionalLight(0xffd6a0, 1.5);   // backlight, edge pop
+const menuKey  = new THREE.DirectionalLight(0xfff2e2, 2.4);   // warm key, camera side
+const menuFill = new THREE.DirectionalLight(0x8fb4ff, 1.0);   // cool fill, opposite
+const menuRim  = new THREE.DirectionalLight(0xffd6a0, 1.8);   // backlight, edge pop
 menuLights.add(
   menuKey, menuKey.target, menuFill, menuFill.target, menuRim, menuRim.target,
-  new THREE.HemisphereLight(0x9ec4ff, 0x30414f, 0.85),        // soft ambient lift
+  new THREE.HemisphereLight(0x9ec4ff, 0x30414f, 1.1),         // soft ambient lift
 );
 scene.add(menuLights);
 
@@ -2863,6 +2885,21 @@ function loadPlayerShip(def) {
       Math.max(Math.abs(bbox.min.x), bbox.max.x),
       Math.max(Math.abs(bbox.min.y), bbox.max.y),
       Math.max(Math.abs(bbox.min.z), bbox.max.z));
+    /* v85.1 — how much frame this hull needs on the menu turntable. The
+       bounding SPHERE is useless for this: a fighter is four times as wide as
+       it is tall, so fitting a sphere into a short band parks the camera miles
+       away. Two spans instead — but the horizontal one is the SWEPT CIRCLE, not
+       the beam. The turntable is a plain yaw, so over one revolution the hull
+       presents everything between its width and its plan DIAGONAL: USS CHAR is
+       11.7 across and 11.0 long, and at 45° it shows you 16. Taking the wider
+       of the two sides instead was a 37% under-estimate that put a wing through
+       the START button. Height never changes under a yaw.
+       Corner distance off the ORIGIN, doubled — nothing re-centres a model,
+       same reason the hit radius reads them this way. */
+    menuSpanW = 2 * sscale * Math.hypot(
+      Math.max(Math.abs(bbox.min.x), bbox.max.x),
+      Math.max(Math.abs(bbox.min.z), bbox.max.z));
+    menuSpanH = 2 * sscale * Math.max(Math.abs(bbox.min.y), bbox.max.y);
     // chase framing (v71): the silhouette this hull presents to a camera
     // sitting behind it — the WIDER of width and height, not the length
     chaseFrame = THREE.MathUtils.clamp(
@@ -3162,6 +3199,15 @@ const SHIP_HIT_R = 12;      // hull radius, for ramming
    Per-ship, so the brick handles like a brick: SAMSAM gets 1.7 units less
    closing room than THUMM, because it genuinely is that much bigger. */
 let shipHullR = SHIP_HIT_R;   // real value lands with the model
+let menuSpanW = 16, menuSpanH = 4;   // ditto — the hangar turntable's framing (v85.1)
+/* How much of the clear band the hull's swept circle may fill. The other 28% is
+   not slop, it's the perspective asymmetry: the fit centres the hull's ORIGIN in
+   the band, but a wing swung toward the camera projects about a third further
+   out than the one swung away, and which side that is changes as the turntable
+   spins. Measured over a full revolution the near half runs ~0.66 of the total
+   span, so the margin has to cover it. `dock-nav.js` section J is the check —
+   ten phases, real vertices, the game's own camera. */
+const MENU_FILL = 0.72;
 
 /* ---- HULL CAPSULES (v70) ------------------------------------------------
    Every NPC ram test used to be ONE SPHERE of radius len/2 — half the ship's
@@ -8853,6 +8899,8 @@ document.getElementById("ctrlToggle").addEventListener("click", e => {
    a centered column so NAME / SHIP SELECT / SETTINGS can slot in later. */
 let gameStarted = false, menuTime = 0;
 const startScreenEl = document.getElementById("startscreen");
+// the menu's own rect is what tells the turntable where the clear space is (v85.1)
+const ssInnerEl = startScreenEl.querySelector(".ss-inner");
 
 /* the callsign (v53, step 2): typed on the front door, worn on the HUD,
    and worked into the junker chatter. Lives in its own localStorage key —
@@ -9040,41 +9088,65 @@ function animate() {
         if (nav.act)   menuAct();
       }
     }
-    /* WHERE THE SHIP SITS IN FRAME (v85). The hull is the one thing this screen
-       asks you to choose, and it was drawn dead centre behind the menu at every
-       size — Tanner's screenshot had the SETTINGS button and the SALVAGE ·
-       UPGRADE · HAUL · SURVIVE line printed across it. Raising the text only
-       trades which words sit on the hull, so instead each layout gets told
-       where its clear space IS:
+    /* WHERE THE SHIP SITS IN FRAME (v85, MEASURED since v85.1). The hull is the
+       one thing this screen asks you to choose, and it used to be drawn dead
+       centre behind the menu at every size — Tanner's first screenshot had the
+       SETTINGS button and the SALVAGE · UPGRADE · HAUL · SURVIVE line printed
+       across it. Raising the text only trades which words sit on the hull.
 
-         wide (>=900x561) — the menu column is pinned left by CSS, so the ship
-             takes the RIGHT half at full height. This is the case with the
-             screenshot against it.
-         short landscape (<=560 tall) — the two-up grid hugs the left, ship on
-             the right, pulled back because there's only ~a third of the width.
-         portrait — menu on top, hull in the bottom band, pulled back further
-             still: 390px of glass can't hold a menu and a hero shot side by side.
+       v85 aimed it off a table of hand-tuned fractions keyed to the CSS
+       breakpoints; Tanner's phone then found the ship under the menu anyway,
+       because the short-landscape layout is as wide as its longest line of text
+       and that is not a number you can hard-code. So the menu MEASURES itself:
+       its own rect says where the clear space is, and the hull's own two spans
+       say how far back the camera has to stand to fill it. Right on any screen,
+       with any hull, and it stays right when the copy changes.
 
-       Every threshold here is spelled exactly as the matching CSS media query.
-       They are two halves of one decision and they must not drift apart.
+       Beside or below is the only branch left, and it's a comparison, not a
+       breakpoint: whichever side of the menu has more room, provided there's
+       enough of it to be worth using.
 
-       The aiming is done by moving the LOOKAT off the ship rather than moving
-       the ship or the orbit: `halfH`/`halfW` are how many world units half the
-       frame is worth at this radius, so a fraction of the frame converts
-       straight into world units at any aspect. The orbit is a plain yaw, so
-       the camera's own right vector is just (cos, 0, -sin). */
-    const wide = innerWidth >= 900 && innerHeight >= 561;
-    const shortWide = !wide && innerHeight <= 560;
-    // [ orbit radius, x as a fraction of half the frame, y likewise (down = -) ]
-    const aim = wide ? [17, 0.42, -0.15] : shortWide ? [24, 0.64, -0.20] : [27, 0, -0.62];
-    const orbR = aim[0], orbYaw = menuTime * 0.16;
+       The radius comes off the TANGENT LINES, not a px-per-unit ratio. At these
+       distances a 70° lens is nowhere near linear — the first cut of this used
+       `px = h/(2 tan R)` and put a 1,418px ship in a 564px band, because the
+       near face of an 11-unit hull sitting 13 units away is at 7.5 and draws
+       nearly twice the size of the far one. A sphere of radius r at distance R
+       subtends `r/sqrt(R²−r²)` in projection units, so "what R makes the hull
+       exactly `band` pixels wide" inverts in one line, and it reads the real
+       projection matrix rather than re-deriving the aspect by hand.
+
+       The aiming then moves the LOOKAT off the ship rather than moving the ship
+       or the orbit: a fraction of the frame converts straight into world units
+       at any aspect, and the orbit is a plain yaw so the camera's own right
+       vector is just (cos, 0, -sin). */
+    const menuBox = ssInnerEl.getBoundingClientRect();
+    const PAD = 14;
+    const roomBeside = innerWidth - menuBox.right, roomBelow = innerHeight - menuBox.bottom;
+    const beside = roomBeside >= roomBelow && roomBeside >= Math.max(150, innerWidth * 0.18);
+    const bandL = (beside ? menuBox.right : 0) + PAD, bandR = innerWidth - PAD;
+    const bandT = (beside ? 0 : menuBox.bottom) + PAD, bandB = innerHeight - PAD;
+    const bandW = Math.max(80, bandR - bandL), bandH = Math.max(80, bandB - bandT);
+    const tanH = Math.tan(camera.fov * Math.PI / 360);
+    const proj = camera.projectionMatrix.elements;   // [0] = 1/(tan·aspect), [5] = 1/tan
+    // r/sqrt(R²−r²) = band·FILL/(m·dim)  →  R = r·sqrt(1 + 1/t²)
+    const fitR = (r, m, dim, band) => {
+      const t = band * MENU_FILL / (m * dim);
+      return r * Math.sqrt(1 + 1 / (t * t));
+    };
+    const rPlan = menuSpanW / 2, rTall = menuSpanH / 2;
+    const orbR = Math.min(90, Math.max(rPlan * 1.6,
+      fitR(rPlan, proj[0], innerWidth, bandW),
+      fitR(rTall, proj[5], innerHeight, bandH)));
+    const orbYaw = menuTime * 0.16;
     camera.position.set(
       shipObj.position.x + Math.sin(orbYaw) * orbR,
       shipObj.position.y + 3.2,
       shipObj.position.z + Math.cos(orbYaw) * orbR
     );
-    const halfH = Math.tan(camera.fov * Math.PI / 360) * orbR;
-    const offX = aim[1] * halfH * camera.aspect, offY = aim[2] * halfH;
+    const halfH = tanH * orbR;
+    // the band's centre, as a fraction of half the frame, then in world units
+    const offX = ((bandL + bandR) / innerWidth - 1) * halfH * camera.aspect;
+    const offY = (1 - (bandT + bandB) / innerHeight) * halfH;
     camera.lookAt(shipObj.position.x - Math.cos(orbYaw) * offX,
                   shipObj.position.y - offY,
                   shipObj.position.z + Math.sin(orbYaw) * offX);
