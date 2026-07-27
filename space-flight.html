@@ -111,7 +111,10 @@
   .ss-inner { margin: auto; }
 
   @media (max-height: 560px) {
-    #startscreen { padding-top: 0; align-items: center; }
+    /* v85: hugs the LEFT so the turntable has the right-hand third to itself —
+       same trade the wide layout makes, just with less width to trade. */
+    #startscreen { padding-top: 0; align-items: center; justify-content: flex-start; }
+    .ss-inner { margin-left: 6px; margin-right: auto; }
     .ss-inner {
       display: grid; grid-template-columns: auto auto;
       align-items: center; justify-items: center;
@@ -133,6 +136,42 @@
     #shiprow { gap: 7px; }
     .ss-btn { font-size: 14px; letter-spacing: 4px; padding: 8px 30px; }
     .ss-btn.sub { font-size: 11px; letter-spacing: 3px; padding: 6px 22px; }
+  }
+  /* ==== TWO COLUMNS ON A WIDE SCREEN (v85) ============================
+     Tanner, with a screenshot: picking a ship is the one thing this screen
+     asks you to do, and the ship was tucked behind the SETTINGS button and
+     the SALVAGE · UPGRADE · HAUL · SURVIVE line. Raising the stack only trades
+     which text sits on the hull.
+
+     So on a wide screen the menu stops being centred: the whole column goes
+     LEFT and the ship gets the entire right half at full height. The turntable
+     is aimed to match (see the `wide` branch in the menu frame) — the CSS and
+     the camera are the two halves of one decision, and they key off the same
+     900x561 threshold. Below it, nothing changes: a phone stacks, and a short
+     landscape screen keeps the two-up grid above, which is why the height
+     clause is here.  */
+  @media (min-width: 900px) and (min-height: 561px) {
+    #startscreen { padding-top: 0; justify-content: flex-start; }
+    .ss-inner { width: 50vw; margin: auto auto auto 0; }
+  }
+  /* Portrait: no width to split, so the split is horizontal — menu on top,
+     hull in the band underneath. Top-aligned rather than vertically centred so
+     that band is one contiguous strip instead of a gap above AND below, which
+     is what `margin: auto` was giving it. */
+  @media (max-width: 620px) and (min-height: 561px) {
+    .ss-inner { margin-top: 0; }
+  }
+  /* the cursor for the pad and the arrow keys. The front door had NO keyboard
+     or controller path at all before this — the pad poll lives below the
+     `!gameStarted` return in animate(), so a controller you could fly the whole
+     game with could not press START. */
+  .ss-btn.padfocus {
+    background: rgba(24,55,52,.85);
+    box-shadow: 0 0 16px rgba(110,231,216,.45), inset 0 0 12px rgba(110,231,216,.15);
+  }
+  #shiprow.padfocus #shipCard, #shiprow.padfocus .ss-arrow {
+    border-color: rgba(110,231,216,.8);
+    box-shadow: 0 0 14px rgba(110,231,216,.32);
   }
   /* while the menu is up the flight HUD, radar canvas and touch pads stay
      hidden — the front door owns the whole screen. */
@@ -325,17 +364,72 @@
     font-size: 13px; letter-spacing: 3px; visibility: hidden;
     text-align: center; white-space: nowrap;
   }
-  /* the outfitter — Charleston's upgrade shop (v34). Only exists while
-     parked on the pad, so it borrows the centreline under the landing tag.
-     The HUD ignores the pointer; this panel is the one part that doesn't. */
+  /* ==== THE DOCK ACCORDION (v85) ======================================
+     One column down the RIGHT-hand side, desktop and phone alike. Before this
+     the three panels flanked the ship — dispatch left, outfitter on the
+     centreline, market right — which meant three places to look, three input
+     models, and on a controller nothing at all until you had learned that
+     D-pad Left meant "dispatch" and D-pad Right meant "buy". Tanner's words:
+     "it is hard to navigate."
+
+     ONE BOX IS OPEN AT A TIME. The closed ones keep a bar with a summary on
+     it, so the panel you aren't reading still tells you whether it's worth
+     opening (2 AFFORDABLE / 3 OFFERS / WORTH 412). Left-Right picks the box,
+     Up-Down walks its rows, A-ENTER acts — the same three motions on a pad, a
+     keyboard and a thumb, with no mode to enter or back out of.
+
+     THE COLUMN ITSELF NEVER SCROLLS. The bars are flex-shrink: 0 and only the
+     OPEN box gives ground (and scrolls inside itself), so no box can ever be
+     pushed off the bottom of the glass. That is what an 844x390 landscape
+     phone needs: three bars plus a five-good market table is ~300px of content
+     in 266px of column, and a scrolling COLUMN would have put the market's
+     footer below the fold with nothing on screen to say so.
+
+     `bottom` clears the throttle bar, which is still live on a desktop pad
+     (~156px of it); the mobile sheet hides the throttle, so `body.docked`
+     takes the space back. */
+  #dockcols {
+    position: fixed; top: 46px; bottom: 168px; right: 20px;
+    width: min(430px, 46vw);
+    display: flex; flex-direction: column; gap: 8px; align-items: stretch;
+    pointer-events: none;
+  }
+  #shop, #dispatchboard, #marketboard {
+    display: none;                    /* JS writes block when this port has one */
+    flex: 0 0 auto; pointer-events: auto;
+    font-size: 12px; letter-spacing: 1px;
+    text-align: left; white-space: nowrap;
+  }
+  /* the open box is the only one allowed to shrink, and it scrolls rather than
+     clip. `min-height: 0` is load-bearing — without it a flex item refuses to
+     shrink below its content and the column overflows anyway. */
+  #dockcols > .open {
+    flex: 0 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
+    scrollbar-width: thin;
+  }
+  .dockbar {
+    display: flex; align-items: center; gap: 9px; width: 100%; box-sizing: border-box;
+    font-family: inherit; font-size: 11px; letter-spacing: 3px;
+    padding: 11px 12px; border: 0; background: none; color: inherit;
+    text-align: left; cursor: pointer; text-shadow: 0 0 6px currentColor;
+  }
+  /* the bar is the box's own heading, so it stays put while the rows scroll
+     under it — which means it needs to be opaque, not the panel's glass */
+  .open > .dockbar { position: sticky; top: 0; z-index: 1; }
+  .dockbar .bx { opacity: .75; font-size: 10px; }
+  .dockbar .bs { margin-left: auto; font-size: 10px; letter-spacing: 2px;
+                 opacity: .62; text-shadow: none; }
+  .dockbody { display: none; padding: 0 14px 11px; }
+  .open > .dockbody { display: block; }
+
+  /* the outfitter — Charleston's upgrade shop (v34) */
   #shop {
-    position: absolute; top: 31%; left: 50%; transform: translateX(-50%);
-    display: none; pointer-events: auto;
     background: rgba(4, 18, 16, .8);
     border: 1px solid rgba(110,231,216,.45);
-    padding: 8px 14px 10px; font-size: 12px; letter-spacing: 1px;
-    color: #bfe8e2; text-align: left; white-space: nowrap;
+    color: #bfe8e2;
   }
+  #shop .dockbar { color: #6ee7d8; background: rgba(5,26,23,.97); }
+  #shop.open .dockbar { border-bottom: 1px solid rgba(110,231,216,.22); }
   #shop .title { color: #6ee7d8; letter-spacing: 3px; font-size: 11px;
                  text-align: center; margin-bottom: 7px; }
   #shop .title b { color: #ffd34d; font-weight: normal; }
@@ -348,20 +442,16 @@
   .shopRow.broke:hover, .shopRow.maxed:hover { background: none; }
   /* gamepad cursor: the highlighted row the D-pad is sitting on */
   .shopRow.cursor { background: rgba(110,231,216,.18); outline: 1px solid rgba(110,231,216,.55); }
-  /* the price board (v83) — the third dock panel, berthed RIGHT so dispatch keeps
-     the left and the outfitter keeps the centreline. Fixed sides on purpose: the
-     panel is in the same place at every port, so you learn where to look instead
-     of re-finding it each landing.
-     Amber because it's the money one — teal outfitter, violet dispatch, gold
-     market. At a glance the colour alone says which panel you're reading. */
+  /* the price board (v83) — the money box. Amber throughout: teal outfitter,
+     violet dispatch, gold market, so the colour alone says which one you're
+     reading before you've read a word of it. */
   #marketboard {
-    position: absolute; top: 31%; right: 24px;
-    display: none; pointer-events: auto;
     background: rgba(20, 14, 2, .8);
     border: 1px solid rgba(255,211,77,.42);
-    padding: 8px 12px 10px; font-size: 12px; letter-spacing: 1px;
-    color: #e8dcc0; text-align: left; white-space: nowrap;
+    color: #e8dcc0;
   }
+  #marketboard .dockbar { color: #ffd34d; background: rgba(26,18,3,.97); }
+  #marketboard.open .dockbar { border-bottom: 1px solid rgba(255,211,77,.2); }
   #marketboard .title { color: #ffd34d; letter-spacing: 3px; font-size: 11px;
                         text-align: center; margin-bottom: 7px; }
   #marketboard .title b { color: #fff0b8; font-weight: normal; }
@@ -404,16 +494,14 @@
        already claimed. Docked, the sheet sets the width, so the cap comes off. */
     text-align: center; white-space: normal; max-width: 230px;
   }
-  /* the dispatch board (v56) — Charleston's job faucet. Same dock gate as the
-     outfitter, parked to the LEFT so the two panels don't share the centreline. */
+  /* the dispatch board (v56) — Charleston's job faucet */
   #dispatchboard {
-    position: absolute; top: 31%; left: 24px;
-    display: none; pointer-events: auto;
     background: rgba(10, 6, 20, .8);
     border: 1px solid rgba(192,125,255,.45);
-    padding: 8px 14px 10px; font-size: 12px; letter-spacing: 1px;
-    color: #d9c6f0; text-align: left; white-space: nowrap;
+    color: #d9c6f0;
   }
+  #dispatchboard .dockbar { color: #c07dff; background: rgba(14,9,27,.97); }
+  #dispatchboard.open .dockbar { border-bottom: 1px solid rgba(192,125,255,.2); }
   #dispatchboard .title { color: #c07dff; letter-spacing: 3px; font-size: 11px;
                           text-align: center; margin-bottom: 7px; }
   #dispatchboard .title b { color: #ffd34d; font-weight: normal; }
@@ -426,10 +514,11 @@
   .jobRow.cursor { background: rgba(192,125,255,.18); outline: 1px solid rgba(192,125,255,.55); }
   .jobHint { margin-top: 6px; font-size: 10px; opacity: .6; color: #c07dff;
              white-space: normal; max-width: 220px; }
-  /* on a narrow screen the two docked panels can't sit side-by-side — drop the
-     board below the outfitter instead of overlapping it */
-  @media (max-width: 1024px) {
-    #dispatchboard { top: 46%; left: 50%; transform: translateX(-50%); }
+  /* narrow glass: the column takes the width instead of a slice of it. No
+     `body.docked` gate — a small desktop window gets the same treatment, and
+     while you're flying the column has no visible children anyway. */
+  @media (max-width: 620px) {
+    #dockcols { left: 12px; right: 12px; width: auto; }
   }
   /* red vignette pulse on a hull hit. Edges only — the middle stays clear, so
      it never hides the thing that just hit you. */
@@ -693,30 +782,27 @@
      the sheet's whole point is that it's uncluttered. Read it in flight. */
   body.docked #ctrlmenu { display: none; }
 
-  /* The columns. A hidden panel is not a flex item at all, so a port that
-     sells gear but posts no work (or the reverse) gets ONE centred column for
-     free — no JS branch, no second layout to keep in sync. */
-  body.docked #dockcols {
-    position: fixed; left: 0; right: 0; top: 46px; bottom: 78px;
-    display: flex; gap: 16px; justify-content: center; align-items: stretch;
-    padding: 0 20px; pointer-events: none;
-  }
+  /* The sheet hides the throttle and the whole flight HUD, so the column takes
+     the glass from the header to the floor — and the bars come up to a thumb
+     size (v79's 44px rule, now applied to the navigation as well as the rows).
+     Landscape needs every pixel of that: three bars plus a five-good market
+     table is ~180px of body in a 390px-tall phone, and at v79's insets the
+     table lost its last two rows and its footer below the fold. */
+  body.docked #dockcols { top: 36px; bottom: 16px; }
+  /* the bars ARE the navigation on glass, so they answer to the same 44px
+     thumb rule as the rows. min-height rather than padding alone: the padding
+     that gets you there depends on the font's line box, and 14px of it landed
+     at 42 — two pixels under, which is exactly the kind of miss the rule exists
+     to catch. */
+  body.docked .dockbar { font-size: 12px; padding: 13px; min-height: 44px; }
   body.docked #shop, body.docked #dispatchboard, body.docked #marketboard {
-    position: static; transform: none; flex: 1 1 0; max-width: 430px;
-    min-width: 0; white-space: normal; overflow-y: auto;
-    padding: 10px 14px 12px; font-size: 13px;
+    font-size: 13px;
   }
+  body.docked .dockbody { padding: 0 14px 12px; }
   body.docked #shop .title, body.docked #dispatchboard .title,
   body.docked #marketboard .title {
     font-size: 12px; margin-bottom: 10px;
   }
-  /* The market is a TABLE, so it's the one panel that can't absorb a third of a
-     844px sheet by wrapping — it overflows sideways instead. Charleston is the
-     three-column case (outfitter + dispatch + market); tighten the columns there
-     rather than let the numbers slide out from under their own headings.
-     Rows here are read, never tapped, so they keep out of the 44px rule below. */
-  body.docked #marketboard { font-size: 12px; padding: 10px 10px 12px; }
-  body.docked #marketboard .mktGrid { gap: 5px 8px; }
   /* the dock sheet decides the width here, so the note gets all of it */
   body.docked #marketboard .mktNote { max-width: none; }
   /* 44px targets — the flight-sized 20px rows were unhittable with a thumb */
@@ -736,17 +822,17 @@
   body.docked .jobHint { max-width: none; }
   /* !important because layoutAssistPill() writes an INLINE bottom, and on the
      sheet the pill belongs at the foot of the screen, not above a hidden scope */
-  body.docked #btnLand { bottom: 20px !important; }
-  /* Portrait is the case the ORIGINAL rule was right about: narrow but tall,
-     so the columns stack and the sheet scrolls as one. */
+  /* LAUNCH moves off the centreline while docked: the accordion owns the right
+     half now, and centred put the pill's right edge under the column's left
+     edge. Left of centre is also where the flight stick lives, so it lands
+     under the thumb that isn't working the panels. */
+  body.docked #btnLand { bottom: 20px !important; left: 24%; }
+  /* portrait has height to spare and no width to spare — the column takes the
+     full width, so the pill goes back to the centreline BELOW it and the table
+     gets its gaps back */
   @media (max-width: 560px) {
-    body.docked #dockcols { flex-direction: column; align-items: center;
-                            overflow-y: auto; gap: 12px; }
-    body.docked #shop, body.docked #dispatchboard, body.docked #marketboard {
-      flex: 0 0 auto; width: 100%; max-width: 460px; overflow-y: visible;
-    }
-    /* stacked, the width pressure is gone — give the table its room back */
-    body.docked #marketboard { font-size: 13px; padding: 10px 14px 12px; }
+    body.docked #dockcols { bottom: 88px; }
+    body.docked #btnLand { left: 50%; }
     body.docked #marketboard .mktGrid { gap: 7px 14px; }
   }
 
@@ -850,7 +936,14 @@
       <b>L-stick</b> roll / pitch · <b>R-stick</b> look around<br>
       <b>RT / LT</b> thrust / reverse · <b>LB / RB</b> nose left / right<br>
       <b>A</b> fire · <b>B</b> boost · <b>X</b> stop · <b>Y</b> view · <b>Start</b> pause<br>
-      <b>D-pad</b> ↑/↓ pick upgrade · <b>A</b> buy (docked at the outfitter)
+      <b>D-pad ↑</b> answer a hail
+      <div class="grp">MENUS — FRONT DOOR &amp; THE PAD</div>
+      One scheme everywhere: <b>← →</b> pick the panel (or the ship),
+      <b>↑ ↓</b> walk its rows, <b>A / ENTER</b> act. Arrow keys, D-pad or
+      left stick — and on glass, just tap the bar you want.<br>
+      Parked at a port the panels stack into one column: <b>OUTFITTER</b>,
+      <b>DISPATCH</b>, <b>MARKET</b>. One opens at a time; the closed bars still
+      tell you what's inside.
       <div class="grp">TOUCH</div>
       <b>Left thumb</b> flight stick — touch anywhere on the left of the glass,
       the stick comes to you<br>
@@ -871,7 +964,7 @@
       protects you not at all. The landing tag tells you what you're
       standing in.<br>
       At the OUTFITTER — beam range, hull plating, cargo clamps. Click a
-      row, press <b>1 / 2 / 3</b>, or D-pad + A on a gamepad.
+      row, press <b>1 / 2 / 3 / 4</b>, or walk to it and press <b>A / ENTER</b>.
       <div class="grp">RAIDERS</div>
       A red strobe is a bandit — fight or run (you're faster). An amber
       blink is a neutral scavenger: it holds fire unless you shoot first.
@@ -905,25 +998,35 @@
        Counts down the seconds you have left so pulling up is a decision. -->
   <div id="ditchtag">◆ IN THE WATER — PULL UP ◆</div>
   <div id="treetag">◆ SCRAPING THE CANOPY ◆</div>
-  <!-- The two docked panels share a wrapper ONLY so the mobile dock sheet can
-       flex them into columns. While flying it is completely inert: both panels
-       are position:absolute and #dockcols is static, so their containing block
-       is still #hud and nothing about the desktop layout changes. -->
+  <!-- The dock accordion (v85). One column on the right; each panel is a BAR
+       you can select plus a BODY that only exists while that box is open. The
+       bar is a real <button> so a mouse, a thumb and the keyboard's own focus
+       ring all work on it for free — the pad and arrow-key cursor is the
+       `.open` class the accordion writes next door.
+       `shopRows` is a boot-time snapshot of the four .shopRow divs, so they
+       stay hand-written here; the other two bodies are built by their refresh. -->
   <div id="dockcols">
     <div id="shop">
-      <div class="title">◆ OUTFITTER ◆ pay from the <b>BANK</b></div>
-      <div class="shopRow"></div>
-      <div class="shopRow"></div>
-      <div class="shopRow"></div>
-      <div class="shopRow"></div>
+      <button class="dockbar" type="button"><span class="bx">▸</span><span class="bt">OUTFITTER</span><span class="bs"></span></button>
+      <div class="dockbody">
+        <div class="title">pay from the <b>BANK</b></div>
+        <div class="shopRow"></div>
+        <div class="shopRow"></div>
+        <div class="shopRow"></div>
+        <div class="shopRow"></div>
+      </div>
     </div>
     <div id="dispatchboard">
-      <div class="title">◆ DISPATCH ◆</div>
+      <button class="dockbar" type="button"><span class="bx">▸</span><span class="bt">DISPATCH</span><span class="bs"></span></button>
+      <div class="dockbody"><div class="title">◆ DISPATCH ◆</div></div>
     </div>
     <!-- the price board (v83). Built entirely in refreshMarket() — the row count
          is the goods table's, not a fixed set of divs like the outfitter's, so
          adding a good can't desync a DOM snapshot here. -->
-    <div id="marketboard"></div>
+    <div id="marketboard">
+      <button class="dockbar" type="button"><span class="bx">▸</span><span class="bt">MARKET</span><span class="bs"></span></button>
+      <div class="dockbody"></div>
+    </div>
   </div>
   <div id="flightdata">
     <span id="pilotrow" style="display:none"><span class="dim">PILOT</span> <span id="pilot"></span><br></span>
@@ -4710,11 +4813,13 @@ function refreshShop() {
       ' <span class="pips">' + "●".repeat(l) + "○".repeat(u.costs.length - l) + '</span> ' +
       (maxed ? '<span class="price">MAX</span>'
              : u.next(l) + ' <span class="price">' + u.costs[l] + '</span>');
-    // the cursor highlight only shows with a pad connected — mouse/keyboard
-    // players never see a stray selection
+    /* v85 — the highlight is INPUT-AGNOSTIC now. It used to render only with a
+       pad connected, which meant a mouse or a thumb got no selected state at
+       all: the row you were about to act on looked exactly like the four you
+       weren't. It shows whenever this box is the open one, on every input. */
     shopRows[i].className =
       "shopRow" + (maxed ? " maxed" : banked < u.costs[l] ? " broke" : "") +
-      (padIndex !== null && i === shopCursor ? " cursor" : "");
+      (dockBox === "shop" && i === shopCursor ? " cursor" : "");
   }
 }
 function buyUpgrade(i) {
@@ -4732,7 +4837,11 @@ function buyUpgrade(i) {
   shopBuySound();
   shopDirty = true;
 }
-shopRows.forEach((r, i) => r.addEventListener("click", () => buyUpgrade(i)));
+// clicking a row also MOVES the cursor there (v85) — so a mouse and a pad
+// never disagree about which row is selected
+shopRows.forEach((r, i) => r.addEventListener("click", () => {
+  shopCursor = i; shopDirty = true; buyUpgrade(i);
+}));
 
 /* ---- the price board (v83, §1.1b) ----
    v82 gave every port an opinion about your cargo and then kept it a secret:
@@ -4744,6 +4853,9 @@ shopRows.forEach((r, i) => r.addEventListener("click", () => buyUpgrade(i)));
    decision — with nothing to weigh it against, the board is a receipt. What the
    other port pays is what turns a mixed hold into a route. */
 const marketEl = document.getElementById("marketboard");
+// v85: the panel is a BAR plus a BODY now, and only the body gets rewritten —
+// blowing away the bar would take the accordion's own navigation with it
+const marketBodyEl = marketEl.querySelector(".dockbody");
 let marketDirty = true;        // port changed — rebuild on the next docked frame
 let marketCargoShown = -1;     // the hold the rows were drawn against. `cargo` is a
                                // valid signature for the whole hold because nothing
@@ -4822,7 +4934,9 @@ function refreshMarket(port) {
      not have — it was the widest cell in the table by a factor of three. Name it
      the moment there's more than one place it could be. */
   const awayHead = !uniform ? "BEST" : PORTS.length > 2 ? uniform : "THERE";
-  let html = '<div class="title">◆ MARKET ◆ <b>' + portShort(port) + '</b></div>' +
+  // the accordion bar already says MARKET, so the title carries the one thing
+  // it can't: which port's opinion these numbers are
+  let html = '<div class="title">◆ <b>' + portShort(port) + '</b> ◆</div>' +
              '<div class="mktGrid" style="grid-template-columns:' + cols + '">' +
              '<div class="mktRow head"><span class="g">GOOD</span>' +
              '<span class="n">HOLD</span><span class="n">HERE</span>' +
@@ -4879,7 +4993,7 @@ function refreshMarket(port) {
           "</div>";
   const note = marketNote(port);
   if (note) html += '<div class="mktNote">' + note + "</div>";
-  marketEl.innerHTML = html;
+  marketBodyEl.innerHTML = html;
 }
 
 /* purchase = two quick notes up (distinct from the bank's three); denied =
@@ -7529,6 +7643,7 @@ function saveJob() { try { localStorage.setItem("spacesuck.job", JSON.stringify(
 addEventListener("pagehide", saveJob);
 
 const dispatchEl = document.getElementById("dispatchboard");
+const dispatchBodyEl = dispatchEl.querySelector(".dockbody");   // v85 — see marketBodyEl
 const dockPortEl = document.getElementById("dockport");
 const dockBankEl = document.getElementById("dockbank");
 let docked = false;      // v79: the mobile dock sheet is up (parked at a port, on glass)
@@ -7556,20 +7671,24 @@ function bountyOnField() {
 
 function refreshDispatch() {
   if (activeJob) {
-    dispatchEl.innerHTML =
-      '<div class="title">◆ DISPATCH ◆ <b>CONTRACT ACTIVE</b></div>' +
+    dispatchBodyEl.innerHTML =
+      '<div class="title"><b>CONTRACT ACTIVE</b></div>' +
       '<div class="jobRow live">BOUNTY · ' + activeJob.name +
       ' <span class="price">+' + activeJob.reward + '</span></div>' +
       '<div class="jobHint">hunt the violet mark — shoot it down to collect.</div>';
     return;
   }
-  let html = '<div class="title">◆ DISPATCH ◆ take a <b>CONTRACT</b></div>';
+  let html = '<div class="title">take a <b>CONTRACT</b></div>';
   offeredJobs.forEach((j, i) => {
-    const cur = padIndex !== null && i === jobCursor ? " cursor" : "";   // pad highlight only with a pad connected
+    // v85: the highlight follows the accordion, not the controller. Before this
+    // it only drew with a pad connected, which is why a mouse or a thumb got no
+    // selected row — Tanner: "there should be a selection button on the contract
+    // menu." The wiring was always here; the affordance wasn't.
+    const cur = dockBox === "jobs" && i === jobCursor ? " cursor" : "";
     html += '<div class="jobRow' + cur + '"><span class="key">[' + (i + 4) + ']</span> BOUNTY · ' +
             j.name + ' <span class="price">+' + j.reward + '</span></div>';
   });
-  dispatchEl.innerHTML = html;
+  dispatchBodyEl.innerHTML = html;
 }
 
 // accept an offered contract — no fee: the cost is the fight
@@ -7603,8 +7722,103 @@ dispatchEl.addEventListener("click", e => {
   const row = e.target.closest(".jobRow");
   if (!row || row.classList.contains("live")) return;
   const rows = Array.from(dispatchEl.querySelectorAll(".jobRow"));
-  acceptJob(rows.indexOf(row));
+  jobCursor = rows.indexOf(row); jobDirty = true;   // v85 — mouse and pad share one cursor
+  acceptJob(jobCursor);
 });
+
+/* ---- THE DOCK ACCORDION (v85) -----------------------------------------
+   Three panels, one open at a time, one column. See the CSS block for why the
+   layout changed; this is the state and the three motions that drive it.
+
+   The whole point is that there is NO MODE. Left/Right picks the box, Up/Down
+   walks its rows, A/ENTER acts on the highlight — the same on a pad, the arrow
+   keys and a thumb, with nothing to enter and nothing to back out of. The old
+   scheme spent D-pad Up/Down/Right on the outfitter and Left/X on the dispatch
+   board, which is two input models sharing one D-pad and no way to tell from
+   the screen which one you were in.
+
+   `dockBox` is null in flight. That single flag is what tells the pad poll and
+   the keydown handler whether the arrows belong to the dock or to the ship. */
+let dockBox = null;                                   // "shop" | "jobs" | "market" | null
+let portShop = false, portJobs = false, portMarket = false;   // what THIS pad offers
+let dockBarSig = "";                                  // last summary the bars were drawn against
+
+function dockBoxEl(k) { return k === "shop" ? shopEl : k === "jobs" ? dispatchEl : marketEl; }
+function dockHas(k) { return k === "shop" ? portShop : k === "jobs" ? portJobs : portMarket; }
+function dockList() { return ["shop", "jobs", "market"].filter(dockHas); }
+// how many ACTIONABLE rows the open box has. The market is a readout — there is
+// nothing in it to press, so Up/Down there is honestly nothing rather than a
+// cursor that moves over numbers you can't act on.
+function dockRowCount(k) {
+  if (k === "shop") return SHOP.length;
+  if (k === "jobs") return activeJob ? 0 : offeredJobs.length;
+  return 0;
+}
+/* the collapsed bar's one line. It has to be worth the glass it costs: a bar
+   that only repeated its own name would make you open every box to find out
+   whether opening it was worth it. */
+function dockSummary(k) {
+  if (k === "shop") {
+    let open = 0, afford = 0;
+    for (let i = 0; i < SHOP.length; i++) {
+      if (upLvl[i] >= SHOP[i].costs.length) continue;      // maxed out
+      open++;
+      if (banked >= SHOP[i].costs[upLvl[i]]) afford++;
+    }
+    if (!open) return "ALL MAXED";
+    return afford ? afford + " AFFORDABLE" : open + " LOCKED";
+  }
+  if (k === "jobs") return activeJob ? "1 ACTIVE" : offeredJobs.length + " OFFERS";
+  if (!cargo) return "HOLD EMPTY";
+  if (!curPort) return "HOLD " + cargo;
+  /* what the hold is worth HERE, in the same exact cents the drain settles in —
+     so the bar, the market footer and the bank all quote one number. */
+  let c = curPort === soldPort ? owedCents : 0;
+  for (const g of GOOD_IDS) c += hold[g] * Math.round(portRate(curPort, g) * 100);
+  return "WORTH " + Math.floor(c / 100);
+}
+// cheap enough to call every docked frame; the signature is what stops it
+// rewriting three bars 60 times a second for nothing
+function refreshDockBars() {
+  const sig = dockBox + "|" + portShop + portJobs + portMarket + "|" + banked + "|" +
+              cargo + "|" + (activeJob ? "J" : offeredJobs.length) + "|" + upLvl.join("");
+  if (sig === dockBarSig) return;
+  dockBarSig = sig;
+  for (const k of ["shop", "jobs", "market"]) {
+    const el = dockBoxEl(k), open = k === dockBox;
+    el.classList.toggle("open", open);
+    el.querySelector(".bx").textContent = open ? "▾" : "▸";
+    el.querySelector(".bs").textContent = dockHas(k) ? dockSummary(k) : "";
+  }
+}
+function setDockBox(k) {
+  if (k === dockBox) return;
+  dockBox = k;
+  // the cursor highlight lives INSIDE the rows, so opening a box has to redraw
+  // the one that lost it as well as the one that gained it
+  shopDirty = jobDirty = marketDirty = true;
+  dockBarSig = "";
+  refreshDockBars();
+}
+function dockPick(dx) {
+  const list = dockList();
+  if (list.length < 2) return;
+  const i = list.indexOf(dockBox);
+  setDockBox(list[(i + dx + list.length) % list.length]);
+}
+function dockMove(dy) {
+  const n = dockRowCount(dockBox);
+  if (n <= 0) return;
+  if (dockBox === "shop") { shopCursor = (shopCursor + dy + n) % n; shopDirty = true; }
+  else if (dockBox === "jobs") { jobCursor = (jobCursor + dy + n) % n; jobDirty = true; }
+}
+function dockAct() {
+  if (dockBox === "shop") buyUpgrade(shopCursor);
+  else if (dockBox === "jobs" && !activeJob && offeredJobs.length) acceptJob(jobCursor);
+}
+// the bars are real buttons, so a click/tap opens a box with no extra plumbing
+for (const k of ["shop", "jobs", "market"])
+  dockBoxEl(k).querySelector(".dockbar").addEventListener("click", () => setDockBox(k));
 
 /* ============ 11. INPUT ============ */
 const keys = {};
@@ -7629,6 +7843,23 @@ addEventListener("keydown", e => {
   if (e.code === "KeyG" && !keys["KeyG"] && !paused) tryAssist();  // landing assist / leave pad (v68)
   if (e.code === "KeyM" && !keys["KeyM"]) toggleMusic(); // music on/off (v48) — effects stay up
   if (e.code === "Space") e.preventDefault();           // Space fires; don't scroll
+  /* ---- the arrows drive whichever menu is up (v85) ----
+     Front door: up/down walks the list, left/right changes ship, ENTER acts.
+     At a pad: left/right picks the accordion box, up/down walks its rows,
+     ENTER acts. Same three motions as the D-pad, and the only reason the ship
+     doesn't also swing is the `dockBox === null` gate on the steering block.
+     Both are edge-detected off `keys[]` so a held arrow doesn't repeat. */
+  if (!keys[e.code] && !paused) {
+    const menu = !gameStarted && settingsEl.style.display !== "flex" &&
+                                fleetEl.style.display !== "flex";
+    if (menu || dockBox !== null) {
+      if (e.code === "ArrowUp")         { menu ? menuMove(-1) : dockMove(-1); e.preventDefault(); }
+      else if (e.code === "ArrowDown")  { menu ? menuMove(1)  : dockMove(1);  e.preventDefault(); }
+      else if (e.code === "ArrowLeft")  { menu ? pickShip(-1) : dockPick(-1); }
+      else if (e.code === "ArrowRight") { menu ? pickShip(1)  : dockPick(1); }
+      else if (e.code === "Enter")      { menu ? menuAct()    : dockAct(); }
+    }
+  }
   // docked at the outfitter, 1/2/3 buy the rows (fire once per press)
   if (shopEl.style.display === "block" && !keys[e.code]) {
     if (e.code === "Digit1") buyUpgrade(0);
@@ -7958,8 +8189,31 @@ let padIndex = null;
 let padViewHeld = false;      // edge-detect for the view toggle
 let padStartHeld = false;     // edge-detect for pad-Start pause (v54)
 let padBHeld = false;         // edge-detect for B → landing assist / launch (v68)
-let padUpHeld = false, padDownHeld = false, padBuyHeld = false;   // shop D-pad edge-detect (v35)
-let padJobMoveHeld = false, padJobTakeHeld = false;              // dispatch board pad edge-detect (v56)
+let padUpHeld = false;        // D-pad Up in FLIGHT = answer a hail (v47)
+let padFireArmed = true;      // A must be RELEASED once after startGame (v85)
+/* ---- ONE MENU D-PAD (v85) --------------------------------------------
+   The front door and the dock accordion take the same five motions, so they
+   share one edge-detector and one set of held flags. `navEdges` is called
+   every frame a pad is connected — including in flight, where nothing acts on
+   the result — so the held state is never stale: a mode that only sampled the
+   pad while it was open would swallow the first press on the way in.
+   The left stick counts as a D-pad here. It's what a thumb reaches for, and
+   there is nothing else for it to do on a menu or a parked ship. */
+let navUpHeld = false, navDownHeld = false, navLeftHeld = false,
+    navRightHeld = false, navActHeld = false;
+function navEdges(gp) {
+  const ay = gp.axes.length > 1 ? padAxis(gp.axes[1]) : 0;
+  const ax = gp.axes.length > 0 ? padAxis(gp.axes[0]) : 0;
+  const u = !!(gp.buttons[12] && gp.buttons[12].pressed) || ay < -0.55;
+  const d = !!(gp.buttons[13] && gp.buttons[13].pressed) || ay >  0.55;
+  const l = !!(gp.buttons[14] && gp.buttons[14].pressed) || ax < -0.55;
+  const r = !!(gp.buttons[15] && gp.buttons[15].pressed) || ax >  0.55;
+  const a = !!(gp.buttons[0] && gp.buttons[0].pressed);
+  const e = { up: u && !navUpHeld, down: d && !navDownHeld, left: l && !navLeftHeld,
+              right: r && !navRightHeld, act: a && !navActHeld };
+  navUpHeld = u; navDownHeld = d; navLeftHeld = l; navRightHeld = r; navActHeld = a;
+  return e;
+}
 let lastPadRumble = 0;
 addEventListener("gamepadconnected", e => { padIndex = e.gamepad.index; initAudio(); });
 addEventListener("gamepaddisconnected", e => { if (e.gamepad.index === padIndex) padIndex = null; });
@@ -8622,6 +8876,7 @@ function startGame() {
   }
   document.body.classList.remove("menu");   // reveal the flight HUD
   startScreenEl.style.display = "none";
+  padFireArmed = false;                     // don't let the START press fire (v85)
   menuLights.visible = false;   // hangar rig off — space goes back to being lit by HELIOS alone
 }
 document.getElementById("btnStart").addEventListener("click", startGame);
@@ -8653,6 +8908,33 @@ function pickShip(dir) {
 document.getElementById("shipPrev").addEventListener("click", () => pickShip(-1));
 document.getElementById("shipNext").addEventListener("click", () => pickShip(1));
 renderShipCard();
+
+/* ---- the front door takes a controller and a keyboard (v85) ----
+   It never did. The pad poll lives BELOW the `!gameStarted` return in
+   animate(), so a controller you could fly the entire game with couldn't press
+   START — you had to reach for a mouse to get in, every single launch.
+
+   Up/Down walks the list, Left/Right changes ship from ANY row (so a sideways
+   press is never a dead press), A/ENTER acts. The CALLSIGN field is deliberately
+   NOT in the list: it's a keyboard/touch box, and a cursor that can land on
+   something it can't operate is worse than one that walks past it. Type your
+   name with the keyboard you'd need anyway, or leave it blank. */
+const MENU_ITEMS = ["shiprow", "btnStart", "btnFleet", "btnSettings"];
+let menuCursor = 1;      // START — the thing you came here to press
+function renderMenuCursor() {
+  MENU_ITEMS.forEach((id, i) =>
+    document.getElementById(id).classList.toggle("padfocus", i === menuCursor));
+}
+function menuMove(d) {
+  menuCursor = (menuCursor + d + MENU_ITEMS.length) % MENU_ITEMS.length;
+  renderMenuCursor();
+}
+function menuAct() {
+  const id = MENU_ITEMS[menuCursor];
+  if (id === "shiprow") return;   // the ship row acts SIDEWAYS — ‹ ›, not A
+  document.getElementById(id).click();
+}
+renderMenuCursor();
 
 /* ---- SETTINGS / PAUSE (v54, step 3 of the front door) ----
    One panel, two doors. The front door's SETTINGS button opens it as a
@@ -8743,14 +9025,59 @@ function animate() {
   if (!gameStarted) {
     menuTime += dt;
     twinkleStars.material.uniforms.uTime.value = clock.elapsedTime;   // keep the starfield alive
-    const orbR = 17, orbYaw = menuTime * 0.16;
+    /* the pad works the front door (v85). Same five motions as the dock, same
+       edge-detector — the whole reason it needs its own call up here is that
+       the main poll is on the far side of this return. */
+    if (padIndex !== null && settingsEl.style.display !== "flex" &&
+        fleetEl.style.display !== "flex") {
+      const mgp = navigator.getGamepads()[padIndex];
+      if (mgp) {
+        const nav = navEdges(mgp);
+        if (nav.up)    menuMove(-1);
+        if (nav.down)  menuMove(1);
+        if (nav.left)  pickShip(-1);
+        if (nav.right) pickShip(1);
+        if (nav.act)   menuAct();
+      }
+    }
+    /* WHERE THE SHIP SITS IN FRAME (v85). The hull is the one thing this screen
+       asks you to choose, and it was drawn dead centre behind the menu at every
+       size — Tanner's screenshot had the SETTINGS button and the SALVAGE ·
+       UPGRADE · HAUL · SURVIVE line printed across it. Raising the text only
+       trades which words sit on the hull, so instead each layout gets told
+       where its clear space IS:
+
+         wide (>=900x561) — the menu column is pinned left by CSS, so the ship
+             takes the RIGHT half at full height. This is the case with the
+             screenshot against it.
+         short landscape (<=560 tall) — the two-up grid hugs the left, ship on
+             the right, pulled back because there's only ~a third of the width.
+         portrait — menu on top, hull in the bottom band, pulled back further
+             still: 390px of glass can't hold a menu and a hero shot side by side.
+
+       Every threshold here is spelled exactly as the matching CSS media query.
+       They are two halves of one decision and they must not drift apart.
+
+       The aiming is done by moving the LOOKAT off the ship rather than moving
+       the ship or the orbit: `halfH`/`halfW` are how many world units half the
+       frame is worth at this radius, so a fraction of the frame converts
+       straight into world units at any aspect. The orbit is a plain yaw, so
+       the camera's own right vector is just (cos, 0, -sin). */
+    const wide = innerWidth >= 900 && innerHeight >= 561;
+    const shortWide = !wide && innerHeight <= 560;
+    // [ orbit radius, x as a fraction of half the frame, y likewise (down = -) ]
+    const aim = wide ? [17, 0.42, -0.15] : shortWide ? [24, 0.64, -0.20] : [27, 0, -0.62];
+    const orbR = aim[0], orbYaw = menuTime * 0.16;
     camera.position.set(
       shipObj.position.x + Math.sin(orbYaw) * orbR,
       shipObj.position.y + 3.2,
       shipObj.position.z + Math.cos(orbYaw) * orbR
     );
-    // aim above the hull so the ship rides in the lower third, clear of the menu text
-    camera.lookAt(shipObj.position.x, shipObj.position.y + 6.3, shipObj.position.z);
+    const halfH = Math.tan(camera.fov * Math.PI / 360) * orbR;
+    const offX = aim[1] * halfH * camera.aspect, offY = aim[2] * halfH;
+    camera.lookAt(shipObj.position.x - Math.cos(orbYaw) * offX,
+                  shipObj.position.y - offY,
+                  shipObj.position.z + Math.sin(orbYaw) * offX);
     // ride the hangar rig around with the turntable: the key stays over the
     // camera's shoulder, so whichever face of the hull you're looking at is
     // the lit one. All three aim at the ship, offset in yaw from the camera.
@@ -8800,13 +9127,21 @@ function animate() {
   if (padIndex !== null) {
     const gp = navigator.getGamepads()[padIndex];
     if (gp) {
+      // sampled every frame so the held state is current the moment a menu
+      // opens — see navEdges. Only the dock branch below acts on it in flight.
+      const nav = navEdges(gp);
       padLX = padAxis(gp.axes[0]);
       const padLY = padAxis(gp.axes[1]);
       /* left stick = a real flight stick at ANY speed: X rolls, Y
          pitches — bank and pull to turn. The bumpers are the rudder
-         (v19), so the old parked-turret yaw blend is gone. */
-      shipObj.rotateZ(-padLX * 1.8 * dt);               // roll
-      shipObj.rotateX( padLY * ship.turnSpeed * dt);    // pitch — pull back = climb
+         (v19), so the old parked-turret yaw blend is gone.
+         v85: dead while the dock accordion is up. The stick navigates the
+         panels there, and a parked hull rolling under the menu you're reading
+         is the tell that two things own one input. */
+      if (dockBox === null) {
+        shipObj.rotateZ(-padLX * 1.8 * dt);               // roll
+        shipObj.rotateX( padLY * ship.turnSpeed * dt);    // pitch — pull back = climb
+      }
 
       /* right stick = HEAD-LOOK: deflection maps straight to a view
          angle offset from the nose — glance at a planet as you fly by,
@@ -8837,56 +9172,38 @@ function animate() {
       if (gp.buttons[5] && gp.buttons[5].pressed) padYaw -= 1;   // RB — nose right
       shipObj.rotateY(padYaw * ship.turnSpeed * dt);
       padFire = !!(gp.buttons[0] && gp.buttons[0].pressed);       // A — FIRE BLASTERS
+      /* v85: A is the front door's ACT button too, so the press that started
+         the game was still down on the first flight frame and put a bolt into
+         empty space. Hold the trigger until it has been released once — the
+         same "one act per press" rule the menus run on, applied at the seam
+         between them. */
+      if (!padFireArmed) { if (!padFire) padFireArmed = true; padFire = false; }
       padLookBack = !!(gp.buttons[11] && gp.buttons[11].pressed); // R3 — hold to check your six
       const yBtn = !!(gp.buttons[3] && gp.buttons[3].pressed); // Y — view toggle
       if (yBtn && !padViewHeld) toggleView();
       padViewHeld = yBtn;
 
-      /* ---- docked at the outfitter: the D-pad shops (v35) ----
-         D-pad Up/Down move a cursor over the 3 rows; A or D-pad Right buys
-         the highlighted one. Only live while the shop is open (parked on the
-         pad), where A=fire is harmless anyway — so we also swallow the fire
-         so a "buy" press doesn't spit a bolt. Edge-detected: one act per
-         press, same trick as the view toggle above. */
-      /* v60: the two panels are separate rights now, so they get separate
-         gates. The board used to be nested inside `if (shopOpen)`, which meant
-         a port that posts work but sells no gear had a visible board the pad
-         couldn't touch — and a shop-less port fell through to the in-flight
-         branch and tried to hail a raider while parked. */
-      const shopOpen  = shopEl.style.display === "block";
-      const boardOpen = dispatchEl.style.display === "block";
-      if (shopOpen) {
-        const up   = !!(gp.buttons[12] && gp.buttons[12].pressed);   // D-pad Up
-        const down = !!(gp.buttons[13] && gp.buttons[13].pressed);   // D-pad Down
-        const buy  = padFire || !!(gp.buttons[15] && gp.buttons[15].pressed);  // A or D-pad Right
-        if (up   && !padUpHeld)   { shopCursor = (shopCursor + SHOP.length - 1) % SHOP.length; shopDirty = true; }
-        if (down && !padDownHeld) { shopCursor = (shopCursor + 1) % SHOP.length; shopDirty = true; }
-        if (buy  && !padBuyHeld)  buyUpgrade(shopCursor);
-        padUpHeld = up; padDownHeld = down; padBuyHeld = buy;
-      }
-      if (boardOpen) {
-        // dispatch board (v56): D-pad Left cycles the bounties, X takes the one
-        // under the cursor. Up/Down/Right stay the outfitter's — Left + X are free.
-        const jmove = !!(gp.buttons[14] && gp.buttons[14].pressed);   // D-pad Left
-        const jtake = !!(gp.buttons[2]  && gp.buttons[2].pressed);    // X
-        if (offeredJobs.length) {
-          if (jmove && !padJobMoveHeld) { jobCursor = (jobCursor + 1) % offeredJobs.length; jobDirty = true; }
-          if (jtake && !padJobTakeHeld) acceptJob(jobCursor);
-        }
-        padJobMoveHeld = jmove; padJobTakeHeld = jtake;
-      }
-      if (shopOpen || boardOpen) {
-        padFire = false;                                   // parked: don't fire while shopping
-        if (!shopOpen) { padUpHeld = padDownHeld = padBuyHeld = false; }
-        if (!boardOpen) { padJobMoveHeld = padJobTakeHeld = false; }
+      /* ---- parked at a port: the D-pad drives the accordion (v85) ----
+         Left/Right picks the box, Up/Down walks its rows, A acts. That's the
+         whole scheme, and it's the same one the arrow keys and the front door
+         use. It replaces v35/v56's split — Up/Down/Right shopped, Left and X
+         worked the dispatch board — which was two input models sharing one
+         D-pad with nothing on screen to say which one you were in.
+         A is swallowed while parked so buying a clamp doesn't also spit a bolt
+         (firing is gated on !landedOn anyway, but the sound isn't). */
+      if (dockBox !== null) {
+        if (nav.up)    dockMove(-1);
+        if (nav.down)  dockMove(1);
+        if (nav.left)  dockPick(-1);
+        if (nav.right) dockPick(1);
+        if (nav.act)   dockAct();
+        padFire = false;
       } else {
         // in flight, D-pad Up answers a hail (v47) — same edge-detect trick
         const up = !!(gp.buttons[12] && gp.buttons[12].pressed);
         if (up && !padUpHeld) tryRecruit();
         padUpHeld = up;
-        padDownHeld = padBuyHeld = false;
-        padJobMoveHeld = padJobTakeHeld = false;
-        shopCursor = 0;
+        shopCursor = jobCursor = 0;
       }
     }
   }
@@ -8916,11 +9233,15 @@ function animate() {
   shipObj.rotateX(-sy * ship.turnSpeed * dt);
 
   let keyYaw = 0, keyPitch = 0;
-  if (keys["ArrowLeft"])  keyYaw += 1;                   // turn left
-  if (keys["ArrowRight"]) keyYaw -= 1;                   // turn right
-  // flight-stick convention: push forward = nose down, pull back = nose up
-  if (keys["ArrowUp"])   keyPitch -= 1;                  // nose down
-  if (keys["ArrowDown"]) keyPitch += 1;                  // nose up
+  // v85: at a pad the arrows belong to the dock accordion, not the hull. Same
+  // call the pad stick makes above, for the same reason.
+  if (dockBox === null) {
+    if (keys["ArrowLeft"])  keyYaw += 1;                 // turn left
+    if (keys["ArrowRight"]) keyYaw -= 1;                 // turn right
+    // flight-stick convention: push forward = nose down, pull back = nose up
+    if (keys["ArrowUp"])   keyPitch -= 1;                // nose down
+    if (keys["ArrowDown"]) keyPitch += 1;                // nose up
+  }
   shipObj.rotateY(keyYaw   * ship.turnSpeed * dt);
   shipObj.rotateX(keyPitch * ship.turnSpeed * dt);
   if (keys["KeyA"]) shipObj.rotateZ( 1.5 * dt);          // roll left
@@ -9672,10 +9993,26 @@ function animate() {
     shopCursor = jobCursor = 0;
   }
 
+  const canShop = !!(onPort && onPort.shop);
+  const canJobs = !!(onPort && onPort.dispatch);
+  const canMarket = !!(onPort && onPort.pay > 0);
+  /* v85 — what this pad offers, hoisted into globals so the keydown handler and
+     the pad poll can ask without re-deriving it. `dockBox` non-null is then the
+     single "the dock owns the arrows" test, in flight and on the deck alike. */
+  portShop = canShop; portJobs = canJobs; portMarket = canMarket;
+  /* Which box opens when you touch down: MARKET if you're carrying, OUTFITTER if
+     you're not. The drain runs either way, but the board is the only thing that
+     says what the haul was worth — and after v84 it's where a glutted price
+     turns up. With an empty hold it has nothing to tell you, so the money you
+     came to spend gets the glass instead. Re-runs whenever the open box stops
+     being available: a port swap, or a fence that only has one of the three. */
+  if (!dockList().includes(dockBox))
+    setDockBox((cargo > 0 && canMarket) ? "market"
+               : canShop ? "shop" : (dockList()[0] || null));
+
   // the outfitter is a port RIGHT now, not a side effect of having a pad — its
   // rows still redraw only when the money moved (a 60Hz innerHTML rewrite would
   // be pure waste)
-  const canShop = !!(onPort && onPort.shop);
   shopEl.style.display = canShop ? "block" : "none";
   if (canShop && (shopDirty || banked !== shopBankShown)) {
     refreshShop();
@@ -9683,7 +10020,6 @@ function animate() {
   }
   // the dispatch board is its own right (v56/v60) — a port can post work without
   // selling gear, or sell gear without posting work
-  const canJobs = !!(onPort && onPort.dispatch);
   dispatchEl.style.display = canJobs ? "block" : "none";
   if (canJobs && jobDirty) { refreshDispatch(); jobDirty = false; }
 
@@ -9693,7 +10029,6 @@ function animate() {
      board, same safe default as everything else here.
      Redrawn when the port changes or the hold moves — and `cargo` alone is a
      sound signature for the hold, because nothing writes a stack without it. */
-  const canMarket = !!(onPort && onPort.pay > 0);
   marketEl.style.display = canMarket ? "block" : "none";
   if (canMarket) {
     let redraw = marketDirty || cargo !== marketCargoShown;
@@ -9715,6 +10050,8 @@ function animate() {
     // first poll after the hold empties fires instantly instead of 250ms later
     if (redraw) { refreshMarket(onPort); marketCargoShown = cargo; marketDirty = false; marketSigAt = 0; }
   }
+  // and the collapsed bars, which are the only thing a closed box says (v85)
+  refreshDockBars();
 
   /* dock sheet (v79) — parked at a real PORT on glass is its own mode. Gated on
      canShop||canJobs so setting down on an empty plain keeps the flight HUD:
