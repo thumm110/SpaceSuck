@@ -2894,12 +2894,15 @@ function loadPlayerShip(def) {
        11.7 across and 11.0 long, and at 45° it shows you 16. Taking the wider
        of the two sides instead was a 37% under-estimate that put a wing through
        the START button. Height never changes under a yaw.
-       Corner distance off the ORIGIN, doubled — nothing re-centres a model,
-       same reason the hit radius reads them this way. */
-    menuSpanW = 2 * sscale * Math.hypot(
-      Math.max(Math.abs(bbox.min.x), bbox.max.x),
-      Math.max(Math.abs(bbox.min.z), bbox.max.z));
-    menuSpanH = 2 * sscale * Math.max(Math.abs(bbox.min.y), bbox.max.y);
+
+       v85.2 takes the width off the VERTICES instead of cornering the box: no
+       hull has a vertex at the box's corner, so that circle over-reads the real
+       sweep by 6% on USS THUMM and 14% on USS BOO, and every percent of it is
+       screen the hull doesn't get on the one layout that has none to spare.
+       (Height is unchanged — the box is already exact on that axis.) */
+    const sweep = modelSweep(model);
+    menuSpanW = 2 * sscale * sweep.r;
+    menuSpanH = 2 * sscale * sweep.h;
     // chase framing (v71): the silhouette this hull presents to a camera
     // sitting behind it — the WIDER of width and height, not the length
     chaseFrame = THREE.MathUtils.clamp(
@@ -3199,15 +3202,17 @@ const SHIP_HIT_R = 12;      // hull radius, for ramming
    Per-ship, so the brick handles like a brick: SAMSAM gets 1.7 units less
    closing room than THUMM, because it genuinely is that much bigger. */
 let shipHullR = SHIP_HIT_R;   // real value lands with the model
-let menuSpanW = 16, menuSpanH = 4;   // ditto — the hangar turntable's framing (v85.1)
-/* How much of the clear band the hull's swept circle may fill. The other 28% is
-   not slop, it's the perspective asymmetry: the fit centres the hull's ORIGIN in
-   the band, but a wing swung toward the camera projects about a third further
-   out than the one swung away, and which side that is changes as the turntable
-   spins. Measured over a full revolution the near half runs ~0.66 of the total
-   span, so the margin has to cover it. `dock-nav.js` section J is the check —
-   ten phases, real vertices, the game's own camera. */
-const MENU_FILL = 0.72;
+let menuSpanW = 16, menuSpanH = 4;   // ditto — the hangar turntable's framing (v85.2)
+/* How much of the clear band's ANGULAR wedge the hull's swept circle may fill
+   (v85.2 — it used to be a fraction of the band in pixels, which is the wrong
+   space to measure off-centre in; see the menu frame in animate()). Now that
+   the solve is exact the remainder is an honest margin rather than a fudge
+   factor: `rPlan` is a bounding radius off the model's ORIGIN, so most hulls
+   sit well inside their own swept circle, and the gap between the hull and the
+   copy is the difference between a hangar and a collision. `dock-nav.js`
+   section J is the check — ten phases, real vertices, the game's own camera,
+   against BOTH the menu's ink and the edges of the screen. */
+const MENU_FILL = 0.92;
 
 /* ---- HULL CAPSULES (v70) ------------------------------------------------
    Every NPC ram test used to be ONE SPHERE of radius len/2 — half the ship's
@@ -8902,6 +8907,25 @@ const startScreenEl = document.getElementById("startscreen");
 // the menu's own rect is what tells the turntable where the clear space is (v85.1)
 const ssInnerEl = startScreenEl.querySelector(".ss-inner");
 
+/* ...except a rect is not where the INK is (v85.2). `.ss-inner` is a stretched
+   flex column: on a wide screen it reserves 50vw and its longest line of copy
+   uses about two thirds of that, so ~200px of empty column was being fenced off
+   from the turntable and the hull got shoved right to avoid text that wasn't
+   there. Union of the children that actually draw, so the COPY decides where
+   the clear space starts and a wider tagline pushes the ship on its own. */
+function menuInkBox() {
+  let l = 1e9, r = -1e9, t = 1e9, b = -1e9;
+  for (const el of ssInnerEl.children) {
+    const q = el.getBoundingClientRect();
+    if (q.width < 1 || q.height < 1) continue;   // display:none measures zero
+    if (q.left < l) l = q.left;
+    if (q.right > r) r = q.right;
+    if (q.top < t) t = q.top;
+    if (q.bottom > b) b = q.bottom;
+  }
+  return r < l ? ssInnerEl.getBoundingClientRect() : { left: l, right: r, top: t, bottom: b };
+}
+
 /* the callsign (v53, step 2): typed on the front door, worn on the HUD,
    and worked into the junker chatter. Lives in its own localStorage key —
    #reset wipes money and upgrades, never who you are. */
@@ -9098,55 +9122,74 @@ function animate() {
        breakpoints; Tanner's phone then found the ship under the menu anyway,
        because the short-landscape layout is as wide as its longest line of text
        and that is not a number you can hard-code. So the menu MEASURES itself:
-       its own rect says where the clear space is, and the hull's own two spans
-       say how far back the camera has to stand to fill it. Right on any screen,
-       with any hull, and it stays right when the copy changes.
+       where its INK ends says where the clear space starts (menuInkBox — the
+       rect is 200px wider than the words on a wide screen), and the hull's own
+       two spans say how far back the camera has to stand to fill it. Right on
+       any screen, with any hull, and it stays right when the copy changes.
 
        Beside or below is the only branch left, and it's a comparison, not a
        breakpoint: whichever side of the menu has more room, provided there's
        enough of it to be worth using.
 
-       The radius comes off the TANGENT LINES, not a px-per-unit ratio. At these
-       distances a 70° lens is nowhere near linear — the first cut of this used
-       `px = h/(2 tan R)` and put a 1,418px ship in a 564px band, because the
-       near face of an 11-unit hull sitting 13 units away is at 7.5 and draws
-       nearly twice the size of the far one. A sphere of radius r at distance R
-       subtends `r/sqrt(R²−r²)` in projection units, so "what R makes the hull
-       exactly `band` pixels wide" inverts in one line, and it reads the real
-       projection matrix rather than re-deriving the aspect by hand.
+       SOLVE IT IN ANGLES, NOT PIXELS (v85.2). v85.1 did both halves in pixels
+       — fit the hull to `band` pixels wide, then aim at the band's middle pixel
+       — and off-centre that is simply the wrong space to work in. A pixel's
+       angle off the view axis is `atan(ndc/m)`, and atan is not linear, so:
+         · the MIDDLE PIXEL of the band is not the middle ANGLE of the band. On
+           a 1908px screen the band's centre pixel sits 6.6° right of its centre
+           angle, and every degree of that aims the hull further out.
+         · a hull that measures `band` pixels wide ON AXIS measures far more once
+           it's swung 30° off it. Same object, same distance: the far tangent
+           ray leaves at 60° and tan(60°) is nearly twice tan(35°).
+       Together those two put every hull in the hangar off the right-hand edge
+       of a 1908×965 desktop — USS THUMM by 149px — while the maths agreed with
+       itself perfectly. (v85's first cut had the same disease in linear form:
+       `px = h/(2 tan R)` put a 1,418px ship in a 564px band.)
+
+       So the band becomes a WEDGE, in radians, off the camera's axis. The hull
+       goes on the wedge's bisector, and the swept circle of radius r fits a
+       half-wedge Ψ when sin Ψ ≥ r/R — one line, exact at any aspect, no
+       small-angle anywhere in it. Vertically the binding ray is off the hull's
+       NEAR edge rather than its centre, hence `rPlan + rTall/tan Ψ`.
 
        The aiming then moves the LOOKAT off the ship rather than moving the ship
-       or the orbit: a fraction of the frame converts straight into world units
-       at any aspect, and the orbit is a plain yaw so the camera's own right
-       vector is just (cos, 0, -sin). */
-    const menuBox = ssInnerEl.getBoundingClientRect();
+       or the orbit: tan(angle)·R is world units at any aspect, and the orbit is
+       a plain yaw so the camera's own right vector is just (cos, 0, -sin). */
+    const menuBox = menuInkBox();
     const PAD = 14;
     const roomBeside = innerWidth - menuBox.right, roomBelow = innerHeight - menuBox.bottom;
     const beside = roomBeside >= roomBelow && roomBeside >= Math.max(150, innerWidth * 0.18);
     const bandL = (beside ? menuBox.right : 0) + PAD, bandR = innerWidth - PAD;
     const bandT = (beside ? 0 : menuBox.bottom) + PAD, bandB = innerHeight - PAD;
-    const bandW = Math.max(80, bandR - bandL), bandH = Math.max(80, bandB - bandT);
-    const tanH = Math.tan(camera.fov * Math.PI / 360);
     const proj = camera.projectionMatrix.elements;   // [0] = 1/(tan·aspect), [5] = 1/tan
-    // r/sqrt(R²−r²) = band·FILL/(m·dim)  →  R = r·sqrt(1 + 1/t²)
-    const fitR = (r, m, dim, band) => {
-      const t = band * MENU_FILL / (m * dim);
-      return r * Math.sqrt(1 + 1 / (t * t));
-    };
+    // a screen edge, as an angle off the view axis. Reads the real projection
+    // matrix rather than re-deriving the aspect by hand.
+    const angX = px => Math.atan((px / innerWidth * 2 - 1) / proj[0]);
+    const angY = px => Math.atan((1 - px / innerHeight * 2) / proj[5]);
+    const aL = angX(bandL), aR = angX(bandR), aT = angY(bandT), aB = angY(bandB);
+    const aimYaw = (aL + aR) / 2, aimPitch = (aT + aB) / 2;
+    /* A wedge is narrower than it looks once you aim OFF its other axis. The
+       left and right limits are planes through the camera, and the angle from a
+       ray to a plane is asin(sin ψ · cos ρ) — so pitching down at a band under
+       the menu shrinks the width you have to play with by cos(pitch), and a
+       portrait phone pitches 25°. Leaving this out is worth 6% of the frame,
+       which is exactly the amount by which the hull was clipping the right edge
+       on a phone after everything else here was already right. */
+    const wedgeYaw = Math.max(0.05, (aR - aL) / 2 * MENU_FILL);
+    const wedgePitch = Math.max(0.05, (aT - aB) / 2 * MENU_FILL);
+    const sinYaw = Math.sin(wedgeYaw) * Math.cos(aimPitch);
+    const tanPitch = Math.tan(Math.asin(Math.min(0.999, Math.sin(wedgePitch) * Math.cos(aimYaw))));
     const rPlan = menuSpanW / 2, rTall = menuSpanH / 2;
-    const orbR = Math.min(90, Math.max(rPlan * 1.6,
-      fitR(rPlan, proj[0], innerWidth, bandW),
-      fitR(rTall, proj[5], innerHeight, bandH)));
+    const orbR = Math.min(150, Math.max(rPlan * 1.6,
+      rPlan / sinYaw,                 // swept circle inside the wedge
+      rPlan + rTall / tanPitch));     // near edge under the ceiling
     const orbYaw = menuTime * 0.16;
     camera.position.set(
       shipObj.position.x + Math.sin(orbYaw) * orbR,
       shipObj.position.y + 3.2,
       shipObj.position.z + Math.cos(orbYaw) * orbR
     );
-    const halfH = tanH * orbR;
-    // the band's centre, as a fraction of half the frame, then in world units
-    const offX = ((bandL + bandR) / innerWidth - 1) * halfH * camera.aspect;
-    const offY = (1 - (bandT + bandB) / innerHeight) * halfH;
+    const offX = orbR * Math.tan(aimYaw), offY = orbR * Math.tan(aimPitch);
     camera.lookAt(shipObj.position.x - Math.cos(orbYaw) * offX,
                   shipObj.position.y - offY,
                   shipObj.position.z + Math.sin(orbYaw) * offX);
