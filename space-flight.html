@@ -1303,13 +1303,33 @@ const BODIES = [
        the waterline. Land is precious here on purpose; every approach is a
        commitment. Pads are exempt for free. */
     hazard: { ...WATER, below: 1.0031 },
-    // four island landings. FOLLY is the hero: a salvage rig on pylons in THE
-    // RING's lagoon, with open water on every side.
+    /* Five landings across four sites. FOLLY is the hero — a salvage COMPLEX on
+       pylons in THE RING's lagoon, welded to the wreck of the Palmetto, with
+       open water on every side. It carries two decks: the main rig pad and the
+       ANNEX (the shanty platform on the far side of the catwalks). The other
+       three are leveled island pans, not platforms — the ground IS the pad.
+
+       Every number here is EMITTED by build_azure.py, never hand-measured: it
+       prints this exact block at the end of a build. Re-run the build after
+       moving anything in Blender and paste the result. VERDANT's coords were
+       hand-copied once and went ~14u stale, and every landing there aimed
+       beside the deck until v68 caught it.
+
+       KNOWN, AND IT BITES THE DAY A `port` IS ADDED HERE: FOLLY and the ANNEX
+       sit 98u apart. Their landing cones clear each other by 32u, so the pad
+       tests and the assist are fine — but the PORT DISTRICTS (ang x
+       PAD_DISTRICT_MUL 3.8, so ~130u and ~121u) overlap heavily, and
+       onSpaceport() returns the FIRST pad in array order whose district matches,
+       not the nearest. Give these two different port configs and standing on one
+       can report the other. Fix before AZURE gets a market, not after: either
+       make onSpaceport() pick the best dot the way pickPadTarget() already does,
+       or give the pair an explicit narrow `district`. */
     pads: [
-      { lat:   7.0, lon:  -34.0, ang: 0.0241, top: 1.01000 },   // FOLLY, the salvage rig
-      { lat: -14.0, lon:   62.0, ang: 0.0840, top: 1.03519 },   // BULLS BAY, the capital port
-      { lat:  26.0, lon:  118.0, ang: 0.0560, top: 1.02752 },   // SHEM
-      { lat: -32.0, lon: -110.0, ang: 0.0496, top: 1.02448 },   // BREACH INLET
+      { lat:   7.0000, lon:  -34.0000, ang: 0.0241, top: 1.01000 },   // FOLLY, the rig deck
+      { lat:   8.7015, lon:  -30.4124, ang: 0.0224, top: 1.00780 },   // FOLLY ANNEX, the shanty
+      { lat: -14.0000, lon:   62.0000, ang: 0.0840, top: 1.03519 },   // BULLS BAY, the capital port
+      { lat:  26.0000, lon:  118.0000, ang: 0.0560, top: 1.02752 },   // SHEM
+      { lat: -32.0000, lon: -110.0000, ang: 0.0496, top: 1.02448 },   // BREACH INLET
     ],
     clouds: true,
     atmosphere: 0x5599ff, atmoStrength: 1.0,
