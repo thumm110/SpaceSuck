@@ -498,6 +498,14 @@
     text-align: center; border-top: 1px solid rgba(125,232,168,.18);
   }
   #marketboard .mktFoot b { color: #ffd34d; font-weight: normal; }
+  /* the visit receipt (v88) — what the drain just did, because it does it fast
+     and in silence. Wraps like .mktNote and under the same width cap, for the
+     same reason: a five-good receipt must not decide the panel's width. */
+  #marketboard .mktSold {
+    margin-top: 4px; font-size: 10px; letter-spacing: 1px; color: #8fae9c;
+    text-align: center; white-space: normal; max-width: 230px;
+  }
+  #marketboard .mktSold b { color: #ffd34d; font-weight: normal; }
   /* the saturation note (v84) — the one line that explains why a price sagged.
      WRAPS, unlike everything else in this panel: the panel is white-space:nowrap
      and five glutted goods would push it clean off a phone. Same trick .jobHint
@@ -819,7 +827,8 @@
     font-size: 12px; margin-bottom: 10px;
   }
   /* the dock sheet decides the width here, so the note gets all of it */
-  body.docked #marketboard .mktNote { max-width: none; }
+  body.docked #marketboard .mktNote,
+  body.docked #marketboard .mktSold { max-width: none; }
   /* 44px targets — the flight-sized 20px rows were unhittable with a thumb */
   /* 44px targets — the flight-sized 20px rows were unhittable with a thumb.
      The price is a `float: right` in flight, which on a 390px-wide portrait
@@ -4760,9 +4769,18 @@ function portLive(port, good) {
    a reading off a ticker, and it may well have moved by the time you get there. */
 let quotePort = null;
 const quote = {};
+/* The visit's RECEIPT rides the quote's edge (v88): struck together, cleared
+   together, so it can only ever describe THIS visit at THIS port. It exists
+   because the drain is fast and silent — 26 u/s cleared a whole hold during
+   one landing flow at FOLLY, the board flipped to HOLD EMPTY, and nothing on
+   screen said what had just happened. */
+const visitSold = {};
+let visitPaidCents = 0;
 function strikeQuote(port) {
   quotePort = port;
   if (port) for (const g of GOOD_IDS) quote[g] = portLive(port, g);
+  for (const g of GOOD_IDS) visitSold[g] = 0;
+  visitPaidCents = 0;
 }
 // THE rate. Everything that pays, prices or displays calls this one.
 function portRate(port, good) {
@@ -5119,6 +5137,16 @@ function refreshMarket(port) {
               ? 'HOLD <b>' + hereTotal + '</b> HERE · <b>' + bestTotal + '</b> ROUTED'
               : 'HOLD <b>' + hereTotal + '</b> · BEST PRICE IS HERE') +
           "</div>";
+  /* The RECEIPT (v88): one line saying what this visit's drain actually did,
+     at the struck quote, floored once — same cents discipline as the footer.
+     Gated on quotePort so a board rebuilt for any other reason can never wear
+     a receipt that belongs to a different port's visit. */
+  if (port === quotePort && visitPaidCents > 0) {
+    const sold = GOOD_IDS.filter(g => visitSold[g] > 0)
+      .map(g => visitSold[g] + " " + GOODS[g].name).join(" · ");
+    html += '<div class="mktSold">SOLD ' + sold + ' → <b>+' +
+            Math.floor(visitPaidCents / 100) + "</b></div>";
+  }
   const note = marketNote(port);
   if (note) html += '<div class="mktNote">' + note + "</div>";
   marketBodyEl.innerHTML = html;
@@ -8989,7 +9017,10 @@ function drawPadMarker(c, W, H, dt) {
   // uses. Reuses the dot pickPadTarget already computed, so the crosshair and
   // the green can never end up describing two different decks.
   const aligned = padTarget.dot > pad.districtCos;
-  const col = aligned ? "#7dffa8" : NAV_TEAL;
+  // v88: a MARKET deck flies the money colour. Amber is what CARGO and BANK
+  // already read in, so "this pad pays" needs no legend — aligned still wins.
+  const isMkt = !!(pad.port && pad.port.pay > 0);
+  const col = aligned ? "#7dffa8" : isMkt ? NAV_AMBER : NAV_TEAL;
   // short name for the reticle; the landing tag carries the full one
   const padName = pad.port ? pad.port.name.split(" ")[0] : "PAD";
 
@@ -9028,6 +9059,48 @@ function drawPadMarker(c, W, H, dt) {
     c.beginPath(); c.moveTo(11, 0); c.lineTo(-2, -6); c.lineTo(-2, 6); c.closePath(); c.fill();
     c.rotate(-ang);
     c.fillText(padName + " " + distTxt, -Math.cos(ang) * 46, -Math.sin(ang) * 46 + 4);
+  }
+  c.restore();
+}
+/* (E2) THE PAD FIELD (v88) — Tanner, after v87.2 gave AZURE two markets: "the
+   pads that hold a market should be labeled somehow, whether it is by name or
+   the highlight is color coded." Both. On close approach, every pad of the
+   reticle's world EXCEPT its target gets a marker of its own: an AMBER diamond
+   plus the port's short name where there's a market (amber is this HUD's money
+   colour), a faint teal diamond where there's only a deck. So FOLLY-vs-BULLS
+   is decided at cruise distance with the hold in mind, not read off the board
+   after committing to the wrong island. Draws BEFORE the reticle so the target
+   pad's crosshair always sits on top. On-screen only, no edge chevrons — four
+   extra arrows would bury the three that matter. */
+const _fldN = new THREE.Vector3(), _fldW = new THREE.Vector3(), _fldEye = new THREE.Vector3();
+function drawPadField(c, W, H) {
+  if (landedOn || !padTarget) return;
+  const b = padTarget.b;
+  const yaw = b.surface ? b.surface.rotation.y : (b.cfg.yaw || 0);
+  c.save();
+  c.font = "10px " + navFont; c.textAlign = "center"; c.lineWidth = 1.2;
+  for (const pad of b.pads) {
+    if (pad === padTarget.pad) continue;               // the reticle's deck
+    // live outward normal + deck position — same un-freeze as the reticle
+    _fldN.set(pad.dx, pad.dy, pad.dz).applyAxisAngle(SPIN_AXIS, yaw);
+    _fldW.copy(_fldN).multiplyScalar(b.cfg.radius * pad.top).add(b.group.position);
+    // a deck on the far hemisphere projects INSIDE the planet's disc and would
+    // label ground you can't see — skip any pad whose surface faces away
+    _fldEye.copy(shipObj.position).sub(_fldW);
+    if (_fldN.dot(_fldEye) <= 0) continue;
+    _nCam.copy(_fldW).applyMatrix4(camera.matrixWorldInverse);
+    if (_nCam.z >= 0) continue;                        // behind the camera
+    _nProj.copy(_fldW).project(camera);
+    if (Math.abs(_nProj.x) > 1 || Math.abs(_nProj.y) > 1) continue;
+    const sx = (_nProj.x * 0.5 + 0.5) * W, sy = (-_nProj.y * 0.5 + 0.5) * H;
+    const isMkt = !!(pad.port && pad.port.pay > 0);
+    const col = isMkt ? NAV_AMBER : NAV_TEAL;
+    c.strokeStyle = col; c.fillStyle = col; c.shadowColor = col; c.shadowBlur = 5;
+    c.globalAlpha = isMkt ? 0.95 : 0.45;               // bare decks whisper
+    c.beginPath();                                     // small diamond on the deck
+    c.moveTo(sx, sy - 5); c.lineTo(sx + 5, sy); c.lineTo(sx, sy + 5); c.lineTo(sx - 5, sy);
+    c.closePath(); c.stroke();
+    c.fillText(isMkt ? "◆ " + pad.port.name.split(" ")[0] : "PAD", sx, sy - 10);
   }
   c.restore();
 }
@@ -9160,6 +9233,7 @@ function drawNavHud(dt) {
   drawThreatChevron(c, W, H);
   drawJobChevron(c, W, H);              // violet: the dispatch bounty mark (v56)
   // --- E: the landing reticle, on close approach to the pad ---
+  drawPadField(c, W, H);                // v88: the OTHER decks, market-coloured
   drawPadMarker(c, W, H, dt);
   // --- F: contract-complete banner — a violet flash on payout (v56) ---
   if (jobFlash > 0) {
@@ -10379,7 +10453,9 @@ function animate() {
         const n = Math.min(move, hold[g]);
         hold[g] -= n; cargo -= n; move -= n;
         // priced at the rate you were QUOTED on landing, in exact cents
-        owedCents += n * Math.round(portRate(onPort, g) * 100);
+        const soldCents = n * Math.round(portRate(onPort, g) * 100);
+        owedCents += soldCents;
+        visitSold[g] += n; visitPaidCents += soldCents;   // the receipt (v88)
         /* v84: and the port notices. The glut rises as the units land, but the
            quote is already struck — so what you dump today sags the price for
            your NEXT visit, not this one. That's the whole mechanic: the market
