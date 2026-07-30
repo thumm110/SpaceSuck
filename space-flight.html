@@ -1038,6 +1038,7 @@
         <div class="shopRow"></div>
         <div class="shopRow"></div>
         <div class="shopRow"></div>
+        <div class="shopRow"></div><!-- v89: AUTOLOADER — div count must match SHOP.length (boot snapshot) -->
       </div>
     </div>
     <div id="dispatchboard">
@@ -3061,7 +3062,11 @@ loadPlayerShip(SHIPS[shipSel]);   // the saved pick (or the THUMM) flies at boot
    muzzle kick, so they stay ahead of you even at full burn, lives ~2.5s,
    then parks until reused. Muzzle flashes and a synth "pew" sell each shot. */
 const AQUA_BOLT = 0x4dffe4, ORANGE_BOLT = 0xff9a3c;
-const BOLT_COUNT = 48, BOLT_SPEED = 1500, BOLT_LIFE = 2.5, FIRE_COOLDOWN = 0.11;
+const BOLT_COUNT = 48, BOLT_SPEED = 1500, BOLT_LIFE = 2.5;
+/* v89: the firing gate's pace is a SHOP stat now (AUTOLOADER), not a const.
+   applyShipStats() derives it from SHOP[4]; 0.11 here is only the pre-shop
+   boot value and equals SHOP[4].vals[0] — tier 0 IS the old game. */
+let fireGap = 0.11;
 const BOLT_AXIS = new THREE.Vector3(0, 0, 1);
 const boltGeo = new THREE.CylinderGeometry(0.16, 0.16, 3.6, 6);
 boltGeo.rotateX(Math.PI / 2);   // lay the long axis along Z so we can aim it
@@ -4901,12 +4906,19 @@ function bankDoneSound() {
    persist next to the bank in localStorage; #reset wipes both. Prices
    roughly double per tier — the first taste is one good run, the last
    tier is a career. */
+/* v89 REPRICE (Tanner, off the first measured session — ~1,600 credits in 20
+   minutes): "I want to raise the prices of sinks not income." Every cost below
+   is the v82 table ×~1.5, rounded to tens, doubling shape kept. With the
+   AUTOLOADER's 2,900 the whole shop is now ~10,790 — about 2.3 HOURS at the
+   measured rate, up from ~70 minutes. Income and payouts deliberately
+   untouched: the economy stays exactly as measured, everything just costs
+   more real flying. */
 const SHOP = [
-  { name: "TRACTOR BEAM", vals: [260, 340, 430, 540, 660], costs: [60, 140, 320, 700],
+  { name: "TRACTOR BEAM", vals: [260, 340, 430, 540, 660], costs: [90, 210, 480, 1050],
     next: l => "+" + (SHOP[0].vals[l + 1] - SHOP[0].vals[l]) + "u RANGE" },
-  { name: "HULL PLATING", vals: [100, 130, 165, 205, 250], costs: [80, 180, 400, 850],
+  { name: "HULL PLATING", vals: [100, 130, 165, 205, 250], costs: [120, 270, 600, 1280],
     next: l => "+" + (SHOP[1].vals[l + 1] - SHOP[1].vals[l]) + " MAX HULL" },
-  { name: "CARGO CLAMPS", vals: [0.35, 0.28, 0.21, 0.14], costs: [100, 240, 550],
+  { name: "CARGO CLAMPS", vals: [0.35, 0.28, 0.21, 0.14], costs: [150, 360, 830],
     next: l => "-" + Math.round((SHOP[2].vals[l] - SHOP[2].vals[l + 1]) * 100) + "% SPILL" },
   /* v82: the hold cap's release valve, and the first NEW money sink the game
      has had. Measured before it landed, the entire lifetime sink was ~3,920
@@ -4915,16 +4927,24 @@ const SHOP = [
      wall but stops the goods work widening it. Base 150 is a comfortable haul
      (the drain comment upstairs prices a 100 haul at ~4s), so tier 0 has to
      feel like a hold, not a handicap. */
-  { name: "CARGO HOLD", vals: [150, 220, 310, 420, 560], costs: [90, 200, 440, 900],
+  { name: "CARGO HOLD", vals: [150, 220, 310, 420, 560], costs: [140, 300, 660, 1350],
     next: l => "+" + (SHOP[3].vals[l + 1] - SHOP[3].vals[l]) + " CAPACITY" },
+  /* v89: the first upgrade that changes the FIGHT, and the sink Tanner asked
+     for. RATE only, one axis — a damage tier multiplying against it is how
+     balance dies. vals are the firing gate in seconds (tier 0 IS the old
+     0.11); top tier is +53% sustained fire. Every enemy HP number was tuned
+     against the base gate, and the capitals' answer is the TAIL GUN (v89),
+     not more hp — see updateGunships. */
+  { name: "AUTOLOADER", vals: [0.11, 0.095, 0.082, 0.072], costs: [600, 900, 1400],
+    next: l => "+" + Math.round((SHOP[4].vals[l] / SHOP[4].vals[l + 1] - 1) * 100) + "% FIRE RATE" },
 ];
-let upLvl = [0, 0, 0, 0];
+let upLvl = [0, 0, 0, 0, 0];
 try {
   const u = JSON.parse(localStorage.getItem("spacesuck.up") || "[]");
   for (let i = 0; i < SHOP.length; i++)
     upLvl[i] = Math.min(SHOP[i].costs.length, Math.max(0, Math.floor(+u[i]) || 0));
 } catch (e) {}
-if (location.hash === "#reset") { upLvl = [0, 0, 0, 0]; try { localStorage.removeItem("spacesuck.up"); } catch (e) {} }
+if (location.hash === "#reset") { upLvl = [0, 0, 0, 0, 0]; try { localStorage.removeItem("spacesuck.up"); } catch (e) {} }
 function saveUpgrades() { try { localStorage.setItem("spacesuck.up", JSON.stringify(upLvl)); } catch (e) {} }
 // stat apply (v53): the shop's tier value × the hangar row's multiplier.
 // Called at load, on an outfitter buy, and when the start-screen picker
@@ -4937,6 +4957,9 @@ function applyShipStats() {
   ship.hullMax = Math.round(SHOP[1].vals[upLvl[1]] * d.hullMul);
   spillFraction = SHOP[2].vals[upLvl[2]] * d.spillMul;
   holdMax = Math.round(SHOP[3].vals[upLvl[3]] * d.holdMul);   // v82 — see the hold cap note in 10d
+  // v89: the AUTOLOADER tier paces the firing gate. (d.fireMul || 1) is the
+  // hook for a hull that cycles faster or slower; every hull is 1.0 today.
+  fireGap = SHOP[4].vals[upLvl[4]] * (d.fireMul || 1);
 }
 // load-time apply: a fresh session starts with everything you paid for,
 // hull charged to its (possibly plated) max
@@ -6499,7 +6522,13 @@ const GUNSHIP_HIT_R = 15;
    capital ship is for. SHRINKAGE keeps its 1.5x, so the two still read as
    different weights of the same class. Payouts deliberately unchanged (198 and
    300, top of the economy) — if a longer siege should pay more, that's a feel
-   call to make after flying it, not a number to bundle in here. */
+   call to make after flying it, not a number to bundle in here.
+
+   v89: he flew it, and "too easy" came back anyway — "I just followed behind
+   it and soaked it with bullets." The lesson: no HP number fixes an EXPLOIT.
+   The answer was the TAIL GUN (see TAIL_ARC) closing the free spot, not a
+   third hp bump; hp stays 40, and payouts stay put (raise sinks, never
+   income — Tanner, 2026-07-30). */
 const GUNSHIP_HP = 40;             // ~2.2s of held fire; a raider's 3 hp is 0.17s
 const GUNSHIP_MAX_SPD = 200;       // pirate is 280 — you can ALWAYS run
 const GUNSHIP_ACCEL = 140;
@@ -6514,7 +6543,24 @@ const GUNSHIP_ATTACK_T = 8, GUNSHIP_BREAK_T = 4.5;
 const GUNSHIP_FIRE_CONE = 0.85;    // wider than the pirate's 0.90 — the slow nose must be ALLOWED to shoot
 const GUNSHIP_BURST = 2, GUNSHIP_BURST_GAP = 0.45, GUNSHIP_BURST_COOL = 3.0;  // L-R: thud… thud. Not a rattle
 const GUNSHIP_AIM_ERR = 0.03, GUNSHIP_LEAD = 0.9;
-const GUNSHIP_BOLT_COUNT = 8, GUNSHIP_BOLT_SPEED = 700, GUNSHIP_BOLT_LIFE = 2.8, GUNSHIP_BOLT_DMG = 14;
+/* v89 TAIL GUN (Tanner, playtest): "I just followed behind it and soaked it
+   with bullets." The spinal cannons only face forward, so dead astern was the
+   one spot with all reward and zero risk — HP was just a timer there, and no
+   HP number fixes an exploit (v86.2 already proved 2.5x wasn't the answer).
+   While a HOSTILE capital has you inside its rear cone, the stern fires single
+   aimed bolts on a slow cadence with per-shot scatter: a strafing PASS through
+   the six stays free, PARKING there eats 14s. Numbers: cos 0.82 ≈ a 35° cone;
+   1600u reach (bolts fly 700×2.8 = 1960, so the sting out-ranges a parked
+   soak with margin); one bolt every ~1.6-2.0s ≈ 7-8 hull/sec on a stationary
+   target — decisive against a 100 hull, survivable for one mistake. Escorts
+   share it only once provoked (the g.hostile gate), so a sleeping guard never
+   snipes. Payouts deliberately unchanged: raise sinks, never income (Tanner,
+   2026-07-30). */
+const TAIL_ARC = 0.82, TAIL_RANGE = 1600, TAIL_COOL = 1.6, TAIL_ERR = 0.05;
+// v89: 8 covered the spinal cadence alone; the tail gun adds ~0.6 live bolts
+// per shooter, and a provoked convoy is 3-4 shooters — 8 recycled bolts still
+// in flight (they teleport). 14 funds the worst case with margin.
+const GUNSHIP_BOLT_COUNT = 14, GUNSHIP_BOLT_SPEED = 700, GUNSHIP_BOLT_LIFE = 2.8, GUNSHIP_BOLT_DMG = 14;
 const GUNSHIP_RAM_HURT = 12;       // hull per 100 u/s closing — heavier than the truck's 9
 const GUNSHIP_CULL = 5200;
 const GUNSHIP_RESPAWN_MIN = 180, GUNSHIP_RESPAWN_MAX = 360;
@@ -6593,7 +6639,7 @@ for (let i = 0; i < 4; i++) {
     hostile: role === "foe",   // the foe is born angry; an escort earns it
     ward: null, convoyId: 0,   // escort duty (10f wires these)
     state: "HUNT", stateT: 0,  // "HUNT" | "ATTACK" | "BREAK" | "GUARD"
-    burstLeft: 0, fireT: 1.5, formCap: 0,
+    burstLeft: 0, fireT: 1.5, tailT: 0, formCap: 0,
   });
 }
 
@@ -6640,7 +6686,7 @@ for (let i = 0; i < 4; i++) {
     hostile: true,             // born angry, always red — never an escort
     ward: null, convoyId: 0,
     state: "HUNT", stateT: 0,
-    burstLeft: 0, fireT: 1.5, formCap: 0,
+    burstLeft: 0, fireT: 1.5, tailT: 0, formCap: 0,
   });
 }
 
@@ -6721,7 +6767,7 @@ function gunshipSpawnFoe(g) {
   for (const m of g.mats) m.emissive.copy(m.userData.baseEmissive);
   g.hostile = true; g.ward = null;
   g.state = "HUNT"; g.stateT = 0;
-  g.burstLeft = 0; g.fireT = 1.5;
+  g.burstLeft = 0; g.fireT = 1.5; g.tailT = 1.5;   // v89: same spawn grace as the nose
   gunTmpA.subVectors(shipObj.position, g.group.position).normalize();
   g.vel.copy(gunTmpA).multiplyScalar(40);   // capitals arrive at a stately closure
   g.beacon.material.color.setHex(BEACON_HOSTILE);
@@ -6741,7 +6787,7 @@ function gunshipSpawnEscort(h) {
   g.hostile = false;
   g.ward = h; g.convoyId = 0;
   g.state = "GUARD"; g.stateT = 0;
-  g.burstLeft = 0; g.fireT = 1.5;
+  g.burstLeft = 0; g.fireT = 1.5; g.tailT = 1.5;   // v89: same spawn grace as the nose
   // a fresh shift must not inherit last life's rage: glows back to ion blue —
   // BOTH the live emissive and the flash-lerp's base color
   for (const m of g.tellMats) {
@@ -7036,6 +7082,29 @@ function updateGunships(dt) {
           randUnit(gunTmpC);
           g.aimErr.copy(gunTmpC).multiplyScalar(Math.random() * dist * GUNSHIP_AIM_ERR);
         }
+      }
+    }
+
+    /* ---- the TAIL GUN (v89): the six is not a parking spot — see the note
+       at TAIL_ARC. Fires in ANY hostile state, because HUNT and BREAK are
+       exactly when a player parks astern and soaks. Own scratch order: every
+       vector here is recomputed, nothing borrowed from the spinal block. ---- */
+    if (g.hostile && !landedOn && dist < TAIL_RANGE) {
+      g.tailT -= dt;
+      g.group.getWorldDirection(gunTmpA);              // +Z = the stern / exhaust line
+      gunTmpC.subVectors(shipObj.position, g.group.position).divideScalar(dist || 1);
+      if (gunTmpA.dot(gunTmpC) > TAIL_ARC && g.tailT <= 0) {
+        // aim at the ship with FRESH scatter each shot — a moving target walks
+        // out from under it, a parked one doesn't
+        randUnit(gunTmpB).multiplyScalar(Math.random() * dist * TAIL_ERR).add(shipObj.position);
+        gunTmpA.multiplyScalar(g.capHalf + 8).add(g.group.position);   // muzzle: the stern itself
+        gunTmpC.subVectors(gunTmpB, gunTmpA).normalize();
+        // cancel the sideways drift out of the shot line — same v41 fix as the nose
+        gunTmpB.copy(g.vel).addScaledVector(gunTmpC, -g.vel.dot(gunTmpC));
+        gunTmpC.multiplyScalar(GUNSHIP_BOLT_SPEED).sub(gunTmpB).normalize();
+        spawnGunshipBolt(gunTmpA, gunTmpC, g.vel);
+        pirateShotSound(dist);
+        g.tailT = TAIL_COOL + Math.random() * 0.4;
       }
     }
 
@@ -8245,15 +8314,20 @@ addEventListener("keydown", e => {
       else if (e.code === "Enter")      { menu ? menuAct()    : dockAct(); }
     }
   }
-  // docked at the outfitter, 1/2/3 buy the rows (fire once per press)
-  if (shopEl.style.display === "block" && !keys[e.code]) {
+  /* v89: the digit rows are gated on dockBox — the OPEN box — not on panel
+     visibility. Since the v85 accordion, display:block only means "this port
+     HAS the panel", so at Charleston both blocks were reachable at once and
+     Digit4 bought CARGO HOLD *and* accepted a contract in the same press. The
+     one-open-box model already decides who owns the arrows; now it decides
+     who owns the digits too. */
+  if (dockBox === "shop" && !keys[e.code]) {
     if (e.code === "Digit1") buyUpgrade(0);
     else if (e.code === "Digit2") buyUpgrade(1);
     else if (e.code === "Digit3") buyUpgrade(2);
     else if (e.code === "Digit4") buyUpgrade(3);   // v82: CARGO HOLD
+    else if (e.code === "Digit5") buyUpgrade(4);   // v89: AUTOLOADER
   }
-  // docked at the dispatch board, 4/5/6 accept an offered contract (v56)
-  if (dispatchEl.style.display === "block" && !keys[e.code]) {
+  if (dockBox === "jobs" && !keys[e.code]) {
     if (e.code === "Digit4") acceptJob(0);
     else if (e.code === "Digit5") acceptJob(1);
     else if (e.code === "Digit6") acceptJob(2);
@@ -8548,7 +8622,7 @@ document.getElementById("btnLand").addEventListener("touchstart", e => {
   e.preventDefault(); initAudio(); tryAssist();
 });
 bindHold("btnRev",    v => touchRev    = v);
-/* Hold to fire. FIRE_COOLDOWN already paces the gate at ~9 shots/sec, so a
+/* Hold to fire. fireGap already paces the gate (~9 shots/sec at tier 0), so a
    held button machine-guns and a quick tap fires exactly one bolt — both fall
    out with no new state, on the same code path as SPACE and the pad's A.
    Holding it costs you nothing: THRUST is a throttle ramp, not a gas pedal
@@ -10348,7 +10422,7 @@ function animate() {
     muzzleFlashes[1].position.copy(shipObj.worldToLocal(flashLocal.copy(muzzleR))); muzzleFlashes[1].scale.setScalar(flashScale);
     blasterSound();
     padRumble(0.25, 35);
-    fireCooldown = FIRE_COOLDOWN;
+    fireCooldown = fireGap;   // v89: paced by the AUTOLOADER tier, not a const
   }
   for (const b of bolts) {
     if (b.life <= 0) continue;
