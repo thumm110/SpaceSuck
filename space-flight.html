@@ -1420,7 +1420,18 @@ const BODIES = [
        and start repairing on the open water. 1.0015 is ~7 byte steps, still
        only 3.7u of elevation, and the survey says it costs ~1% more coastline
        than the tight cut. Charleston's plateau (1.012) and deck (1.0175) sit
-       far clear either way. */
+       far clear either way.
+
+       ⚠ THE MARGIN SHRANK ON 2026-07-31 AND THIS NUMBER IS NOW TIGHT. The
+       shore-grade pass (earthlib SHORE_W/MARSH_H) stopped Charleston having a
+       44° bluff on every waterline by ramping the ground down to a MARSH SHELF
+       at 1.0034 — so the lowest dry ground on the planet is no longer the
+       1.012 plateau, it is 1.0034, which is only ~8 byte steps (4.8u) above
+       this cut. Trees, the container terminal, the shrimp docks and the piers
+       all stand on that shelf. Raising `below` past ~1.0025 floods every bank
+       on the map: lethal water that renders as dry land, silently. The Blender
+       build asserts the margin at each placement rule (build_earth.py, the
+       "shore" assertions) — read those numbers before touching this one. */
     hazard: { ...WATER, below: 1.0015 },
     gravity: 1.0,                   // colony worlds keep landing-friendly pull
     // landing pads: lat/lon as baked in build_earth.py, footprint angular
