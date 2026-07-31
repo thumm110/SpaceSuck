@@ -10923,6 +10923,13 @@ setTimeout(() => {
   // name) to spawn on that world's doorstep instead of cruising there. The
   // #reset hash names no body, so it falls through harmlessly.
   const doorstep = BODIES.find(b => b.position && b.name.toLowerCase() === location.hash.slice(1));
+  /* v90.1: #reset is consumed ONCE. Its three wipes (bank, upgrades, job) ran
+     at parse time above; leaving the hash in the URL meant every F5 or crash
+     reload mid-career silently wiped the save AGAIN — fatal to judging a
+     fresh-career run. Body hashes (#earth) deliberately stay: reload-to-
+     respawn is a used dev loop, and the phone workflow is pull-to-refresh. */
+  if (location.hash === "#reset")
+    try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
   if (doorstep) {
     shipObj.position.set(doorstep.position[0] - doorstep.radius * 0.3,
                          doorstep.position[1] + doorstep.radius * 0.5,

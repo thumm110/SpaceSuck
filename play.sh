@@ -9,6 +9,13 @@
 # Optional arg: a world name spawns you on its doorstep, e.g. "earth" or
 # "rubicon" (→ space-flight.html#earth / #rubicon).
 #
+# "reset" starts a FRESH CAREER (→ #reset): the load wipes the bank, all
+# upgrades and any active contract on THIS machine's save. Callsign, settings
+# and the garage survive — money and gear, never who you are. The game strips
+# #reset from the URL after the wipe (v90.1), so refreshing mid-career is
+# safe. It asks before wiping; close any other SpaceSuck tab first, or that
+# tab's old bank saves right back over the wipe.
+#
 # --phone  serve to the WHOLE network instead of just this machine, print the
 #          URLs to open on a phone, and don't bother opening a browser here.
 #          For testing the touch UI without a push→Pages→reload round trip.
@@ -27,6 +34,16 @@ for a in "$@"; do
   if [[ "$a" == "--phone" ]]; then PHONE=1; else ARGS+=("$a"); fi
 done
 set -- "${ARGS[@]+"${ARGS[@]}"}"
+
+# the wipe itself happens in the game when #reset loads; this gate only makes
+# sure it never happens by a slip of the tab key. read's EOF failure + set -e
+# means a non-interactive launch with "reset" bails out instead of wiping.
+if [[ "${1:-}" == "reset" ]]; then
+  echo "SpaceSuck FRESH CAREER: wipes the bank, upgrades and any active contract"
+  echo "on this machine's save. Callsign, settings and garage survive."
+  echo "Close any other SpaceSuck tab first — an open tab saves its old bank back."
+  read -r -p "ENTER to wipe and fly, Ctrl-C to keep your career... "
+fi
 
 # ?v=<timestamp> busts Chrome's cache — a unique URL each launch can't be
 # served stale, so you always get the latest build (the game ignores the
