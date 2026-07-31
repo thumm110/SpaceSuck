@@ -1478,11 +1478,56 @@ const BODIES = [
     // the Angel Oak's two landing platforms, ~30u up at mid-trunk — the only
     // safe ground in the city. Pads are tested before the grid AND before the
     // mask, so they're exempt for free.
+    /* ANGEL OAK — the map's one mid-route market, and the first port that is
+       good at TWO things nobody else pairs. FOLLY eats metal (alloy 1.20) but
+       dumps volatiles at 0.35; BULLS wants raw feed (volatile 1.25) but has no
+       use for alloy at 0.60. A treetop city needs BOTH and grows neither: every
+       platform, catwalk and strut up here is imported metal, and there is not a
+       refinery on the world, so anything that burns arrived on somebody's ship.
+       So a mixed alloy+volatile hold finally has one stop instead of two, which
+       is a routing question no other pair of ports can ask.
+
+       It pays badly for everything else ON PURPOSE, and that is what keeps the
+       income law ("raise sinks, never income") intact. Scrap is the commonest
+       good in the game and this is the worst place in the system to bring it —
+       no barge, nowhere to put it. Ore is dead weight without a smelter. So an
+       ORDINARY hold banks ~33% LESS here than at home; only a hold you went out
+       and assembled on purpose wins. The richness is in the MIX, never in the
+       values — the same rule the KRONOS belt gets built on.
+
+       Contraband sits at 0.30 deliberately. A small community with one way in
+       has no appetite for trouble, and RUSTHOLLOW stays the only fence in the
+       system — the identity that killed RUBICON's second market.
+
+       The premium is bought with the LANDING, not with distance. `ang` 0.0133
+       is the narrowest pad cone in the game (FOLLY 0.0241, BULLS 0.0840,
+       CHARLESTON 0.026, RUSTHOLLOW 0.016) on the one world that is 95% closed
+       canopy, damages you for touching it, and gives you a 1.0s dive from
+       sky-top to deck against Earth's 2.8s. You earn 1.45 alloy by threading it.
+
+       ⚠️ 1.45 and 1.50 are NEAR-TIE CLEARANCES, not round numbers — do not
+       "tidy" them down to 1.40/1.45. Two rates for one good can be inverted by
+       drift whenever their ratio is under (1+DRIFT_BAND)/(1-DRIFT_BAND) = 1.174,
+       and that is what puts a ▲ on a row where flying there LOSES money. Against
+       FOLLY's alloy 1.20 the first draft's 1.40 was 1.167 — inside the band by a
+       hair; 1.45 is 1.208. Against BULLS' volatile 1.25, 1.45 was 1.16; 1.50 is
+       1.20. Any retune here has to re-run the pair sweep in goods-economy.js.
+
+       The port rides platform 1, which is also FIRST in this array. The two
+       cones are ~13.6° apart against 0.76° half-widths so they cannot overlap,
+       but first-in-array means `onSpaceport()`'s first-pad-wins can never route
+       a touchdown to the portless twin even if these ever move. See
+       [[port-district-overlap]]. Platform 2 stays wild on purpose — dressed
+       derelict in build_verdant.py, cone KEPT (pull it and the visible deck
+       becomes a ghost you sink through), and it is the §9.1d pad-cache site. */
     pads: [
       // lat/lon come straight from build_verdant.py's emitted config (PAD_DIRS):
       // they were ~14u stale, so the reticle + every landing aimed beside the deck (v68 fix)
-      { lat: 8.39,  lon: -33.86, ang: 0.0133, top: 1.03313 },   // Angel Oak platform 1
-      { lat: 15.49, lon: -21.98, ang: 0.0133, top: 1.03313 },   // Angel Oak platform 2
+      { lat: 8.39,  lon: -33.86, ang: 0.0133, top: 1.03313,     // Angel Oak platform 1
+        port: { name: "ANGEL OAK", pay: 0.55, shop: false, dispatch: false,
+                market: { scrap: 0.40, alloy: 1.45, ore: 0.25,
+                          volatile: 1.50, contra: 0.30 } } },
+      { lat: 15.49, lon: -21.98, ang: 0.0133, top: 1.03313 },   // Angel Oak platform 2 — no port, stays wild (see above)
     ],
     clouds: true,
     atmosphere: 0x77ffaa, atmoStrength: 0.9,
