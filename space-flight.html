@@ -3064,9 +3064,9 @@ loadPlayerShip(SHIPS[shipSel]);   // the saved pick (or the THUMM) flies at boot
 const AQUA_BOLT = 0x4dffe4, ORANGE_BOLT = 0xff9a3c;
 const BOLT_COUNT = 48, BOLT_SPEED = 1500, BOLT_LIFE = 2.5;
 /* v89: the firing gate's pace is a SHOP stat now (AUTOLOADER), not a const.
-   applyShipStats() derives it from SHOP[4]; 0.11 here is only the pre-shop
-   boot value and equals SHOP[4].vals[0] — tier 0 IS the old game. */
-let fireGap = 0.11;
+   applyShipStats() derives it from SHOP[4]; 0.12 here is only the pre-shop
+   boot value and MUST equal SHOP[4].vals[0]. */
+let fireGap = 0.12;
 const BOLT_AXIS = new THREE.Vector3(0, 0, 1);
 const boltGeo = new THREE.CylinderGeometry(0.16, 0.16, 3.6, 6);
 boltGeo.rotateX(Math.PI / 2);   // lay the long axis along Z so we can aim it
@@ -4931,11 +4931,14 @@ const SHOP = [
     next: l => "+" + (SHOP[3].vals[l + 1] - SHOP[3].vals[l]) + " CAPACITY" },
   /* v89: the first upgrade that changes the FIGHT, and the sink Tanner asked
      for. RATE only, one axis — a damage tier multiplying against it is how
-     balance dies. vals are the firing gate in seconds (tier 0 IS the old
-     0.11); top tier is +53% sustained fire. Every enemy HP number was tuned
-     against the base gate, and the capitals' answer is the TAIL GUN (v89),
-     not more hp — see updateGunships. */
-  { name: "AUTOLOADER", vals: [0.11, 0.095, 0.082, 0.072], costs: [600, 900, 1400],
+     balance dies. vals are the firing gate in seconds. v90 (Tanner, after
+     flying v89 maxed): tier 0 starts a hair SLOWER than the old 0.11 const so
+     the ladder is felt, and the top tier stays the 0.072 the fights were
+     confirmed good at — +67% base-to-max, ~18-20% per tier. Enemy HP was
+     tuned against the old base gate, so tier 0 fights run ~8% longer now,
+     which is the point; the capitals' answer is the TAIL GUN (v89), not more
+     hp — see updateGunships. */
+  { name: "AUTOLOADER", vals: [0.12, 0.10, 0.085, 0.072], costs: [600, 900, 1400],
     next: l => "+" + Math.round((SHOP[4].vals[l] / SHOP[4].vals[l + 1] - 1) * 100) + "% FIRE RATE" },
 ];
 let upLvl = [0, 0, 0, 0, 0];
@@ -8622,7 +8625,7 @@ document.getElementById("btnLand").addEventListener("touchstart", e => {
   e.preventDefault(); initAudio(); tryAssist();
 });
 bindHold("btnRev",    v => touchRev    = v);
-/* Hold to fire. fireGap already paces the gate (~9 shots/sec at tier 0), so a
+/* Hold to fire. fireGap already paces the gate (~8.3 shots/sec at tier 0), so a
    held button machine-guns and a quick tap fires exactly one bolt — both fall
    out with no new state, on the same code path as SPACE and the pad's A.
    Holding it costs you nothing: THRUST is a throttle ramp, not a gas pedal
