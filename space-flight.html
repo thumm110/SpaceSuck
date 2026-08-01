@@ -1399,6 +1399,109 @@ const BODIES = [
     belt: { inner: 4500, outer: 6300, count: 1000 },
   },
   {
+    /* SPACESUCK FLEET COMMAND — the derelict (plan §8 Stage 2, v92).
+
+       Dark, landable, frozen. No market, no dispatch, no animation mixer: the
+       cranes are still because the station is DEAD, not because they're
+       unwired. Landing on the top deck is the whole beat.
+
+       ⚠️ THREE THINGS HERE ARE NOT LIKE A PLANET, and each one is load-bearing:
+
+       1. `modelRadius` — planets are authored at 100 BU and the loader scales
+          by `cfg.radius / 100`. FC's collision hub is 26.78 BU. Without this
+          override it would draw a 72-unit hub inside a 268-unit collision ball
+          with every pad `top` off by 3.73x — you'd "land" ~200u up, on nothing.
+       2. `pads` with no `heightFile` — a station is 100% deck, there is no
+          terrain to bake. groundRadius() had to be reordered to consult pads
+          before its no-grid bail, or every deck would be a ghost.
+       3. `top` values past 1.35 — the arm berths sit at 2.58, so the old flat
+          collision gate would have skipped this body entirely. `body.gateMul`
+          is now DERIVED from the pad table.
+
+       ⛔ The pad array below is EMITTED by build_fc.py §13b and pasted whole.
+       Never hand-edit a number in it. Re-run:
+         cd ~/Blender/spacesuck/ships/station/spacesuck-fc
+         FC_SKIP_RENDERS=1 blender --background --python build_fc.py
+       and paste again. Hand-copying is what left VERDANT's pads ~14u off its
+       platforms in v68, and it goes stale SILENTLY. */
+    name: "FLEET COMMAND", type: "planet", style: "gltf", seed: 5,
+    radius: 268,                    // the collision hub, in game units...
+    modelRadius: 26.78,             // ...and what that hub measures in the .glb
+    file: "station/spacesuck-fc.glb",
+    landable: true,
+    derelict: true,                 // §9: every *Glow emissive dialled to 0
+    // KRONOS's neighbourhood — the truck stop by the highway. MATCHING the
+    // orbit radius and speed is what keeps the two station-keeping forever
+    // instead of slowly drifting apart; only the angle differs. Δ0.12 rad is
+    // about 8,750u off KRONOS — clear of the belt's 6,300 outer edge, with a
+    // gas giant filling the windshield on approach. The extra 600 of `y` lifts
+    // it off KRONOS's plane so the silhouette doesn't read against the rings.
+    orbit: { radius: 73000, speed: 0.002, angle: 4.2 + 0.12, y: 9600 },
+    spin: 0,                        // a dead station holds no attitude
+    pads: [
+      // named pads FIRST, deck-fill LAST: the cone loop returns the
+      // first match (plan §10.5) — the specific pad wins where it applies
+      { lat:   -0.0414, lon:  162.7000, ang: 0.1057, top: 2.58362 },   // Pad00 — arm berth 01 · d=692u
+      { lat:   -1.5986, lon: -166.6000, ang: 0.1102, top: 2.47674 },   // Pad01 — arm berth 02 · d=663u
+      { lat:   -0.0457, lon: -136.0000, ang: 0.1166, top: 2.34172 },   // Pad02 — arm berth 03 · d=627u
+      { lat:    1.0801, lon: -105.3000, ang: 0.1198, top: 2.27844 },   // Pad03 — arm berth 04 · d=610u
+      { lat:   -0.0463, lon:  -74.7000, ang: 0.1181, top: 2.31090 },   // Pad04 — arm berth 05 · d=619u
+      { lat:   -1.7020, lon:  -44.0000, ang: 0.1174, top: 2.32631 },   // Pad05 — arm berth 06 · d=623u
+      { lat:    0.9809, lon:  -13.4000, ang: 0.1088, top: 2.50901 },   // Pad06 — arm berth 07 · d=672u
+      { lat:   -0.0414, lon:   17.3000, ang: 0.1057, top: 2.58362 },   // Pad07 — arm berth 08 · d=692u
+      { lat:    9.2773, lon:   48.0000, ang: 0.0770, top: 1.04251 },   // PadS00 — short-stay A1 (garage) · d=279u
+      { lat:    9.4683, lon:   64.0000, ang: 0.0786, top: 1.02167 },   // PadS01 — short-stay A2 (garage) · d=274u
+      { lat:   10.3556, lon:   80.0000, ang: 0.0859, top: 0.93496 },   // PadS02 — short-stay A3 (garage) · d=250u
+      { lat:   10.3556, lon:  100.0000, ang: 0.0859, top: 0.93496 },   // PadS03 — short-stay A4 (garage) · d=250u
+      { lat:    9.4683, lon:  116.0000, ang: 0.0786, top: 1.02167 },   // PadS04 — short-stay A5 (garage) · d=274u
+      { lat:    9.2773, lon:  132.0000, ang: 0.0770, top: 1.04251 },   // PadS05 — short-stay A6 (garage) · d=279u
+      // deck fill — walkable floor between the named pads (plan §10.5)
+      { lat:    7.0518, lon:    0.0000, ang: 0.1924, top: 1.21688 },   // PadFillL00 — ledge fill · d=326u
+      { lat:    6.8138, lon:   15.0000, ang: 0.1925, top: 1.25917 },   // PadFillL01 — ledge fill · d=337u
+      { lat:    7.6358, lon:   30.0000, ang: 0.1921, top: 1.12429 },   // PadFillL02 — ledge fill · d=301u
+      { lat:    8.2122, lon:   45.0000, ang: 0.1918, top: 1.04588 },   // PadFillL03 — ledge fill · d=280u
+      { lat:    8.2357, lon:   60.0000, ang: 0.1918, top: 1.04291 },   // PadFillL04 — ledge fill · d=279u
+      { lat:    9.0521, lon:   75.0000, ang: 0.1914, top: 0.94953 },   // PadFillL05 — ledge fill · d=254u
+      { lat:    9.3658, lon:   90.0000, ang: 0.1912, top: 0.91799 },   // PadFillL06 — ledge fill · d=246u
+      { lat:    9.0521, lon:  105.0000, ang: 0.1914, top: 0.94953 },   // PadFillL07 — ledge fill · d=254u
+      { lat:    8.2357, lon:  120.0000, ang: 0.1918, top: 1.04291 },   // PadFillL08 — ledge fill · d=279u
+      { lat:    8.2122, lon:  135.0000, ang: 0.1918, top: 1.04588 },   // PadFillL09 — ledge fill · d=280u
+      { lat:    7.6358, lon:  150.0000, ang: 0.1921, top: 1.12429 },   // PadFillL10 — ledge fill · d=301u
+      { lat:    6.8138, lon:  165.0000, ang: 0.1925, top: 1.25917 },   // PadFillL11 — ledge fill · d=337u
+      { lat:    7.0518, lon:  180.0000, ang: 0.1924, top: 1.21688 },   // PadFillL12 — ledge fill · d=326u
+      { lat:    6.8138, lon: -165.0000, ang: 0.1925, top: 1.25917 },   // PadFillL13 — ledge fill · d=337u
+      { lat:    7.6358, lon: -150.0000, ang: 0.1921, top: 1.12429 },   // PadFillL14 — ledge fill · d=301u
+      { lat:    8.2122, lon: -135.0000, ang: 0.1918, top: 1.04588 },   // PadFillL15 — ledge fill · d=280u
+      { lat:    8.2357, lon: -120.0000, ang: 0.1918, top: 1.04291 },   // PadFillL16 — ledge fill · d=279u
+      { lat:    9.0521, lon: -105.0000, ang: 0.1914, top: 0.94953 },   // PadFillL17 — ledge fill · d=254u
+      { lat:    9.3658, lon:  -90.0000, ang: 0.1912, top: 0.91799 },   // PadFillL18 — ledge fill · d=246u
+      { lat:    9.0521, lon:  -75.0000, ang: 0.1914, top: 0.94953 },   // PadFillL19 — ledge fill · d=254u
+      { lat:    8.2357, lon:  -60.0000, ang: 0.1918, top: 1.04291 },   // PadFillL20 — ledge fill · d=279u
+      { lat:    8.2122, lon:  -45.0000, ang: 0.1918, top: 1.04588 },   // PadFillL21 — ledge fill · d=280u
+      { lat:    7.6358, lon:  -30.0000, ang: 0.1921, top: 1.12429 },   // PadFillL22 — ledge fill · d=301u
+      { lat:    6.8138, lon:  -15.0000, ang: 0.1925, top: 1.25917 },   // PadFillL23 — ledge fill · d=337u
+      { lat:   90.0000, lon:    0.0000, ang: 1.2774, top: 0.28945 },   // PadFillD00 — deck fill · d=78u
+      { lat:   34.9553, lon:    0.0000, ang: 0.5409, top: 0.50520 },   // PadFillD01 — deck fill · d=135u
+      { lat:   39.2803, lon:   60.0000, ang: 0.5109, top: 0.45718 },   // PadFillD02 — deck fill · d=122u
+      { lat:   39.2803, lon:  120.0000, ang: 0.5109, top: 0.45718 },   // PadFillD03 — deck fill · d=122u
+      { lat:   34.9553, lon:  180.0000, ang: 0.5409, top: 0.50520 },   // PadFillD04 — deck fill · d=135u
+      { lat:   39.2803, lon: -120.0000, ang: 0.5109, top: 0.45718 },   // PadFillD05 — deck fill · d=122u
+      { lat:   39.2803, lon:  -60.0000, ang: 0.5109, top: 0.45718 },   // PadFillD06 — deck fill · d=122u
+      { lat:   20.0514, lon:   15.0000, ang: 0.3351, top: 0.84421 },   // PadFillD07 — deck fill · d=226u
+      { lat:   23.7898, lon:   45.0000, ang: 0.3264, top: 0.71755 },   // PadFillD08 — deck fill · d=192u
+      { lat:   25.9498, lon:   75.0000, ang: 0.3208, top: 0.66147 },   // PadFillD09 — deck fill · d=177u
+      { lat:   25.9498, lon:  105.0000, ang: 0.3208, top: 0.66147 },   // PadFillD10 — deck fill · d=177u
+      { lat:   23.7898, lon:  135.0000, ang: 0.3264, top: 0.71755 },   // PadFillD11 — deck fill · d=192u
+      { lat:   20.0514, lon:  165.0000, ang: 0.3351, top: 0.84421 },   // PadFillD12 — deck fill · d=226u
+      { lat:   20.0514, lon: -165.0000, ang: 0.3351, top: 0.84421 },   // PadFillD13 — deck fill · d=226u
+      { lat:   23.7898, lon: -135.0000, ang: 0.3264, top: 0.71755 },   // PadFillD14 — deck fill · d=192u
+      { lat:   25.9498, lon: -105.0000, ang: 0.3208, top: 0.66147 },   // PadFillD15 — deck fill · d=177u
+      { lat:   25.9498, lon:  -75.0000, ang: 0.3208, top: 0.66147 },   // PadFillD16 — deck fill · d=177u
+      { lat:   23.7898, lon:  -45.0000, ang: 0.3264, top: 0.71755 },   // PadFillD17 — deck fill · d=192u
+      { lat:   20.0514, lon:  -15.0000, ang: 0.3351, top: 0.84421 },   // PadFillD18 — deck fill · d=226u
+    ],
+  },
+  {
     name: "EARTH", type: "planet", style: "gltf", seed: 3,
     radius: 2500,                   // the flagship destination
     // angle π/2 parks Earth's orbit on the spawn side of the sun — you
@@ -2455,18 +2558,25 @@ const _grN = new THREE.Vector3();
 function groundRadius(body, n) {
   // n: unit vector from planet center toward the ship
   const g = body.height;
-  if (!g) return body.cfg.radius;
   const b = toBakedFrame(body, n, _grN);
   // landing pad decks sit ABOVE the baked terrain grid — inside a pad's
   // footprint the deck IS the ground (rotation already undone above, so
   // this tracks the pad around the planet's spin). Checked BEFORE the grid,
   // which is also what makes a pad immune to that world's hazard for free.
+  //
+  // v92: ...and checked before the no-grid bail, which used to sit above this
+  // loop. A STATION has pads and no height grid at all — FLEET COMMAND is 100%
+  // deck, there is no terrain to bake. With `if (!g) return` first, a grid-less
+  // body reported a flat cfg.radius sphere everywhere and this loop was simply
+  // unreachable: every deck on the station would have been a ghost you sink
+  // through. Same bug class as the v87.1 pad-cone fall-through, one level up.
   if (body.pads) {
     for (const pad of body.pads) {
       if (b.x * pad.dx + b.y * pad.dy + b.z * pad.dz > pad.cosAng)
         return body.cfg.radius * pad.top;
     }
   }
+  if (!g) return body.cfg.radius;
   return body.cfg.radius * (g.min + (g.max - g.min) * sampleGrid(g, b.x, b.y, b.z) / 255);
 }
 
@@ -2577,6 +2687,44 @@ function makeProceduralSurface(cfg) {
   return mesh;
 }
 
+/* Ship it dark — the derelict dressing (plan §9, v92).
+
+   FLEET COMMAND's .glb is authored LIT: thirteen `*Glow` materials carrying
+   real emissive strength, because that is what the finished station looks like
+   and the shipyard's own renders need to show it. The derelict is that same
+   model with the power off.
+
+   Doing it here rather than in Blender is deliberate and was Tanner's call:
+   baking a dark variant would mean shipping a second 4 MB .glb — and then a
+   THIRD, and a ninth, once construction stages start lighting the arms back up
+   one at a time. One asset, one runtime dial.
+
+   The lit value is stashed on the material, so turning a stage back on later is
+   `m.emissiveIntensity = m.userData.litIntensity` and nothing has to be
+   re-derived. Materials are shared across meshes, hence the uuid guard — this
+   runs once per material, not once per mesh.
+
+   ⚠️ Only touches materials whose NAME ends in `Glow`, which is the same
+   contract build_fc.py authors against ("`*Glow` suffix -> the game boosts it
+   as a light"). A material renamed in Blender silently stops being dimmed —
+   station-derelict.js gates exactly that. */
+function killGlow(model) {
+  const seen = new Set();
+  let n = 0;
+  model.traverse(o => {
+    if (!o.isMesh || !o.material) return;
+    for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+      if (!m || seen.has(m.uuid)) continue;
+      seen.add(m.uuid);
+      if (!/Glow$/.test(m.name || "")) continue;
+      m.userData.litIntensity = m.emissiveIntensity;   // remember the ON value
+      m.emissiveIntensity = 0;
+      n++;
+    }
+  });
+  return n;
+}
+
 function buildBody(cfg) {
   const group = new THREE.Group();
   group.position.set(...cfg.position);
@@ -2606,6 +2754,21 @@ function buildBody(cfg) {
       };
     });
   }
+
+  /* How far out does this body's collision reach? (v92)
+     Everything used to gate at a flat `cfg.radius * 1.35`, which is generous for
+     a planet — Charleston's deck is top 1.0175 — and far too tight for a
+     STATION. FLEET COMMAND's arm berths sit at top 2.58, well past 1.35, so the
+     bolts, the NPC clamp and the ship would all have skipped the body entirely
+     and flown through eight landing pads.
+
+     DERIVED, never hand-set: a pasted pad table is re-emitted by build_fc.py
+     every time something moves in Blender, and a hardcoded gate would go stale
+     silently the first time an arm got longer. 5% of headroom over the highest
+     deck, floored at the old 1.35 so every existing planet is bit-identical. */
+  body.gateMul = body.pads
+    ? Math.max(1.35, ...body.pads.map(p => p.top * 1.05))
+    : 1.35;
 
   if (cfg.type === "star") {
     const sun = new THREE.Mesh(
@@ -2639,7 +2802,16 @@ function buildBody(cfg) {
       if (THREE.GLTFLoader) {
         new THREE.GLTFLoader().load(cfg.file + ASSET_V, gltf => {
           const model = gltf.scene;
-          model.scale.setScalar(cfg.radius / 100);
+          // Planets are authored at radius 100 BU, so `cfg.radius / 100` is
+          // their scale. A STATION isn't: FLEET COMMAND's collision hub is
+          // 26.78 BU, and feeding it the /100 default would draw a 72-unit hub
+          // floating inside a 268-unit collision ball with every pad `top` off
+          // by 3.73x — you'd "land" ~200u above the deck, on nothing. So the
+          // authored radius is config, defaulting to the planet convention.
+          model.scale.setScalar(cfg.radius / (cfg.modelRadius || 100));
+          // the derelict ships dark (§9). Before it's added, so there is never
+          // a frame where a dead station is lit up like a Christmas tree.
+          if (cfg.derelict) body.glowsKilled = killGlow(model);
           holder.add(model);
           // the GLB's cloud shell drifts like every other cloud layer
           const clouds = model.getObjectByName("Clouds");
@@ -3734,7 +3906,7 @@ function pointInTerrain(p) {
        body per bolt would be 500 of them for nothing. */
     const d2 = _solidN.lengthSq();
     if (d2 < 1e-6) return true;                      // dead centre: inside anything
-    const gate = b.cfg.landable ? b.cfg.radius * 1.35 : b.cfg.radius;
+    const gate = b.cfg.landable ? b.cfg.radius * b.gateMul : b.cfg.radius;
     if (d2 > gate * gate) continue;
     if (!b.cfg.landable) return true;                // no height grid — the sphere IS the surface
     const d = Math.sqrt(d2);
@@ -3754,7 +3926,7 @@ function npcTerrainClamp(group, vel, margin) {
   for (const b of liveBodies) {
     _npcN.subVectors(group.position, b.group.position);
     const d = _npcN.length();
-    if (d < 1e-3 || d > b.cfg.radius * 1.35) continue;
+    if (d < 1e-3 || d > b.cfg.radius * b.gateMul) continue;
     _npcN.multiplyScalar(1 / d);
     const floor = (b.cfg.landable ? groundRadius(b, _npcN) : b.cfg.radius) + margin;
     if (d < floor) {
