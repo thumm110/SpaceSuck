@@ -449,6 +449,18 @@
             Caps are counted per family: <b>2</b> bandits + <b>2</b> scavengers alive at once.
           </p>
 
+          <p class="note" style="margin:0 0 10px">
+            <b>All four wear welded skids now (2026-07-31).</b> Fleet ships tuck their gear away —
+            knee legs on hinges, four flush bay doors, swung out by the game on touchdown. Junkers
+            weld skids on and leave them hanging. So a clean belly means fleet and hardware hanging
+            under it means junker, and that reads before the paint does. It cost <b>nothing</b>: the
+            parts are named <code>Skid*</code> rather than <code>Gear*</code> so the join pass doesn't
+            skip them, and each reuses a material its hull already carried, so all four hold their
+            exact draw-call budgets — <b>12 · 19 · 21 · 22</b>. Six slots fly at once, which is why
+            that mattered. Nothing hinges and nothing animates. They cannot land <i>yet</i>; the
+            hardware arrived first.
+          </p>
+
           <article class="ship f-hostile">
             <div class="stripe"></div>
             <div class="ship-body">
@@ -512,6 +524,7 @@
               </dl>
               <div class="aka">SCAVENGER CALLSIGNS <span>—</span> BORROWED TIME · SMALL MERCY · DUTCH UNCLE · BUSTED KNUCKLE · SLOW LEAK · LUCKY STRIKE · SHORT CHANGE</div>
               <p class="note">Amber slow-blink, holds fire. Fly close with guns cold and it hails you by name — pay <b>150</b> to hire it as an <b style="color:var(--ally)">ally</b> wingman (2 max, formation only; doesn't fight yet). Shoot one and it turns full bandit — the only moment the hull disagrees with the beacon is one you caused.</p>
+              <p class="note">Its skids are the only <b>asymmetric</b> ones in the fleet. The bandits got clean matched rails; this one's starboard side runs a longer toe and carries a welded splice plate and doubler strut that the port side doesn't have. It's meant to read as a field repair — an asymmetry you can name beats one that just looks like a mistake.</p>
             </div>
           </article>
 
@@ -534,6 +547,7 @@
               </dl>
               <div class="aka">SCAVENGER CALLSIGNS <span>—</span> SHORT NOTICE · ODD LOT · LAST CALL · SECOND SHIFT · HONEST MISTAKE · SLOW NICKEL · CALLED IN SICK</div>
               <p class="note">Muzzles are <b>discovered</b> off the hull (every node matching <code>GunTip*</code>), so its lower pair fires without a config entry — the hardcoded two-name list this replaced dropped them silently.</p>
+              <p class="note">Only hull that doesn't stand on belly rails. The X-frame already hangs its lower arms and gun pods well below the keel, so the skids are <b>outriggers</b> — armored shoes faced straight onto the lower wingtips, 8.04 of track on a 9.05 span. Two contacts won't hold it (the pods sit far aft of the nose and it would pitch onto its face), so a centreline nose A-frame gives the third. It's a Harrier stance, and it's the geometry's call, not a style one.</p>
             </div>
           </article>
 
