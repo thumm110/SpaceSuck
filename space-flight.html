@@ -1405,7 +1405,7 @@ const BODIES = [
        cranes are still because the station is DEAD, not because they're
        unwired. Landing on the top deck is the whole beat.
 
-       ⚠️ THREE THINGS HERE ARE NOT LIKE A PLANET, and each one is load-bearing:
+       ⚠️ FIVE THINGS HERE ARE NOT LIKE A PLANET, and each one is load-bearing:
 
        1. `modelRadius` — planets are authored at 100 BU and the loader scales
           by `cfg.radius / 100`. FC's collision hub is 26.78 BU. Without this
@@ -1414,9 +1414,19 @@ const BODIES = [
        2. `pads` with no `heightFile` — a station is 100% deck, there is no
           terrain to bake. groundRadius() had to be reordered to consult pads
           before its no-grid bail, or every deck would be a ghost.
-       3. `top` values past 1.35 — the arm berths sit at 2.58, so the old flat
+       3. `top` values past 1.35 — the arm berths sit at 2.98, so the old flat
           collision gate would have skipped this body entirely. `body.gateMul`
           is now DERIVED from the pad table.
+       4. `modelOffsetY` (v93) — a planet's origin is its centre. A station's
+          can't be: with the origin in the plane of the arms, the radial "up"
+          runs nearly HORIZONTAL at every berth, so a deck reads as a wall and
+          every cone points sideways. build_fc.py drops the pad frame 400u
+          below the hub to swing those radials upright — which means the model
+          must be drawn 400u ABOVE the body origin to meet its own table.
+       5. `deckN` (v93) — even offset, the radial only gets within ~60° of the
+          deck. So the ship stops standing on the radial: FC's decks all face
+          one way in body-local space and the pilot is stood on THAT. The
+          radial still places the ship; it no longer decides which way is up.
 
        ⛔ The pad array below is EMITTED by build_fc.py §13b and pasted whole.
        Never hand-edit a number in it. Re-run:
@@ -1427,6 +1437,14 @@ const BODIES = [
     name: "FLEET COMMAND", type: "planet", style: "gltf", seed: 5,
     radius: 268,                    // the collision hub, in game units...
     modelRadius: 26.78,             // ...and what that hub measures in the .glb
+    // ⚠ the pad table below is measured from a point 400u BELOW the hub
+    // (FC_ORIGIN_DZ). The .glb is still authored around the hub, so the
+    // model has to be DRAWN that far up or every deck is off by exactly
+    // 400u — which reads as 'landing on nothing', not as a bug.
+    modelOffsetY: 400,
+    // every deck faces this way in body-local space (v93) — the game
+    // stands the ship on THIS, not on the ray out from the middle
+    deckN: [0.0000, 1.0000, 0.0000],
     file: "station/spacesuck-fc.glb",
     landable: true,
     derelict: true,                 // §9: every *Glow emissive dialled to 0
@@ -1441,64 +1459,64 @@ const BODIES = [
     pads: [
       // named pads FIRST, deck-fill LAST: the cone loop returns the
       // first match (plan §10.5) — the specific pad wins where it applies
-      { lat:   -0.0414, lon:  162.7000, ang: 0.1057, top: 2.58362 },   // Pad00 — arm berth 01 · d=692u
-      { lat:   -1.5986, lon: -166.6000, ang: 0.1102, top: 2.47674 },   // Pad01 — arm berth 02 · d=663u
-      { lat:   -0.0457, lon: -136.0000, ang: 0.1166, top: 2.34172 },   // Pad02 — arm berth 03 · d=627u
-      { lat:    1.0801, lon: -105.3000, ang: 0.1198, top: 2.27844 },   // Pad03 — arm berth 04 · d=610u
-      { lat:   -0.0463, lon:  -74.7000, ang: 0.1181, top: 2.31090 },   // Pad04 — arm berth 05 · d=619u
-      { lat:   -1.7020, lon:  -44.0000, ang: 0.1174, top: 2.32631 },   // Pad05 — arm berth 06 · d=623u
-      { lat:    0.9809, lon:  -13.4000, ang: 0.1088, top: 2.50901 },   // Pad06 — arm berth 07 · d=672u
-      { lat:   -0.0414, lon:   17.3000, ang: 0.1057, top: 2.58362 },   // Pad07 — arm berth 08 · d=692u
-      { lat:    9.2773, lon:   48.0000, ang: 0.0770, top: 1.04251 },   // PadS00 — short-stay A1 (garage) · d=279u
-      { lat:    9.4683, lon:   64.0000, ang: 0.0786, top: 1.02167 },   // PadS01 — short-stay A2 (garage) · d=274u
-      { lat:   10.3556, lon:   80.0000, ang: 0.0859, top: 0.93496 },   // PadS02 — short-stay A3 (garage) · d=250u
-      { lat:   10.3556, lon:  100.0000, ang: 0.0859, top: 0.93496 },   // PadS03 — short-stay A4 (garage) · d=250u
-      { lat:    9.4683, lon:  116.0000, ang: 0.0786, top: 1.02167 },   // PadS04 — short-stay A5 (garage) · d=274u
-      { lat:    9.2773, lon:  132.0000, ang: 0.0770, top: 1.04251 },   // PadS05 — short-stay A6 (garage) · d=279u
+      { lat:   30.0067, lon:  162.7000, ang: 0.0915, top: 2.98350 },   // Pad00 — arm berth 01 · d=799u
+      { lat:   29.9207, lon: -166.6000, ang: 0.0956, top: 2.85650 },   // Pad01 — arm berth 02 · d=765u
+      { lat:   32.5037, lon: -136.0000, ang: 0.0983, top: 2.77666 },   // Pad02 — arm berth 03 · d=743u
+      { lat:   34.0055, lon: -105.3000, ang: 0.0994, top: 2.74798 },   // Pad03 — arm berth 04 · d=736u
+      { lat:   32.8486, lon:  -74.7000, ang: 0.0993, top: 2.75072 },   // Pad04 — arm berth 05 · d=737u
+      { lat:   31.4981, lon:  -44.0000, ang: 0.1001, top: 2.72710 },   // Pad05 — arm berth 06 · d=730u
+      { lat:   31.4929, lon:  -13.4000, ang: 0.0928, top: 2.94198 },   // Pad06 — arm berth 07 · d=788u
+      { lat:   30.0067, lon:   17.3000, ang: 0.0915, top: 2.98350 },   // Pad07 — arm berth 08 · d=799u
+      { lat:   58.2400, lon:   48.0000, ang: 0.0411, top: 1.95468 },   // PadS00 — short-stay A1 (garage) · d=523u
+      { lat:   58.7694, lon:   64.0000, ang: 0.0413, top: 1.94364 },   // PadS01 — short-stay A2 (garage) · d=520u
+      { lat:   61.0402, lon:   80.0000, ang: 0.0423, top: 1.89950 },   // PadS02 — short-stay A3 (garage) · d=509u
+      { lat:   61.0402, lon:  100.0000, ang: 0.0423, top: 1.89950 },   // PadS03 — short-stay A4 (garage) · d=509u
+      { lat:   58.7694, lon:  116.0000, ang: 0.0413, top: 1.94364 },   // PadS04 — short-stay A5 (garage) · d=520u
+      { lat:   58.2400, lon:  132.0000, ang: 0.0411, top: 1.95468 },   // PadS05 — short-stay A6 (garage) · d=523u
       // deck fill — walkable floor between the named pads (plan §10.5)
-      { lat:    7.0518, lon:    0.0000, ang: 0.1924, top: 1.21688 },   // PadFillL00 — ledge fill · d=326u
-      { lat:    6.8138, lon:   15.0000, ang: 0.1925, top: 1.25917 },   // PadFillL01 — ledge fill · d=337u
-      { lat:    7.6358, lon:   30.0000, ang: 0.1921, top: 1.12429 },   // PadFillL02 — ledge fill · d=301u
-      { lat:    8.2122, lon:   45.0000, ang: 0.1918, top: 1.04588 },   // PadFillL03 — ledge fill · d=280u
-      { lat:    8.2357, lon:   60.0000, ang: 0.1918, top: 1.04291 },   // PadFillL04 — ledge fill · d=279u
-      { lat:    9.0521, lon:   75.0000, ang: 0.1914, top: 0.94953 },   // PadFillL05 — ledge fill · d=254u
-      { lat:    9.3658, lon:   90.0000, ang: 0.1912, top: 0.91799 },   // PadFillL06 — ledge fill · d=246u
-      { lat:    9.0521, lon:  105.0000, ang: 0.1914, top: 0.94953 },   // PadFillL07 — ledge fill · d=254u
-      { lat:    8.2357, lon:  120.0000, ang: 0.1918, top: 1.04291 },   // PadFillL08 — ledge fill · d=279u
-      { lat:    8.2122, lon:  135.0000, ang: 0.1918, top: 1.04588 },   // PadFillL09 — ledge fill · d=280u
-      { lat:    7.6358, lon:  150.0000, ang: 0.1921, top: 1.12429 },   // PadFillL10 — ledge fill · d=301u
-      { lat:    6.8138, lon:  165.0000, ang: 0.1925, top: 1.25917 },   // PadFillL11 — ledge fill · d=337u
-      { lat:    7.0518, lon:  180.0000, ang: 0.1924, top: 1.21688 },   // PadFillL12 — ledge fill · d=326u
-      { lat:    6.8138, lon: -165.0000, ang: 0.1925, top: 1.25917 },   // PadFillL13 — ledge fill · d=337u
-      { lat:    7.6358, lon: -150.0000, ang: 0.1921, top: 1.12429 },   // PadFillL14 — ledge fill · d=301u
-      { lat:    8.2122, lon: -135.0000, ang: 0.1918, top: 1.04588 },   // PadFillL15 — ledge fill · d=280u
-      { lat:    8.2357, lon: -120.0000, ang: 0.1918, top: 1.04291 },   // PadFillL16 — ledge fill · d=279u
-      { lat:    9.0521, lon: -105.0000, ang: 0.1914, top: 0.94953 },   // PadFillL17 — ledge fill · d=254u
-      { lat:    9.3658, lon:  -90.0000, ang: 0.1912, top: 0.91799 },   // PadFillL18 — ledge fill · d=246u
-      { lat:    9.0521, lon:  -75.0000, ang: 0.1914, top: 0.94953 },   // PadFillL19 — ledge fill · d=254u
-      { lat:    8.2357, lon:  -60.0000, ang: 0.1918, top: 1.04291 },   // PadFillL20 — ledge fill · d=279u
-      { lat:    8.2122, lon:  -45.0000, ang: 0.1918, top: 1.04588 },   // PadFillL21 — ledge fill · d=280u
-      { lat:    7.6358, lon:  -30.0000, ang: 0.1921, top: 1.12429 },   // PadFillL22 — ledge fill · d=301u
-      { lat:    6.8138, lon:  -15.0000, ang: 0.1925, top: 1.25917 },   // PadFillL23 — ledge fill · d=337u
-      { lat:   90.0000, lon:    0.0000, ang: 1.2774, top: 0.28945 },   // PadFillD00 — deck fill · d=78u
-      { lat:   34.9553, lon:    0.0000, ang: 0.5409, top: 0.50520 },   // PadFillD01 — deck fill · d=135u
-      { lat:   39.2803, lon:   60.0000, ang: 0.5109, top: 0.45718 },   // PadFillD02 — deck fill · d=122u
-      { lat:   39.2803, lon:  120.0000, ang: 0.5109, top: 0.45718 },   // PadFillD03 — deck fill · d=122u
-      { lat:   34.9553, lon:  180.0000, ang: 0.5409, top: 0.50520 },   // PadFillD04 — deck fill · d=135u
-      { lat:   39.2803, lon: -120.0000, ang: 0.5109, top: 0.45718 },   // PadFillD05 — deck fill · d=122u
-      { lat:   39.2803, lon:  -60.0000, ang: 0.5109, top: 0.45718 },   // PadFillD06 — deck fill · d=122u
-      { lat:   20.0514, lon:   15.0000, ang: 0.3351, top: 0.84421 },   // PadFillD07 — deck fill · d=226u
-      { lat:   23.7898, lon:   45.0000, ang: 0.3264, top: 0.71755 },   // PadFillD08 — deck fill · d=192u
-      { lat:   25.9498, lon:   75.0000, ang: 0.3208, top: 0.66147 },   // PadFillD09 — deck fill · d=177u
-      { lat:   25.9498, lon:  105.0000, ang: 0.3208, top: 0.66147 },   // PadFillD10 — deck fill · d=177u
-      { lat:   23.7898, lon:  135.0000, ang: 0.3264, top: 0.71755 },   // PadFillD11 — deck fill · d=192u
-      { lat:   20.0514, lon:  165.0000, ang: 0.3351, top: 0.84421 },   // PadFillD12 — deck fill · d=226u
-      { lat:   20.0514, lon: -165.0000, ang: 0.3351, top: 0.84421 },   // PadFillD13 — deck fill · d=226u
-      { lat:   23.7898, lon: -135.0000, ang: 0.3264, top: 0.71755 },   // PadFillD14 — deck fill · d=192u
-      { lat:   25.9498, lon: -105.0000, ang: 0.3208, top: 0.66147 },   // PadFillD15 — deck fill · d=177u
-      { lat:   25.9498, lon:  -75.0000, ang: 0.3208, top: 0.66147 },   // PadFillD16 — deck fill · d=177u
-      { lat:   23.7898, lon:  -45.0000, ang: 0.3264, top: 0.71755 },   // PadFillD17 — deck fill · d=192u
-      { lat:   20.0514, lon:  -15.0000, ang: 0.3351, top: 0.84421 },   // PadFillD18 — deck fill · d=226u
+      { lat:   53.9961, lon:    0.0000, ang: 0.1139, top: 2.05443 },   // PadFillL00 — ledge fill · d=550u
+      { lat:   53.0466, lon:   15.0000, ang: 0.1165, top: 2.07976 },   // PadFillL01 — ledge fill · d=557u
+      { lat:   56.1591, lon:   30.0000, ang: 0.1079, top: 2.00098 },   // PadFillL02 — ledge fill · d=536u
+      { lat:   58.0837, lon:   45.0000, ang: 0.1025, top: 1.95799 },   // PadFillL03 — ledge fill · d=524u
+      { lat:   58.1581, lon:   60.0000, ang: 0.1023, top: 1.95641 },   // PadFillL04 — ledge fill · d=524u
+      { lat:   60.5679, lon:   75.0000, ang: 0.0952, top: 1.90827 },   // PadFillL05 — ledge fill · d=511u
+      { lat:   61.4103, lon:   90.0000, ang: 0.0928, top: 1.89277 },   // PadFillL06 — ledge fill · d=507u
+      { lat:   60.5679, lon:  105.0000, ang: 0.0952, top: 1.90827 },   // PadFillL07 — ledge fill · d=511u
+      { lat:   58.1581, lon:  120.0000, ang: 0.1023, top: 1.95641 },   // PadFillL08 — ledge fill · d=524u
+      { lat:   58.0837, lon:  135.0000, ang: 0.1025, top: 1.95799 },   // PadFillL09 — ledge fill · d=524u
+      { lat:   56.1591, lon:  150.0000, ang: 0.1079, top: 2.00098 },   // PadFillL10 — ledge fill · d=536u
+      { lat:   53.0466, lon:  165.0000, ang: 0.1165, top: 2.07976 },   // PadFillL11 — ledge fill · d=557u
+      { lat:   53.9961, lon:  180.0000, ang: 0.1139, top: 2.05443 },   // PadFillL12 — ledge fill · d=550u
+      { lat:   53.0466, lon: -165.0000, ang: 0.1165, top: 2.07976 },   // PadFillL13 — ledge fill · d=557u
+      { lat:   56.1591, lon: -150.0000, ang: 0.1079, top: 2.00098 },   // PadFillL14 — ledge fill · d=536u
+      { lat:   58.0837, lon: -135.0000, ang: 0.1025, top: 1.95799 },   // PadFillL15 — ledge fill · d=524u
+      { lat:   58.1581, lon: -120.0000, ang: 0.1023, top: 1.95641 },   // PadFillL16 — ledge fill · d=524u
+      { lat:   60.5679, lon: -105.0000, ang: 0.0952, top: 1.90827 },   // PadFillL17 — ledge fill · d=511u
+      { lat:   61.4103, lon:  -90.0000, ang: 0.0928, top: 1.89277 },   // PadFillL18 — ledge fill · d=507u
+      { lat:   60.5679, lon:  -75.0000, ang: 0.0952, top: 1.90827 },   // PadFillL19 — ledge fill · d=511u
+      { lat:   58.1581, lon:  -60.0000, ang: 0.1023, top: 1.95641 },   // PadFillL20 — ledge fill · d=524u
+      { lat:   58.0837, lon:  -45.0000, ang: 0.1025, top: 1.95799 },   // PadFillL21 — ledge fill · d=524u
+      { lat:   56.1591, lon:  -30.0000, ang: 0.1079, top: 2.00098 },   // PadFillL22 — ledge fill · d=536u
+      { lat:   53.0466, lon:  -15.0000, ang: 0.1165, top: 2.07976 },   // PadFillL23 — ledge fill · d=557u
+      { lat:   90.0000, lon:    0.0000, ang: 0.2073, top: 1.78337 },   // PadFillD00 — deck fill · d=478u
+      { lat:   76.9287, lon:    0.0000, ang: 0.1493, top: 1.83080 },   // PadFillD01 — deck fill · d=490u
+      { lat:   78.7763, lon:   60.0000, ang: 0.1285, top: 1.81814 },   // PadFillD02 — deck fill · d=487u
+      { lat:   78.7763, lon:  120.0000, ang: 0.1285, top: 1.81814 },   // PadFillD03 — deck fill · d=487u
+      { lat:   76.9287, lon:  180.0000, ang: 0.1493, top: 1.83080 },   // PadFillD04 — deck fill · d=490u
+      { lat:   78.7763, lon: -120.0000, ang: 0.1285, top: 1.81814 },   // PadFillD05 — deck fill · d=487u
+      { lat:   78.7763, lon:  -60.0000, ang: 0.1285, top: 1.81814 },   // PadFillD06 — deck fill · d=487u
+      { lat:   66.0261, lon:   15.0000, ang: 0.1450, top: 1.95174 },   // PadFillD07 — deck fill · d=523u
+      { lat:   69.7878, lon:   45.0000, ang: 0.1233, top: 1.90039 },   // PadFillD08 — deck fill · d=509u
+      { lat:   71.5558, lon:   75.0000, ang: 0.1129, top: 1.87993 },   // PadFillD09 — deck fill · d=503u
+      { lat:   71.5558, lon:  105.0000, ang: 0.1129, top: 1.87993 },   // PadFillD10 — deck fill · d=503u
+      { lat:   69.7878, lon:  135.0000, ang: 0.1233, top: 1.90039 },   // PadFillD11 — deck fill · d=509u
+      { lat:   66.0261, lon:  165.0000, ang: 0.1450, top: 1.95174 },   // PadFillD12 — deck fill · d=523u
+      { lat:   66.0261, lon: -165.0000, ang: 0.1450, top: 1.95174 },   // PadFillD13 — deck fill · d=523u
+      { lat:   69.7878, lon: -135.0000, ang: 0.1233, top: 1.90039 },   // PadFillD14 — deck fill · d=509u
+      { lat:   71.5558, lon: -105.0000, ang: 0.1129, top: 1.87993 },   // PadFillD15 — deck fill · d=503u
+      { lat:   71.5558, lon:  -75.0000, ang: 0.1129, top: 1.87993 },   // PadFillD16 — deck fill · d=503u
+      { lat:   69.7878, lon:  -45.0000, ang: 0.1233, top: 1.90039 },   // PadFillD17 — deck fill · d=509u
+      { lat:   66.0261, lon:  -15.0000, ang: 0.1450, top: 1.95174 },   // PadFillD18 — deck fill · d=523u
     ],
   },
   {
@@ -2532,6 +2550,27 @@ function fromBakedFrame(body, b, out) {
   return out.set(b.x * cy + b.z * sy, b.y, -b.x * sy + b.z * cy);
 }
 
+/* Which way is UP where the ship is standing? (v93)
+
+   On a planet: the radial — the ray from the centre out to you. That is just
+   the geometry of a ball, and every world in this system reads that way.
+
+   A STATION is not a ball. FLEET COMMAND is a flat stack of decks, and even
+   with its body origin dropped 400u below the hub (see modelOffsetY) the
+   radial still only gets within ~60° of an arm berth's deck. Stand a ship on
+   that and it parks visibly canted, belly toward the hub. So a body may
+   declare `deckN`: the direction its decks face in body-local space, spun
+   forward into the world here. build_fc.py DERIVES it from the pad hooks every
+   run and shouts if any deck disagrees with the rest, so it cannot quietly
+   stop describing the model.
+
+   Position stays radial — groundRadius() answers in radii and the pad table is
+   measured to match. This decides only which way the pilot's head points. */
+function surfaceUp(body, n, out) {
+  if (!body.deckN) return out.copy(n);
+  return fromBakedFrame(body, body.deckN, out).normalize();
+}
+
 /* Bilinear sample of ANY lat/lon uint8 grid, in the as-baked frame → 0..255.
    Split out of groundRadius (v63): the height grid and the hazard masks are
    separate grids at separate resolutions, so w/h has to come off the grid
@@ -2571,9 +2610,25 @@ function groundRadius(body, n) {
   // unreachable: every deck on the station would have been a ghost you sink
   // through. Same bug class as the v87.1 pad-cone fall-through, one level up.
   if (body.pads) {
+    const N = body.deckN;
     for (const pad of body.pads) {
-      if (b.x * pad.dx + b.y * pad.dy + b.z * pad.dz > pad.cosAng)
-        return body.cfg.radius * pad.top;
+      if (b.x * pad.dx + b.y * pad.dy + b.z * pad.dz > pad.cosAng) {
+        /* v93: inside the cone, a DECK is a plate, not a patch of sphere. On a
+           planet the two are the same thing and this stays the old line. On a
+           station they are not: the top-deck centre and the fill ring 11° off
+           it lie on one physical slab and read 9.3u apart as spheres, so a
+           ship walking between them steps up and down a floor that is visibly
+           flat. Intersect the ray with the plate instead — exact at any cone
+           size, which is also what lets a deck be tiled with WIDE fill cones
+           without the rim sag plan §10.5 had to size around.
+           The near-parallel guard is not reachable on FC (its worst deck meets
+           its own ray at 0.498, and fc-pads.js pins that at 0.20), but a ray
+           grazing a plate has no honest answer and must not return one. */
+        if (!N) return body.cfg.radius * pad.top;
+        const bn = b.x * N.x + b.y * N.y + b.z * N.z;
+        return bn > 0.05 ? body.cfg.radius * pad.planeK / bn
+                         : body.cfg.radius * pad.top;
+      }
     }
   }
   if (!g) return body.cfg.radius;
@@ -2732,21 +2787,42 @@ function buildBody(cfg) {
                                  // grid attaches here when it arrives
   body.orbitDelta = new THREE.Vector3();  // this frame's orbital travel —
                                           // a parked ship rides it
+  /* v93: which way this body's decks face, if it isn't a ball — see
+     surfaceUp(). Normalized once here so the per-frame path is only a rotate,
+     and left null for every planet, which keeps standing on the radial.
+     Read BEFORE the pad map, which bakes each deck's plane against it. */
+  body.deckN = cfg.deckN
+    ? new THREE.Vector3(cfg.deckN[0], cfg.deckN[1], cfg.deckN[2]).normalize()
+    : null;
+
   if (cfg.pads) {
     // precompute each pad's direction in the as-baked frame. Blender is
     // Z-up, glTF is Y-up: (cos la cos lo, sin la, -cos la sin lo) — the
     // exact inverse of groundRadius's lat/lon lookup.
     body.pads = cfg.pads.map(p => {
       const la = THREE.MathUtils.degToRad(p.lat), lo = THREE.MathUtils.degToRad(p.lon);
+      const dx = Math.cos(la) * Math.cos(lo),
+            dy = Math.sin(la),
+            dz = -Math.cos(la) * Math.sin(lo);
+      const N = body.deckN;
       return {
         ...p,                        // v60: the pad's own config rides along —
                                      // `port` (and any future key) survives to
                                      // runtime. Without this spread the map
                                      // returns geometry ONLY and every port
                                      // flag reads undefined, silently.
-        dx: Math.cos(la) * Math.cos(lo),
-        dy: Math.sin(la),
-        dz: -Math.cos(la) * Math.sin(lo),
+        dx, dy, dz,
+        /* v93: this deck AS A PLANE. A pad is a cone from the body origin, so
+           its floor is a patch of SPHERE — and a sphere is not a deck. Across
+           one wide cone it sags at the rim, and two pads on the same physical
+           plate disagree the further apart they are: FC's top-deck centre and
+           the ring 11° off it both sit on the same slab, and read 9.3u apart
+           as spheres. The cone still decides WHERE a pad applies; the height
+           inside it now comes from intersecting the ray with the plate.
+           planeK is the plane's own constant, radius-free so cfg.radius can
+           still scale the body: height = radius * planeK / (ray · deckN).
+           Null on every planet, where a ball's floor IS a sphere. */
+        planeK: N ? p.top * (dx * N.x + dy * N.y + dz * N.z) : 0,
         cosAng: Math.cos(p.ang),   // dot-product test beats acos every frame
         // the port district (v60), sized off THIS pad rather than one global cone
         districtCos: Math.cos(p.district != null ? p.district : p.ang * PAD_DISTRICT_MUL),
@@ -2809,6 +2885,16 @@ function buildBody(cfg) {
           // by 3.73x — you'd "land" ~200u above the deck, on nothing. So the
           // authored radius is config, defaulting to the planet convention.
           model.scale.setScalar(cfg.radius / (cfg.modelRadius || 100));
+          /* ...and a station's body origin isn't its centre (v93). FLEET
+             COMMAND's pad table is measured from a point 400u BELOW the hub,
+             because that is what swings the radial "up" upright at a berth
+             instead of leaving it horizontal. The .glb is still authored
+             around the hub, so the model has to be lifted to meet the table.
+             Miss this and every deck is off by exactly modelOffsetY — the
+             same amount everywhere, which reads as "the pads are ghosts"
+             rather than as an offset. Planets leave it undefined and sit at
+             their own centre, exactly as before. */
+          model.position.y = cfg.modelOffsetY || 0;
           // the derelict ships dark (§9). Before it's added, so there is never
           // a frame where a dead station is lit up like a Christmas tree.
           if (cfg.derelict) body.glowsKilled = killGlow(model);
@@ -8965,6 +9051,8 @@ const _asstUp  = new THREE.Vector3();
 const _landDir = new THREE.Vector3();   // assist scratch — collision-loop branch only
 const _landTgt = new THREE.Vector3();
 const _landUp  = new THREE.Vector3();
+const _landStand = new THREE.Vector3();  // v93: which way is up on THIS deck —
+                                         // surfaceUp(), not the radial
 const _alignQ  = new THREE.Quaternion();
 const _easeQ   = new THREE.Quaternion();
 const landTagEl = document.getElementById("landtag");
@@ -10285,10 +10373,14 @@ function animate() {
                 .normalize()
                 .applyAxisAngle(SPIN_AXIS, yaw);   // center on the deck, spin-tracked
         shipObj.position.copy(b.group.position).addScaledVector(_landDir, curR);
-        // ease the hull to gear-down (belly to the deck) — a fraction of the
-        // minimal up→normal rotation each frame, so it settles without a snap
+        /* ease the hull to gear-down (belly to the deck) — a fraction of the
+           minimal up→normal rotation each frame, so it settles without a snap.
+           v93: belly to the DECK, which on a station is not the radial. The
+           ship still descends along _landDir; it just stops treating "away
+           from the middle" as "up" on a body that has no middle to speak of. */
+        surfaceUp(b, _landDir, _landStand);
         _landUp.set(0, 1, 0).applyQuaternion(shipObj.quaternion);
-        _alignQ.setFromUnitVectors(_landUp, _landDir);
+        _alignQ.setFromUnitVectors(_landUp, _landStand);
         _easeQ.identity().slerp(_alignQ, Math.min(1, dt * 4));
         shipObj.quaternion.premultiply(_easeQ);
         camCarry.add(carryDelta.subVectors(shipObj.position, carryPrev));
