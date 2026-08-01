@@ -1448,13 +1448,26 @@ const BODIES = [
     file: "station/spacesuck-fc.glb",
     landable: true,
     derelict: true,                 // §9: every *Glow emissive dialled to 0
-    // KRONOS's neighbourhood — the truck stop by the highway. MATCHING the
-    // orbit radius and speed is what keeps the two station-keeping forever
-    // instead of slowly drifting apart; only the angle differs. Δ0.12 rad is
-    // about 8,750u off KRONOS — clear of the belt's 6,300 outer edge, with a
-    // gas giant filling the windshield on approach. The extra 600 of `y` lifts
-    // it off KRONOS's plane so the silhouette doesn't read against the rings.
-    orbit: { radius: 73000, speed: 0.002, angle: 4.2 + 0.12, y: 9600 },
+    /* MIDSYSTEM AND DEAD IN THE WATER — Tanner's call after flying it, v93.
+       It used to sit at 73,000 matching KRONOS's radius and speed so the two
+       station-kept forever, with the gas giant filling the windshield. That
+       made it the furthest thing out and a long chase.
+
+       55,000 is the WIDEST EMPTY LANE in the system — AZURE is at 49,500 and
+       RUBICON at 62,000, so nothing comes within ~5,000u of it, ever. The
+       literal HELIOS↔KRONOS midpoint would be 36,500, and that is CINDER's
+       lane (36,000, and CINDER is 900 across): they would eventually occupy
+       the same space.
+
+       speed 0 — a derelict holds no station, so it stops pretending to. It is
+       now a FIXED landmark: same coordinates every session, found rather than
+       chased, and the rest of the system wheels around it. `orbitDelta` goes
+       to zero, which the parked-ship carry handles for free.
+
+       The 9,600 of `y` stays, and now earns its keep differently: nothing
+       shares this lane, so being off the ecliptic is what gives it a silhouette
+       against stars instead of against a world. */
+    orbit: { radius: 55000, speed: 0, angle: 4.2, y: 9600 },
     spin: 0,                        // a dead station holds no attitude
     pads: [
       // named pads FIRST, deck-fill LAST: the cone loop returns the
@@ -1473,50 +1486,51 @@ const BODIES = [
       { lat:   61.0402, lon:  100.0000, ang: 0.0423, top: 1.89950 },   // PadS03 — short-stay A4 (garage) · d=509u
       { lat:   58.7694, lon:  116.0000, ang: 0.0413, top: 1.94364 },   // PadS04 — short-stay A5 (garage) · d=520u
       { lat:   58.2400, lon:  132.0000, ang: 0.0411, top: 1.95468 },   // PadS05 — short-stay A6 (garage) · d=523u
-      // deck fill — walkable floor between the named pads (plan §10.5)
-      { lat:   53.9961, lon:    0.0000, ang: 0.1139, top: 2.05443 },   // PadFillL00 — ledge fill · d=550u
-      { lat:   53.0466, lon:   15.0000, ang: 0.1165, top: 2.07976 },   // PadFillL01 — ledge fill · d=557u
-      { lat:   56.1591, lon:   30.0000, ang: 0.1079, top: 2.00098 },   // PadFillL02 — ledge fill · d=536u
-      { lat:   58.0837, lon:   45.0000, ang: 0.1025, top: 1.95799 },   // PadFillL03 — ledge fill · d=524u
-      { lat:   58.1581, lon:   60.0000, ang: 0.1023, top: 1.95641 },   // PadFillL04 — ledge fill · d=524u
-      { lat:   60.5679, lon:   75.0000, ang: 0.0952, top: 1.90827 },   // PadFillL05 — ledge fill · d=511u
-      { lat:   61.4103, lon:   90.0000, ang: 0.0928, top: 1.89277 },   // PadFillL06 — ledge fill · d=507u
-      { lat:   60.5679, lon:  105.0000, ang: 0.0952, top: 1.90827 },   // PadFillL07 — ledge fill · d=511u
-      { lat:   58.1581, lon:  120.0000, ang: 0.1023, top: 1.95641 },   // PadFillL08 — ledge fill · d=524u
-      { lat:   58.0837, lon:  135.0000, ang: 0.1025, top: 1.95799 },   // PadFillL09 — ledge fill · d=524u
-      { lat:   56.1591, lon:  150.0000, ang: 0.1079, top: 2.00098 },   // PadFillL10 — ledge fill · d=536u
-      { lat:   53.0466, lon:  165.0000, ang: 0.1165, top: 2.07976 },   // PadFillL11 — ledge fill · d=557u
-      { lat:   53.9961, lon:  180.0000, ang: 0.1139, top: 2.05443 },   // PadFillL12 — ledge fill · d=550u
-      { lat:   53.0466, lon: -165.0000, ang: 0.1165, top: 2.07976 },   // PadFillL13 — ledge fill · d=557u
-      { lat:   56.1591, lon: -150.0000, ang: 0.1079, top: 2.00098 },   // PadFillL14 — ledge fill · d=536u
-      { lat:   58.0837, lon: -135.0000, ang: 0.1025, top: 1.95799 },   // PadFillL15 — ledge fill · d=524u
-      { lat:   58.1581, lon: -120.0000, ang: 0.1023, top: 1.95641 },   // PadFillL16 — ledge fill · d=524u
-      { lat:   60.5679, lon: -105.0000, ang: 0.0952, top: 1.90827 },   // PadFillL17 — ledge fill · d=511u
-      { lat:   61.4103, lon:  -90.0000, ang: 0.0928, top: 1.89277 },   // PadFillL18 — ledge fill · d=507u
-      { lat:   60.5679, lon:  -75.0000, ang: 0.0952, top: 1.90827 },   // PadFillL19 — ledge fill · d=511u
-      { lat:   58.1581, lon:  -60.0000, ang: 0.1023, top: 1.95641 },   // PadFillL20 — ledge fill · d=524u
-      { lat:   58.0837, lon:  -45.0000, ang: 0.1025, top: 1.95799 },   // PadFillL21 — ledge fill · d=524u
-      { lat:   56.1591, lon:  -30.0000, ang: 0.1079, top: 2.00098 },   // PadFillL22 — ledge fill · d=536u
-      { lat:   53.0466, lon:  -15.0000, ang: 0.1165, top: 2.07976 },   // PadFillL23 — ledge fill · d=557u
-      { lat:   90.0000, lon:    0.0000, ang: 0.2073, top: 1.78337 },   // PadFillD00 — deck fill · d=478u
-      { lat:   76.9287, lon:    0.0000, ang: 0.1493, top: 1.83080 },   // PadFillD01 — deck fill · d=490u
-      { lat:   78.7763, lon:   60.0000, ang: 0.1285, top: 1.81814 },   // PadFillD02 — deck fill · d=487u
-      { lat:   78.7763, lon:  120.0000, ang: 0.1285, top: 1.81814 },   // PadFillD03 — deck fill · d=487u
-      { lat:   76.9287, lon:  180.0000, ang: 0.1493, top: 1.83080 },   // PadFillD04 — deck fill · d=490u
-      { lat:   78.7763, lon: -120.0000, ang: 0.1285, top: 1.81814 },   // PadFillD05 — deck fill · d=487u
-      { lat:   78.7763, lon:  -60.0000, ang: 0.1285, top: 1.81814 },   // PadFillD06 — deck fill · d=487u
-      { lat:   66.0261, lon:   15.0000, ang: 0.1450, top: 1.95174 },   // PadFillD07 — deck fill · d=523u
-      { lat:   69.7878, lon:   45.0000, ang: 0.1233, top: 1.90039 },   // PadFillD08 — deck fill · d=509u
-      { lat:   71.5558, lon:   75.0000, ang: 0.1129, top: 1.87993 },   // PadFillD09 — deck fill · d=503u
-      { lat:   71.5558, lon:  105.0000, ang: 0.1129, top: 1.87993 },   // PadFillD10 — deck fill · d=503u
-      { lat:   69.7878, lon:  135.0000, ang: 0.1233, top: 1.90039 },   // PadFillD11 — deck fill · d=509u
-      { lat:   66.0261, lon:  165.0000, ang: 0.1450, top: 1.95174 },   // PadFillD12 — deck fill · d=523u
-      { lat:   66.0261, lon: -165.0000, ang: 0.1450, top: 1.95174 },   // PadFillD13 — deck fill · d=523u
-      { lat:   69.7878, lon: -135.0000, ang: 0.1233, top: 1.90039 },   // PadFillD14 — deck fill · d=509u
-      { lat:   71.5558, lon: -105.0000, ang: 0.1129, top: 1.87993 },   // PadFillD15 — deck fill · d=503u
-      { lat:   71.5558, lon:  -75.0000, ang: 0.1129, top: 1.87993 },   // PadFillD16 — deck fill · d=503u
-      { lat:   69.7878, lon:  -45.0000, ang: 0.1233, top: 1.90039 },   // PadFillD17 — deck fill · d=509u
-      { lat:   66.0261, lon:  -15.0000, ang: 0.1450, top: 1.95174 },   // PadFillD18 — deck fill · d=523u
+      // deck fill — walkable FLOOR between the named pads (plan §10.5).
+      // `fill` = the game holds a ship up here but never offers a landing.
+      { lat:   53.9961, lon:    0.0000, ang: 0.1139, top: 2.05443, fill: true },   // PadFillL00 — ledge fill · d=550u
+      { lat:   53.0466, lon:   15.0000, ang: 0.1165, top: 2.07976, fill: true },   // PadFillL01 — ledge fill · d=557u
+      { lat:   56.1591, lon:   30.0000, ang: 0.1079, top: 2.00098, fill: true },   // PadFillL02 — ledge fill · d=536u
+      { lat:   58.0837, lon:   45.0000, ang: 0.1025, top: 1.95799, fill: true },   // PadFillL03 — ledge fill · d=524u
+      { lat:   58.1581, lon:   60.0000, ang: 0.1023, top: 1.95641, fill: true },   // PadFillL04 — ledge fill · d=524u
+      { lat:   60.5679, lon:   75.0000, ang: 0.0952, top: 1.90827, fill: true },   // PadFillL05 — ledge fill · d=511u
+      { lat:   61.4103, lon:   90.0000, ang: 0.0928, top: 1.89277, fill: true },   // PadFillL06 — ledge fill · d=507u
+      { lat:   60.5679, lon:  105.0000, ang: 0.0952, top: 1.90827, fill: true },   // PadFillL07 — ledge fill · d=511u
+      { lat:   58.1581, lon:  120.0000, ang: 0.1023, top: 1.95641, fill: true },   // PadFillL08 — ledge fill · d=524u
+      { lat:   58.0837, lon:  135.0000, ang: 0.1025, top: 1.95799, fill: true },   // PadFillL09 — ledge fill · d=524u
+      { lat:   56.1591, lon:  150.0000, ang: 0.1079, top: 2.00098, fill: true },   // PadFillL10 — ledge fill · d=536u
+      { lat:   53.0466, lon:  165.0000, ang: 0.1165, top: 2.07976, fill: true },   // PadFillL11 — ledge fill · d=557u
+      { lat:   53.9961, lon:  180.0000, ang: 0.1139, top: 2.05443, fill: true },   // PadFillL12 — ledge fill · d=550u
+      { lat:   53.0466, lon: -165.0000, ang: 0.1165, top: 2.07976, fill: true },   // PadFillL13 — ledge fill · d=557u
+      { lat:   56.1591, lon: -150.0000, ang: 0.1079, top: 2.00098, fill: true },   // PadFillL14 — ledge fill · d=536u
+      { lat:   58.0837, lon: -135.0000, ang: 0.1025, top: 1.95799, fill: true },   // PadFillL15 — ledge fill · d=524u
+      { lat:   58.1581, lon: -120.0000, ang: 0.1023, top: 1.95641, fill: true },   // PadFillL16 — ledge fill · d=524u
+      { lat:   60.5679, lon: -105.0000, ang: 0.0952, top: 1.90827, fill: true },   // PadFillL17 — ledge fill · d=511u
+      { lat:   61.4103, lon:  -90.0000, ang: 0.0928, top: 1.89277, fill: true },   // PadFillL18 — ledge fill · d=507u
+      { lat:   60.5679, lon:  -75.0000, ang: 0.0952, top: 1.90827, fill: true },   // PadFillL19 — ledge fill · d=511u
+      { lat:   58.1581, lon:  -60.0000, ang: 0.1023, top: 1.95641, fill: true },   // PadFillL20 — ledge fill · d=524u
+      { lat:   58.0837, lon:  -45.0000, ang: 0.1025, top: 1.95799, fill: true },   // PadFillL21 — ledge fill · d=524u
+      { lat:   56.1591, lon:  -30.0000, ang: 0.1079, top: 2.00098, fill: true },   // PadFillL22 — ledge fill · d=536u
+      { lat:   53.0466, lon:  -15.0000, ang: 0.1165, top: 2.07976, fill: true },   // PadFillL23 — ledge fill · d=557u
+      { lat:   90.0000, lon:    0.0000, ang: 0.2073, top: 1.78337, fill: true },   // PadFillD00 — deck fill · d=478u
+      { lat:   76.9287, lon:    0.0000, ang: 0.1493, top: 1.83080, fill: true },   // PadFillD01 — deck fill · d=490u
+      { lat:   78.7763, lon:   60.0000, ang: 0.1285, top: 1.81814, fill: true },   // PadFillD02 — deck fill · d=487u
+      { lat:   78.7763, lon:  120.0000, ang: 0.1285, top: 1.81814, fill: true },   // PadFillD03 — deck fill · d=487u
+      { lat:   76.9287, lon:  180.0000, ang: 0.1493, top: 1.83080, fill: true },   // PadFillD04 — deck fill · d=490u
+      { lat:   78.7763, lon: -120.0000, ang: 0.1285, top: 1.81814, fill: true },   // PadFillD05 — deck fill · d=487u
+      { lat:   78.7763, lon:  -60.0000, ang: 0.1285, top: 1.81814, fill: true },   // PadFillD06 — deck fill · d=487u
+      { lat:   66.0261, lon:   15.0000, ang: 0.1450, top: 1.95174, fill: true },   // PadFillD07 — deck fill · d=523u
+      { lat:   69.7878, lon:   45.0000, ang: 0.1233, top: 1.90039, fill: true },   // PadFillD08 — deck fill · d=509u
+      { lat:   71.5558, lon:   75.0000, ang: 0.1129, top: 1.87993, fill: true },   // PadFillD09 — deck fill · d=503u
+      { lat:   71.5558, lon:  105.0000, ang: 0.1129, top: 1.87993, fill: true },   // PadFillD10 — deck fill · d=503u
+      { lat:   69.7878, lon:  135.0000, ang: 0.1233, top: 1.90039, fill: true },   // PadFillD11 — deck fill · d=509u
+      { lat:   66.0261, lon:  165.0000, ang: 0.1450, top: 1.95174, fill: true },   // PadFillD12 — deck fill · d=523u
+      { lat:   66.0261, lon: -165.0000, ang: 0.1450, top: 1.95174, fill: true },   // PadFillD13 — deck fill · d=523u
+      { lat:   69.7878, lon: -135.0000, ang: 0.1233, top: 1.90039, fill: true },   // PadFillD14 — deck fill · d=509u
+      { lat:   71.5558, lon: -105.0000, ang: 0.1129, top: 1.87993, fill: true },   // PadFillD15 — deck fill · d=503u
+      { lat:   71.5558, lon:  -75.0000, ang: 0.1129, top: 1.87993, fill: true },   // PadFillD16 — deck fill · d=503u
+      { lat:   69.7878, lon:  -45.0000, ang: 0.1233, top: 1.90039, fill: true },   // PadFillD17 — deck fill · d=509u
+      { lat:   66.0261, lon:  -15.0000, ang: 0.1450, top: 1.95174, fill: true },   // PadFillD18 — deck fill · d=523u
     ],
   },
   {
@@ -2780,6 +2794,124 @@ function killGlow(model) {
   return n;
 }
 
+/* PAD CRANES (v93) — Tanner: "the crane arms should remain stationary till the
+   hauler either shows up to port or leaves port."
+
+   Each arm berth on FLEET COMMAND has a boom parked over it. MEASURED: three of
+   the eight (booms 01/02/03) hang far enough across their own pad that a ship
+   descending the 150u column clips them — 2-3 rays of the hull's 12u footprint,
+   about 59-63u up. The other five are clear. So the swing is not decoration on
+   those three; it is what makes the approach honest.
+
+   ⚠ THE SLEW AXIS IS Y, NOT Z. Blender is Z-up and glTF is Y-up, so the pivot
+   that reads `rot_z` in build_fc.py arrives here as a rotation about Y. Rotating
+   Z instead does not slew the boom, it TILTS it — and the first probe of this
+   read "no swing angle clears the pad" at every angle from -90° to +90°, which
+   looked exactly like "the boom is not the obstruction". It was. About Y, every
+   angle tried clears the column completely.
+
+   The mapping runs SLEW -> nearest pad, deliberately not pad -> nearest slew.
+   Backwards, a short-stay pad with no crane of its own is still handed whichever
+   boom happens to be least far away — 440 to 616u across the station. This way
+   the eight booms claim the eight berths and nothing else gets one, with no
+   distance threshold to tune. */
+const CRANE_SWING = 34 * Math.PI / 180;   // build_fc.py PAD_SLEW_DEG
+const CRANE_RATE  = 1.6;                  // rad/s — a heavy thing moving
+
+function buildCranes(body, model) {
+  if (!body.pads) return;
+  const slews = [];
+  model.traverse(o => { if (/^PadSlew\d+$/.test(o.name)) slews.push(o); });
+  if (!slews.length) return;
+  model.updateMatrixWorld(true);
+  const w = new THREE.Vector3(), d = new THREE.Vector3();
+  body.cranes = slews.map(node => {
+    w.setFromMatrixPosition(node.matrixWorld);
+    let pad = null, best = Infinity;
+    for (const p of body.pads) {
+      if (p.fill) continue;
+      d.set(p.dx, p.dy, p.dz).multiplyScalar(body.cfg.radius * p.top)
+       .add(body.group.position);
+      const dist = d.distanceTo(w);
+      if (dist < best) { best = dist; pad = p; }
+    }
+    return pad ? { node, pad, home: node.rotation.y, swing: CRANE_SWING } : null;
+  }).filter(Boolean);
+
+  /* WHICH WAY each boom swings is MEASURED, not assumed. Swinging every crane
+     the same way clears the three that park over their pad and pushes at least
+     one that was already clear (berth 04) straight over its own column — the
+     arc runs both sides of the deck and 34° is enough to cross it. So: fire the
+     hull's own footprint up each column at +34° and -34° and keep whichever
+     leaves it clearest, ties to the authored direction. 144 rays, once, at
+     load. Re-measures itself the day an arm moves in Blender, which a hand-
+     written per-berth table would not. */
+  const meshes = [];
+  model.traverse(o => { if (o.isMesh && o.geometry) meshes.push(o); });
+  for (const c of body.cranes) {
+    let best = Infinity, pick = CRANE_SWING;
+    for (const s of [CRANE_SWING, -CRANE_SWING]) {
+      c.node.rotation.y = c.home + s;
+      model.updateMatrixWorld(true);
+      const n = columnBlocked(body, c.pad, meshes);
+      if (n < best) { best = n; pick = s; }
+    }
+    c.swing = pick;
+    c.node.rotation.y = c.home;
+  }
+  model.updateMatrixWorld(true);
+}
+
+/* How much of a descending hull's footprint is under something, on this pad?
+   The 12u disc, straight up the deck's own normal, over the 150u the assist
+   drops through. Shared by buildCranes() and fc-approach.js so the game and the
+   test cannot disagree about what "the column is clear" means. */
+const _colN = new THREE.Vector3(), _colU = new THREE.Vector3();
+const _colP = new THREE.Vector3(), _colRC = new THREE.Raycaster();
+function columnBlocked(body, pad, meshes) {
+  const yaw = body.surface ? body.surface.rotation.y : (body.cfg.yaw || 0);
+  _colN.set(pad.dx, pad.dy, pad.dz).applyAxisAngle(SPIN_AXIS, yaw);
+  surfaceUp(body, _colN, _colU);
+  const gear = body.group.position.clone()
+    .addScaledVector(_colN, body.cfg.radius * pad.top)
+    .addScaledVector(_colU, GEAR_HEIGHT);
+  const t1 = new THREE.Vector3().crossVectors(_colU, _colN).normalize();
+  const t2 = new THREE.Vector3().crossVectors(_colU, t1).normalize();
+  _colRC.far = HOVER_ALT + 60;
+  let n = 0;
+  for (let k = 0; k < 9; k++) {
+    const a = k * Math.PI / 4, r = k === 0 ? 0 : SHIP_HIT_R;
+    _colP.copy(gear).addScaledVector(t1, Math.cos(a) * r)
+                    .addScaledVector(t2, Math.sin(a) * r);
+    _colRC.set(_colP, _colU);
+    if (_colRC.intersectObjects(meshes, false).some(h => {
+          const d = h.point.distanceTo(_colP);
+          return d > 2 && d < HOVER_ALT;
+        })) n++;
+  }
+  return n;
+}
+
+/* Swing the booms that are wanted, park the rest. A crane is wanted from the
+   moment a ship COMMITS to its pad — the assist arming, not the touchdown — so
+   it is out of the way before the descent starts, and it stays out while the
+   ship is parked. Eased at a fixed rate rather than a fraction-per-frame, so it
+   reads as machinery under load instead of a spring. */
+function updateCranes(dt) {
+  for (const b of liveBodies) {
+    if (!b.cranes) continue;
+    for (const c of b.cranes) {
+      const wanted = (landing && landing.b === b && landing.pad === c.pad)
+                  || (liftoff && liftoff.b === b)
+                  || (landedOn === b && landedPad === c.pad);
+      const tgt = c.home + (wanted ? c.swing : 0);
+      const gap = tgt - c.node.rotation.y;
+      const step = CRANE_RATE * dt;
+      c.node.rotation.y += Math.abs(gap) <= step ? gap : Math.sign(gap) * step;
+    }
+  }
+}
+
 function buildBody(cfg) {
   const group = new THREE.Group();
   group.position.set(...cfg.position);
@@ -2899,6 +3031,7 @@ function buildBody(cfg) {
           // a frame where a dead station is lit up like a Christmas tree.
           if (cfg.derelict) body.glowsKilled = killGlow(model);
           holder.add(model);
+          buildCranes(body, model);
           // the GLB's cloud shell drifts like every other cloud layer
           const clouds = model.getObjectByName("Clouds");
           if (clouds) cloudLayers.push({ mesh: clouds, speed: 0.03 });
@@ -8289,6 +8422,13 @@ const chaseAxis = new THREE.Vector3();
 const chaseFixQ = new THREE.Quaternion();
 const CAM_GROUND_MARGIN = 2.5;             // v55: the lens keeps this much air under it
 const camGroundV = new THREE.Vector3();    // scratch for the ground clamp
+/* How far out the camera's ground clamp still bothers to look (v93).
+
+   A FUNCTION, not an expression inlined at the clamp, so a test can ask the
+   GAME what its reach is instead of recomputing the formula and agreeing with
+   itself. The first version of that assertion did exactly that and sailed
+   straight through a falsification run — it could not have failed. */
+const camReach = b => b.cfg.radius * Math.max(1.5, b.gateMul);
 
 /* planet-carry for the lens (v64): inside a world's SOI the physics step
    TELEPORTS the ship each frame to ride the planet's orbit and spin — that's
@@ -8364,6 +8504,110 @@ function cineCutNewShot() {
     .addScaledVector(cineTanB, ca * r * spin);
   cineTmpV.copy(cineOffset).normalize().multiplyScalar((Math.random() - 0.5) * 5);
   cineOffsetVel.add(cineTmpV);
+}
+
+/* ---- PAD CAMERA (v93) — cut away and WATCH the landing ----
+
+   Tanner: "is it possible to have the camera cut to a view you can see the ship
+   land when you press the assisted land button?"
+
+   A pad-side low angle: down near the deck, off to one side, looking back at the
+   ship as it settles. You see the gear come down and the deck come up. The same
+   shot plays in reverse on a launch.
+
+   Two things make this cheap. The assist already owns the ship outright for
+   those few seconds, so there is no pilot input to fight and no easing to argue
+   with — a hard cut is safe. And handing BACK needs no code at all: the chase
+   rig eases from wherever the lens happens to be, so the return to flying is
+   already a smooth pull-back. Only the cut in is a cut, which is what was asked
+   for.
+
+   WHICH SIDE: outboard — the part of the pad's radial that lies in the deck
+   plane. On an arm berth that is off the end of the arm, over open space and
+   looking back at the station behind the ship. On the ledge it is out past the
+   rim. It degenerates on a deck whose normal IS its radial (the top-deck
+   centre), so that case falls back to any stable tangent.
+
+   The camera ground clamp still runs after this and still applies, so a shot
+   composed a little low gets pushed back above the deck rather than ending up
+   inside it. */
+/* MEASURED, not eyeballed. The shot has to hold BOTH ends of the descent, and
+   the descent is no longer a fixed height — the hover point is wherever the
+   pilot arrived (see MIN_HOVER). So the standoff is DERIVED from the drop that
+   is actually about to happen: a 150u approach frames wide, a 40u one comes
+   right in, and neither needs a number typed for it.
+
+   Tracking the ship alone points the lens 52° up on the first frame with the
+   deck off-screen entirely — you watch a dot, not a landing — so it looks at
+   the MIDPOINT of ship and deck. At SHOT_FILL 0.85 a full-height approach puts
+   the ship 23° off the view axis and the pad 33°, both inside the 35° half-FOV.
+
+   ⛔ AND THE PUSH-IN RUNS THE RIGHT WAY NOW. It was written `(1 - k)`, which ran
+   the landing shot from 110u out to 160u — pulling AWAY as the ship settled, so
+   the closest look at the touchdown was the frame before the cut. That is
+   Tanner's "it appears to be really far away": by the moment worth watching, the
+   camera was at its furthest point of the whole move. */
+const SHOT_UP = 26;             // height over the deck plane — a low, pad-side angle
+const SHOT_FILL = 0.85;         // standoff per unit of descent height
+const SHOT_MIN = 46;            // ...but never closer than this
+const SHOT_MAX = 132;           // ...nor further than this
+const SHOT_CLOSE = 0.6;         // how far it pushes in by touchdown
+const _shotN = new THREE.Vector3(), _shotUp = new THREE.Vector3();
+const _shotSide = new THREE.Vector3(), _shotDeck = new THREE.Vector3();
+const _shotLook = new THREE.Vector3();
+/* the standoff for a drop of `span`, at `k` = 0 at the cut, 1 at the deck */
+function shotOut(span, k) {
+  const wide = Math.min(SHOT_MAX, Math.max(SHOT_MIN, span * SHOT_FILL));
+  const near = Math.max(SHOT_MIN, wide * SHOT_CLOSE);
+  return wide + (near - wide) * k;
+}
+const _shotM = new THREE.Matrix4();
+
+/* The manoeuvre the pad camera should be watching, or null. */
+function padShot() {
+  if (landing) return { b: landing.b, pad: landing.pad, span: landing.hoverAlt,
+                        k: Math.min(1, landing.t / (APPROACH_DUR + landing.dur2)) };
+  // a launch is the same shot in reverse: k runs 1 -> 0, so the lens starts
+  // tight on the pad and pulls out as the ship climbs
+  if (liftoff) return { b: liftoff.b, pad: liftoff.pad, span: HOVER_ALT,
+                        k: 1 - Math.min(1, liftoff.t / LIFTOFF_DUR) };
+  return null;
+}
+
+function padShotCamera(m) {
+  const b = m.b;
+  const yaw = b.surface ? b.surface.rotation.y : (b.cfg.yaw || 0);
+  if (m.pad) {
+    _shotN.set(m.pad.dx, m.pad.dy, m.pad.dz).applyAxisAngle(SPIN_AXIS, yaw).normalize();
+    surfaceUp(b, _shotN, _shotUp);
+    _shotDeck.copy(b.group.position)
+             .addScaledVector(_shotN, b.cfg.radius * m.pad.top);
+  } else {
+    // a manual touchdown has no pad — frame the ground under the ship instead
+    _shotN.subVectors(shipObj.position, b.group.position).normalize();
+    surfaceUp(b, _shotN, _shotUp);
+    _shotDeck.copy(b.group.position)
+             .addScaledVector(_shotN, groundRadius(b, _shotN));
+  }
+  // outboard, flattened into the deck plane
+  _shotSide.copy(_shotN).addScaledVector(_shotUp, -_shotN.dot(_shotUp));
+  if (_shotSide.lengthSq() < 1e-4) {            // deck normal == radial
+    _shotSide.set(1, 0, 0).cross(_shotUp);
+    if (_shotSide.lengthSq() < 1e-4) _shotSide.set(0, 0, 1).cross(_shotUp);
+  }
+  _shotSide.normalize();
+
+  const out = shotOut(m.span, m.k);
+  camera.position.copy(_shotDeck)
+        .addScaledVector(_shotUp, SHOT_UP)
+        .addScaledVector(_shotSide, out);
+  // frame the ship AND the deck it is heading for — the midpoint of the two,
+  // so the pad is in shot the whole way down instead of arriving at the last
+  // second. Build the orientation directly rather than via camera.up: every
+  // other rig sets the quaternion, and a stray camera.up would outlive this shot
+  _shotLook.copy(shipObj.position).lerp(_shotDeck, 0.5);
+  _shotM.lookAt(camera.position, _shotLook, _shotUp);
+  camera.quaternion.setFromRotationMatrix(_shotM);
 }
 
 /* cockpit dressing (v39): a gunsight ring and a shrunk crosshair, first-person only */
@@ -9029,33 +9273,105 @@ let prevNearestBody = null;
 
 /* landing state (v13) — see the landable branch in the collision loop */
 let landedOn = null;           // the body we're parked on, or null
+/* v93: ...and WHICH pad, when the assist put us there. The parked branch pins
+   the ship every frame, and pinning off the ship's OWN radial cannot put it on
+   the pad's centre — a berth's radial leans 60°, so the gear stop lands ~7u
+   across the plate. With the pad in hand the pin is exact and reads nothing
+   back from the ship, which is also what keeps it from drifting. Null after a
+   manual touchdown (you landed where you landed) and the radial fallback
+   covers that case. */
+let landedPad = null;
 let liftoff = null;            // v55 auto-liftoff in progress: { b, t } — see the collision loop
-const LIFTOFF_ALT = 30;        // control comes back this far above the gear stop
-const LIFTOFF_DUR = 2.0;       // seconds, pad to altitude
+const LIFTOFF_DUR = 2.0;       // seconds, deck to the hover point
 const GEAR_HEIGHT = 4;         // the ship rests this far above the terrain
 const SURFACE_G = 26;          // gravity at surface level, u/s²
 
-/* landing assist (v68) — the inverse of auto-liftoff. Press [G] while aligned
-   over a pad and the autopilot swings over the deck (canopy-clearing altitude),
-   then descends the surface normal and latches. { b, pad, t, dir0, r0, hoverR,
-   deckR } — dir0 is the START up-vector in the BAKED frame, so the whole path
-   is interpolated in the planet's own frame and rides its spin/orbit for free.
-   [G] also doubles as the leave-pad button when parked. */
+/* LANDING ASSIST — STRAIGHT UP AND DOWN (v93, Tanner's call after flying FC)
+
+   Two legs, and the split is the whole point:
+
+     1. ACROSS   from wherever you lined up to the HOVER POINT — a fixed height
+                 directly over the deck. Nothing descends during this leg.
+     2. DOWN     from the hover point onto the gear stop, along the deck's own
+                 up-vector. Nothing moves sideways during this leg.
+
+   Liftoff is leg 2 played backwards and nothing else: straight up, level, and
+   control back at the hover point with no thrust and no rotation.
+
+   ⛔ WHAT THIS REPLACED, AND WHY — v68 ran both legs AT ONCE. It swung the
+   approach direction toward the pad (front-loaded, done by ~62%) while the
+   radius shrank across the whole run. On a sphere that reads fine. On FLEET
+   COMMAND the deck is a flat plate, so an arc that is still swinging while it
+   drops passes BELOW the plate and arrives from underneath — Tanner flew it:
+   "it drops you into the pad before landing you". Separating the legs makes
+   that geometrically impossible: you cannot be off-centre and low at the same
+   time, on any body.
+
+   And v93's first liftoff fix rotated the ship's nose onto the radial so cruise
+   throttle would carry it clear. That worked and was still wrong: the chase
+   camera rides BEHIND the nose, so pitching up 60° swung the lens 60° DOWN,
+   through the deck and into the station. "the camera drops below the FC deck,
+   the screen appears to glitch out." Nothing rotates on a launch now, and
+   nothing needs to, because nothing thrusts.
+
+   Applies to EVERY world, not just stations — his call, one behaviour to learn.
+   On a planet the deck normal IS the radial, so leg 2 is the old descent; what
+   changes there is that the centering finishes before the drop starts, which is
+   strictly safer over VERDANT's canopy than overlapping them was. */
 let landing = null;
 let assistManualPrev = false;  // edge-detect: only a FRESH grab of the controls aborts the approach
 const ASSIST_RANGE = 600;      // deck distance (u) within which the assist offers itself
-const ASSIST_DUR = 1.6;        // s: the auto-descent, from where you lined up down to the deck
-const LAUNCH_THROTTLE = 0.45;  // [G]-launch engages a gentle cruise so you actually leave
+const HOVER_ALT = 150;         // the CEILING for the hover point, and the launch rise
+/* ...but the hover point is where YOU already are, capped at HOVER_ALT and
+   floored at MIN_HOVER. Tanner: "when I am flying in to the pad I am lower than
+   the camera shows, so it brings the ship up before it sets down."
+
+   A fixed hover means leg 1 HOISTS anyone who arrives below it, just to drop
+   them again — and lowering the fixed number only moves where that happens
+   rather than fixing it. Taking the pilot's own altitude means a low approach
+   stays low and slides straight across to the pad, a high one still gets the
+   full clean descent, and neither is ever lifted.
+
+   The floor is not arbitrary: below it the "descent" is shorter than the gear is
+   tall and the manoeuvre stops reading as a landing at all. It is also what
+   catches an approach from BELOW the deck, where the pilot genuinely does have
+   to come up before they can come down. */
+const MIN_HOVER = 34;
+const APPROACH_DUR = 1.4;      // s: leg 1, across to over the pad
+const ASSIST_DUR = 1.6;        // s: leg 2, the vertical descent onto the deck
+const smoothstep = x => x * x * (3 - 2 * x);   // starts AND ends at rest
+
+/* How far ALONG THE RADIAL to sit so the gear clears the deck by GEAR_HEIGHT.
+
+   On a planet that is just GEAR_HEIGHT: the radial and the deck normal are the
+   same vector. On an arm berth the radial leans 60°, so a plain radial offset
+   leaves only GEAR_HEIGHT·cos(60°) = 2u of air under a ship that needs 4 and the
+   gear sits sunk in the plate.
+
+   ⛔ AND IT HAS TO BE A RADIAL OFFSET. The obvious fix — pin radially for the
+   deck height, then add GEAR_HEIGHT along the deck normal — is a FEEDBACK LOOP:
+   the added vector tilts the ship's own radial a fraction of a degree, the next
+   frame re-pins from that tilted radial and tilts it again. Measured at an arm
+   berth it walks ~0.25°/frame, leaves the 5.2° pad cone in about twenty frames,
+   and then groundRadius() drops to the bare hub ball and the parked ship falls
+   through the deck. Scaling a purely radial offset keeps the direction fixed and
+   still puts exactly GEAR_HEIGHT of air over the plate.
+
+   The clamp is for a deck the radial barely meets at all; FC's worst is 0.498
+   and fc-pads.js pins that floor at 0.20. */
+const gearRise = (n, up) => GEAR_HEIGHT / Math.max(0.2, Math.abs(n.dot(up)));
 const _asstPad = new THREE.Vector3();   // assist scratch — helper only (keypress/HUD, never the loop)
-const _asstUp  = new THREE.Vector3();
 const _landDir = new THREE.Vector3();   // assist scratch — collision-loop branch only
 const _landTgt = new THREE.Vector3();
 const _landUp  = new THREE.Vector3();
 const _landStand = new THREE.Vector3();  // v93: which way is up on THIS deck —
                                          // surfaceUp(), not the radial
+const _landHover = new THREE.Vector3();  // v93: the hover point over the deck
 const _alignQ  = new THREE.Quaternion();
 const _easeQ   = new THREE.Quaternion();
 const landTagEl = document.getElementById("landtag");
+const _tagV = new THREE.Vector3();   // scratch: the hull, projected to the screen
+const TAG_LIFT = 34;                 // px the assist line rides ABOVE the hull
 const assistEl = document.getElementById("assisttag");
 const btnLandEl = document.getElementById("btnLand");
 const SPIN_AXIS = new THREE.Vector3(0, 1, 0);  // planets spin about local +Y
@@ -9323,11 +9639,21 @@ function pickPadTarget() {
     nx = _padN.x * cy - _padN.z * sy;
     nz = _padN.x * sy + _padN.z * cy;
   }
-  let pad = best.pads[0], top = -Infinity;
+  /* v93: `fill` pads are FLOOR, not berths — skipped here and nowhere else.
+     FLEET COMMAND tiles its decks with 43 fill cones so you can't walk off a
+     pad and fall through the station, and Tanner flew it: with all 57 carrying
+     the same rights, the whole station lit up with PAD labels and the reticle
+     chased whichever patch of deck happened to be nearest. Gating it HERE
+     covers the reticle, the pad field and the [G] offer in one move, because
+     all three read pickPadTarget(). groundRadius() deliberately still consults
+     them — take a fill pad out of the floor and you fall through the deck. */
+  let pad = null, top = -Infinity;
   for (const p of best.pads) {
+    if (p.fill) continue;
     const dot = nx * p.dx + _padN.y * p.dy + nz * p.dz;
     if (dot > top) { top = dot; pad = p; }
   }
+  if (!pad) return null;               // a body of nothing but floor offers none
   return { b: best, pad, dot: top };   // dot is reused as the ALIGNED test
 }
 
@@ -9368,19 +9694,38 @@ function tryAssist() {
   if (landedOn) {                                       // leave the pad: same rise as throttle-up
     const b = landedOn;
     landedOn = null;
-    liftoff = { b, t: 0, rise: 0 };
-    ship.throttle = LAUNCH_THROTTLE;                    // engage cruise so you actually depart
+    /* v93: NO auto-throttle. It used to engage a gentle cruise "so you actually
+       depart", which on a planet is a kindness and on a station is how you get
+       flown through the superstructure — the nose is still flat to the deck when
+       control lands in your hands. Straight up, then it is your ship. */
+    liftoff = { b, t: 0, rise: 0, pad: landedPad,
+                fromRel: shipObj.position.clone().sub(b.group.position) };
     return;
   }
   const tgt = landingTarget();
   if (!tgt) return;
   const b = tgt.b, pad = tgt.pad;
-  const r0 = shipObj.position.distanceTo(b.group.position);
-  _asstUp.subVectors(shipObj.position, b.group.position).multiplyScalar(1 / r0);
-  const dir0 = new THREE.Vector3();
-  toBakedFrame(b, _asstUp, dir0);                       // start up-vector, baked frame
-  const deckR = b.cfg.radius * pad.top;
-  landing = { b, pad, t: 0, dir0, r0, deckR };
+  // how high over the deck are we RIGHT NOW? that becomes the hover point
+  const _yaw = b.surface ? b.surface.rotation.y : (b.cfg.yaw || 0);
+  const _dirW = new THREE.Vector3(pad.dx, pad.dy, pad.dz).applyAxisAngle(SPIN_AXIS, _yaw);
+  const _upW = surfaceUp(b, _dirW, new THREE.Vector3());
+  // measured against the GEAR STOP, not the deck plane — the hover point is
+  // built on the gear stop too, and mixing the two leaves exactly GEAR_HEIGHT of
+  // unwanted lift on every low approach
+  const _stop = b.group.position.clone()
+                 .addScaledVector(_dirW, b.cfg.radius * pad.top)
+                 .addScaledVector(_upW, GEAR_HEIGHT);
+  const hoverAlt = Math.min(HOVER_ALT,
+                     Math.max(MIN_HOVER, shipObj.position.clone().sub(_stop).dot(_upW)));
+  /* where we're starting FROM, in the body's own frame — so leg 1 rides the
+     body's orbit (and its spin, rotated in per frame) instead of aiming at a
+     world point the station has since moved away from. */
+  landing = { b, pad, t: 0, hoverAlt,
+              // a short drop should not play in slow motion — scale leg 2 with
+              // how far there actually is to fall, floored so it still settles
+              dur2: ASSIST_DUR * Math.max(0.45, hoverAlt / HOVER_ALT),
+              fromRel: shipObj.position.clone().sub(b.group.position),
+              deckR: b.cfg.radius * pad.top };
   // seed the abort baseline TRUE so ANY input you were already holding at engage
   // (a throttle key, a touch button, or the RT/LT/X pad triggers) doesn't read as
   // a fresh yoke-grab and cancel the assist on frame one. A genuine fresh grab is
@@ -9474,6 +9819,7 @@ function drawPadField(c, W, H) {
   c.font = "10px " + navFont; c.textAlign = "center"; c.lineWidth = 1.2;
   for (const pad of b.pads) {
     if (pad === padTarget.pad) continue;               // the reticle's deck
+    if (pad.fill) continue;                            // v93: floor, not a berth
     // live outward normal + deck position — same un-freeze as the reticle
     _fldN.set(pad.dx, pad.dy, pad.dz).applyAxisAngle(SPIN_AXIS, yaw);
     _fldW.copy(_fldN).multiplyScalar(b.cfg.radius * pad.top).add(b.group.position);
@@ -10296,8 +10642,28 @@ function animate() {
           shipObj.quaternion.premultiply(spinRideQ);
         }
         const grP = groundRadius(b, tmpNormal);
-        const ground = grP + GEAR_HEIGHT;
-        shipObj.position.copy(b.group.position).addScaledVector(tmpNormal, ground);
+        /* v93: the gear stop is GEAR_HEIGHT along the DECK's up-vector, not
+           along the radial. On a planet those are the same vector and this is
+           the old line exactly. On an arm berth the radial leans 60° off the
+           deck, so measuring the gear gap along it left only
+           GEAR_HEIGHT·cos(60°) = 2u of air under a ship that needs 4 — the
+           gear sat sunk into the deck it was supposedly parked on. */
+        surfaceUp(b, tmpNormal, _landStand);
+        if (landedPad) {
+          /* the assist put us here, so pin to the PAD, not to wherever the hull
+             drifted: deck centre, then straight up the deck's own normal. Exact,
+             centred, and it reads nothing back from the ship. */
+          _landDir.set(landedPad.dx, landedPad.dy, landedPad.dz)
+                  .applyAxisAngle(SPIN_AXIS,
+                    b.surface ? b.surface.rotation.y : (b.cfg.yaw || 0));
+          surfaceUp(b, _landDir, _landStand);
+          shipObj.position.copy(b.group.position)
+                 .addScaledVector(_landDir, b.cfg.radius * landedPad.top)
+                 .addScaledVector(_landStand, GEAR_HEIGHT);
+        } else {
+          shipObj.position.copy(b.group.position)
+                 .addScaledVector(tmpNormal, grP + gearRise(tmpNormal, _landStand));
+        }
         camCarry.add(carryDelta.subVectors(shipObj.position, carryPrev));
         ship.velocity.set(0, 0, 0);
         /* You cannot be PARKED on a hazard — un-latch and let the ditch branch
@@ -10311,82 +10677,92 @@ function animate() {
           landedOn = null;
         } else if (ship.throttle > 0.05) {           // takeoff → the autopilot rises first
           landedOn = null;
-          liftoff = { b, t: 0, rise: 0 };   // rise: last frame's climb, so the
-                                            // camera carry can subtract it out
+          // rise: last frame's climb, so the camera carry can subtract it out
+          liftoff = { b, t: 0, rise: 0, pad: landedPad,
+                      fromRel: shipObj.position.clone().sub(b.group.position) };
         }
       } else if (liftoff && liftoff.b === b) {
-        /* ---- auto-liftoff (v55): throttle-up used to dump you into a flat
-           skid — nose parallel to the pad, thrust fighting ground grip and
-           the re-latch, until the pilot pitched off the horizon (dragging
-           the chase cam underground). Now the ship rises along the surface
-           normal like a VTOL (gear tucking on the way) and hands control
-           back at altitude, already climbing. Position is pinned absolutely
-           each frame — same trick as the parked branch, so the planet's
-           spin/orbit ride for free and thrust can't smear us mid-rise;
-           velocity stays zeroed until the handoff so nothing banks up. */
+        /* ---- LAUNCH: straight up, level, no thrust (v93) ----
+           Leg 2 of the landing, played backwards. The ship rises along the
+           deck's own up-vector from exactly where the gear was standing, holds
+           its attitude the whole way, and hands control back at the hover point
+           at rest. Nothing rotates and nothing accelerates, which is what makes
+           it impossible to (a) swing the chase camera down through the deck or
+           (b) get flown into the superstructure by a throttle you didn't ask
+           for. Both of those were v93's first attempt at this. */
         carryPrev.copy(shipObj.position);   // v64: the rise is pinned, not flown —
                                             // the lens has to be told about it
         if (b.cfg.spin) {
           const dSpin = b.cfg.spin * dt * 10;   // must match the surface animation
+          liftoff.fromRel.applyAxisAngle(SPIN_AXIS, dSpin);
           tmpNormal.applyAxisAngle(SPIN_AXIS, dSpin);
           spinRideQ.setFromAxisAngle(SPIN_AXIS, dSpin);
           shipObj.quaternion.premultiply(spinRideQ);
         }
         liftoff.t = Math.min(LIFTOFF_DUR, liftoff.t + dt);
-        const k = liftoff.t / LIFTOFF_DUR;
-        // k² climb: leaves the pad gently, exits at 2·ALT/DUR — which is
-        // exactly the velocity the handoff below puts on the ship
-        const ground = groundRadius(b, tmpNormal) + GEAR_HEIGHT;
-        const rise = LIFTOFF_ALT * k * k;
-        shipObj.position.copy(b.group.position)
-               .addScaledVector(tmpNormal, ground + rise);
+        // smoothstep, not k²: this one has to arrive at REST, because there is
+        // no handoff velocity any more to blend into
+        const rise = HOVER_ALT * smoothstep(liftoff.t / LIFTOFF_DUR);
+        surfaceUp(b, tmpNormal, _landStand);
+        shipObj.position.copy(b.group.position).add(liftoff.fromRel)
+               .addScaledVector(_landStand, rise);
         // the lens owes only what the WORLD moved (orbit + spin) — back the
         // climb itself out, so the chase still eases on the rise and you can
         // see yourself leave the pad instead of the camera being welded on
         camCarry.add(carryDelta.subVectors(shipObj.position, carryPrev)
-                               .addScaledVector(tmpNormal, liftoff.rise - rise));
+                               .addScaledVector(_landStand, liftoff.rise - rise));
         liftoff.rise = rise;
         ship.velocity.set(0, 0, 0);
-        if (liftoff.t >= LIFTOFF_DUR) {
-          ship.velocity.copy(tmpNormal).multiplyScalar(2 * LIFTOFF_ALT / LIFTOFF_DUR);
-          liftoff = null;
-        }
+        if (liftoff.t >= LIFTOFF_DUR) liftoff = null;   // hovering, and yours
       } else if (landing && landing.b === b) {
-        /* ---- landing assist (v68): CENTER over the pad, then descend onto the
-           deck and latch. The pad's data coordinate now matches the GLB deck
-           (VERDANT's were ~14u stale — fixed), so centering on it lands you dead
-           on the platform even though the "aligned" district (~35u) is wider than
-           the ~10u deck. Centering LEADS the descent, so we're over the clear
-           approach shaft before dropping through canopy height. Pinned +
-           velocity-zeroed (spin/orbit ride for free); the aim is spin-tracked by
-           the live yaw so the deck never slides out from under the gear. */
+        /* ---- APPROACH: across, then down. Never both. (v93) ----
+           See the block by ASSIST_RANGE for why the two legs are separate and
+           what overlapping them did. Everything is rebuilt from the body's live
+           position and yaw each frame, so the whole path rides the orbit and the
+           spin for free and the deck cannot slide out from under the gear. */
         const yaw = b.surface ? b.surface.rotation.y : (b.cfg.yaw || 0);
         carryPrev.copy(shipObj.position);
+        if (b.cfg.spin) {
+          const dSpin = b.cfg.spin * dt * 10;   // must match the surface animation
+          landing.fromRel.applyAxisAngle(SPIN_AXIS, dSpin);
+          spinRideQ.setFromAxisAngle(SPIN_AXIS, dSpin);
+          shipObj.quaternion.premultiply(spinRideQ);
+        }
         landing.t += dt;
-        const k = Math.min(1, landing.t / ASSIST_DUR);
-        const kC = Math.min(1, k * 1.6);
-        const eC = kC * kC * (3 - 2 * kC);     // centering: front-loaded (done by ~62%)
-        const eR = k * k * (3 - 2 * k);        // descent: smoothstep across the whole run
-        const curR = landing.r0 + (landing.deckR + GEAR_HEIGHT - landing.r0) * eR;
-        _landDir.copy(landing.dir0)
-                .lerp(_landTgt.set(landing.pad.dx, landing.pad.dy, landing.pad.dz), eC)
-                .normalize()
-                .applyAxisAngle(SPIN_AXIS, yaw);   // center on the deck, spin-tracked
-        shipObj.position.copy(b.group.position).addScaledVector(_landDir, curR);
+        // the deck and the air above it, live
+        _landDir.set(landing.pad.dx, landing.pad.dy, landing.pad.dz)
+                .applyAxisAngle(SPIN_AXIS, yaw);
+        surfaceUp(b, _landDir, _landStand);
+        /* the gear stop: deck centre, then straight up the deck's own normal.
+           Safe to write it this way here — unlike the parked branch, this reads
+           the PAD's direction, never the ship's, so there is no frame-to-frame
+           feedback to drift. It must land on exactly the point the parked pin
+           will hold, or the hull snaps the instant it latches. */
+        _landTgt.copy(b.group.position)
+                .addScaledVector(_landDir, landing.deckR)
+                .addScaledVector(_landStand, GEAR_HEIGHT);
+        _landHover.copy(_landTgt).addScaledVector(_landStand, landing.hoverAlt);
+
+        if (landing.t < APPROACH_DUR) {          // leg 1 — ACROSS, at altitude
+          shipObj.position.copy(b.group.position).add(landing.fromRel)
+                 .lerp(_landHover, smoothstep(landing.t / APPROACH_DUR));
+        } else {                                 // leg 2 — DOWN, and only down
+          shipObj.position.copy(_landHover).lerp(_landTgt,
+            smoothstep(Math.min(1, (landing.t - APPROACH_DUR) / landing.dur2)));
+        }
         /* ease the hull to gear-down (belly to the deck) — a fraction of the
            minimal up→normal rotation each frame, so it settles without a snap.
-           v93: belly to the DECK, which on a station is not the radial. The
-           ship still descends along _landDir; it just stops treating "away
-           from the middle" as "up" on a body that has no middle to speak of. */
-        surfaceUp(b, _landDir, _landStand);
+           Belly to the DECK, which on a station is not the radial. This finishes
+           during leg 1, so the ship is already flat before it starts down. */
         _landUp.set(0, 1, 0).applyQuaternion(shipObj.quaternion);
         _alignQ.setFromUnitVectors(_landUp, _landStand);
         _easeQ.identity().slerp(_alignQ, Math.min(1, dt * 4));
         shipObj.quaternion.premultiply(_easeQ);
         camCarry.add(carryDelta.subVectors(shipObj.position, carryPrev));
         ship.velocity.set(0, 0, 0);
-        if (landing.t >= ASSIST_DUR) {                                  // touched down
+        if (landing.t >= APPROACH_DUR + landing.dur2) {                 // touched down
           landedOn = b;
+          landedPad = landing.pad;
           landing = null;
           ship.velocity.set(0, 0, 0);
           ship.throttle = 0;
@@ -10467,6 +10843,7 @@ function animate() {
             }
           } else if (ship.velocity.length() < 2.5) {
             landedOn = b;
+            landedPad = null;            // you landed where you landed
             ship.velocity.set(0, 0, 0);
             ship.throttle = 0;
           }
@@ -10539,7 +10916,14 @@ function animate() {
   }
 
   /* ---- camera rig ---- */
-  if (orbiting) {
+  const _shot = padShot();
+  if (_shot && !orbiting && !padLookBack) {
+    // watching a landing or a launch — outranks the view modes, but not the
+    // showcase orbit (that IS a camera) or a deliberate glance over your six
+    shipMesh.visible = true;
+    shipMesh.rotation.z = 0;
+    padShotCamera(_shot);
+  } else if (orbiting) {
     // showcase orbit: circle the ship at orbitRadius, always facing it.
     // The hull renders even from cockpit view — this IS the beauty shot.
     shipMesh.visible = true;
@@ -10682,6 +11066,7 @@ function animate() {
   }
   for (const belt of belts) belt.rotation.y += 0.02 * dt;
   for (const c of cloudLayers) c.mesh.rotation.y += c.speed * dt;
+  updateCranes(dt);
   if (shipMixer) {
     /* the authored idle float only plays AIRBORNE (v55): parked (or mid
        auto-liftoff) its weight eases to 0 and the mixer blends back to the
@@ -11116,6 +11501,26 @@ function animate() {
   }
   if (assistTxt) { assistEl.textContent = assistTxt; assistEl.style.visibility = "visible"; }
   else assistEl.style.visibility = "hidden";
+  /* ...and while the pad camera has the lens, RIDE THE SHIP (v93).
+     The tag lives at a fixed `top: 60%`, which sits just under the hull in
+     ordinary flight because that is where the chase rig keeps it. The landing
+     shot puts the ship high in frame instead, so the line ended up hanging well
+     below it with nothing in between — Tanner: "it hangs below the ship now."
+     Project the hull and sit just above it, clamped so a wide shot can never
+     push the line off the edge. Cleared back to the stylesheet the moment the
+     shot ends, so every other state keeps the layout it was designed with. */
+  if (landing && assistTxt) {
+    camera.updateMatrixWorld();
+    _tagV.copy(shipObj.position).project(camera);
+    if (_tagV.z < 1) {                       // in front of the lens
+      const px = (_tagV.x * 0.5 + 0.5) * innerWidth;
+      const py = (-_tagV.y * 0.5 + 0.5) * innerHeight;
+      assistEl.style.left = Math.max(90, Math.min(innerWidth - 90, px)) + "px";
+      assistEl.style.top = Math.max(40, Math.min(innerHeight - 60, py - TAG_LIFT)) + "px";
+    }
+  } else if (assistEl.style.top) {
+    assistEl.style.left = ""; assistEl.style.top = "";
+  }
   // the pop-up only exists while it does something (and never mid-approach)
   btnLandEl.style.display = (btnTxt && onGlass) ? "flex" : "none";
   if (btnTxt && btnLandEl.textContent !== btnTxt) btnLandEl.textContent = btnTxt;
@@ -11220,11 +11625,18 @@ function animate() {
   /* ---- camera ground clamp (v55): whatever the view rigs decided — chase
      easing, right-drag orbit, cinematic shots, entry shake — the lens never
      ends a frame under the nearest world's terrain. Radial push-out against
-     the real height grid, so pitching on the pad can't sink the view. */
+     the real height grid, so pitching on the pad can't sink the view.
+
+     v93: the reach is `gateMul`, not a flat 1.5. FLEET COMMAND's decks sit at
+     1.78-2.98 radii, so a 1.5x cut-off meant this clamp NEVER RAN on the
+     station — the lens had no floor at all there and dropped straight through
+     the deck on any pitch. Exactly the stale-flat-multiplier bug v92 fixed for
+     the collision gate; this copy of it was just somewhere nobody looked.
+     Floored at the old 1.5 so every planet keeps the identical reach. */
   if (nearest && nearest.cfg.landable) {
     camGroundV.subVectors(camera.position, nearest.group.position);
     const cd = camGroundV.length();
-    if (cd > 1e-3 && cd < nearest.cfg.radius * 1.5) {
+    if (cd > 1e-3 && cd < camReach(nearest)) {
       camGroundV.multiplyScalar(1 / cd);
       const camFloor = groundRadius(nearest, camGroundV) + CAM_GROUND_MARGIN;
       if (cd < camFloor)
