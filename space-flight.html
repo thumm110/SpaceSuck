@@ -4097,6 +4097,28 @@ const CANOPY_DPS = 8;       // hull/sec brushing crown leaves (light) — skim t
 const TRUNK_FREE_SPD = 25;  // clip a trunk slower than this and it's a nudge, no slam
 const TRUNK_SLAM_MUL = 0.35;// hull per u/s over that on the leading edge (a one-time bite)
 const TRUNK_SLAM_CAP = 45;  // a trunk hurts more than a splash, but still can't one-shot a hull
+/* FLEET COMMAND's 249 solids became a WALL in v95: they stop you and cost you
+   nothing, which is half a feature. Tanner, having flown it: "I think it should
+   grind or ding like trees do already." So this is the TREE model pointed at the
+   structure, and the rate is one he has already judged fair from the seat rather
+   than a fresh guess — VERDANT's canopy hazard, 9 hull/sec, confirmed GOOD the
+   same day he asked for this.
+   ⚠ ONE DELIBERATE DEPARTURE FROM THE TREES, and it was measured, not reasoned:
+   the tree grind carries a 0.4 floor so that even a stationary overlap bites.
+   That floor is safe in a forest because you cannot HOVER inside a tree — but a
+   wall you can rest against. Perched on the command block roof (structure, so
+   nothing ever latches it, so `landedOn` never guards it) the floored version
+   measured 2.16 hull/sec and killed a full hull in ~46 seconds while the ship
+   sat still. That is the board's own "a parked ship grinds itself to death"
+   trap at a different address. So the rate scales from ZERO with speed: a
+   scrape costs, leaning does not.
+   The DING reuses the ram's own thresholds, because they already say the right
+   thing about hitting something solid: under RAM_FREE_SPD it's a nudge, and
+   RAM_DMG_CAP means nothing one-shots a hull.
+   ⛔ Neither of these may ever fire on a pad — see the block at the call site. */
+const STRUCT_DPS = 9;        // hull/sec of grind at STRUCT_REF_SPD of scrape
+const STRUCT_REF_SPD = 90;   // the speed that rate is quoted at; below it, less
+const STRUCT_SLAM_MUL = 0.35;// hull per u/s of CLOSING speed over RAM_FREE_SPD, one-time
 const FLASH_WHITE = new THREE.Color(0xffffff);
 const killsEl = document.getElementById("kills");
 const hullFillEl = document.getElementById("hullfill");
@@ -4114,6 +4136,8 @@ let ditchBody = null;   // the world we're ditched on — carried like a parked 
 let ditchLevel = 0;     // how deep in it we are, 0..1 (a graded mask scales the burn)
 let treeHit = 0;        // this frame's worst tree contact on VERDANT: 0 none · 1 crown · 2 trunk
 let wasInTrunk = false; // edge-detect, so the trunk SLAM (not the graded grind) bites once
+let structHit = 0;      // this frame's contact with a station hull: 0 none · 1 grinding · 2 ding
+let wasInStruct = false;// edge-detect, so the DING (not the graded grind) bites once
 
 function shipDamage(amount) {
   ship.hull = Math.max(0, ship.hull - amount);
@@ -10857,6 +10881,7 @@ function animate() {
   /* ---- collisions (against the ship's position) ---- */
   ditching = null;              // the hazard branch below re-arms this each frame
   treeHit = 0;                  // ditto for the tree-strike state (set in the loop)
+  structHit = 0;                // and the station-structure contact (v96)
   camCarry.set(0, 0, 0);        // the carry the camera rig owes the lens this frame
   const COLLIDE_BUFFER = 12;
   for (const b of liveBodies) {
@@ -11167,11 +11192,43 @@ function animate() {
         if (b.hull) {
           const dep = hullEject(b, shipObj.position, _shipH);
           if (dep > 0) {
-            shipObj.position.addScaledVector(_shipH, dep);
             const into = ship.velocity.dot(_shipH);
+            const spd = ship.velocity.length();     // read BEFORE the push zeroes the inward half
+            shipObj.position.addScaledVector(_shipH, dep);
             if (into < 0) {
               if (into < -100) thump(-into);        // came in hot, same cut as the deck
               ship.velocity.addScaledVector(_shipH, -into);
+            }
+            /* ---- AND IT COSTS YOU (v96) ----
+               v95 made the structure a wall; it was still free to RAM. His
+               verdict off that flight: "it should grind or ding like trees do
+               already" — so the shape below is the tree block's, and the rate is
+               the canopy's own, with one measured departure noted at STRUCT_DPS:
+               leaning on it is free, scraping along it is not.
+
+               ⛔ NOT ON A PAD. `landedOn === b` is set two branches up when you
+               settle onto a deck by the ground clamp, and that is the ONE frame
+               where a parked ship can still reach this code — every later frame
+               takes the parked branch and never gets here. A deck's landing
+               plane and that deck's own solid are one surface described from two
+               directions, so without this guard the last frame of a good landing
+               bills you for it. The push above stays unconditional: keeping you
+               out of a girder is always right, charging you for it is not.
+
+               The DING reads CLOSING speed, not total speed — the trees use
+               total because you fly through them, but this is a wall, so sliding
+               along a truss must not bill you like flying into one. */
+            if (landedOn !== b) {
+              shipDamage(STRUCT_DPS * (spd / STRUCT_REF_SPD) * dt);
+              if (!wasInStruct && -into > RAM_FREE_SPD) {
+                shipDamage(Math.min(RAM_DMG_CAP, (-into - RAM_FREE_SPD) * STRUCT_SLAM_MUL));
+                structHit = 2;
+              }
+              // per-frame damage this small never moves the hull bar or the
+              // vignette on its own — force a visible floor, exactly as the
+              // canopy grind has to (v67)
+              dmgFlash = Math.max(dmgFlash, structHit === 2 ? 0.45 : 0.22);
+              if (!structHit) structHit = 1;        // for the HUD banner + ding edge-detect
             }
           }
         }
@@ -11765,11 +11822,20 @@ function animate() {
     treeEl.textContent = treeHit === 2 ? "◆ HULL STRIKE — TREES · CLIMB ◆" : "◆ SCRAPING THE CANOPY ◆";
     treeEl.style.color = treeHit === 2 ? "#ff5544" : "#ffcf5a";
     treeEl.style.visibility = "visible";
+  } else if (structHit && !ditching) {
+    /* Same line, same reason (v96): the station grind is per-frame damage far
+       too small to read off the hull bar, so it has to say so in words. No body
+       has both trees and a collision hull today, but the order is written down
+       anyway so the day one does, the answer isn't an accident. */
+    treeEl.textContent = structHit === 2 ? "◆ HULL STRIKE — STRUCTURE · PULL UP ◆" : "◆ SCRAPING THE STRUCTURE ◆";
+    treeEl.style.color = structHit === 2 ? "#ff5544" : "#ffcf5a";
+    treeEl.style.visibility = "visible";
   } else {
     treeEl.style.visibility = "hidden";
   }
   wasDitching = ditching;
   wasInTrunk = treeHit === 2;
+  wasInStruct = structHit > 0;
 
   const surf = surfaceUnder(nearest);
   if (surf && surf.alt < nearest.cfg.radius * 0.5) {
