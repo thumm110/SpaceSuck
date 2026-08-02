@@ -2630,7 +2630,11 @@ function loadHull(body, url) {
       reach = Math.max(reach, Math.hypot(s.c[0], s.c[1], s.c[2]) + s.r);
       return {
         name: s.n, rig: s.rig || null, node: null, bindInv: null,
-        cx: s.c[0], cy: s.c[1], cz: s.c[2], r2: s.r * s.r, p,
+        // `r` alongside `r2`: the collision broadphase wants the square (no
+        // sqrt per test), hullDistance wants the radius itself, and taking 249
+        // square roots a frame to recover a number we were handed is silly.
+        // Rigid transforms only, so hullSync moving a solid never changes it.
+        cx: s.c[0], cy: s.c[1], cz: s.c[2], r: s.r, r2: s.r * s.r, p,
         /* The moving nine keep their as-emitted copy. Every frame re-derives
            the live planes FROM the bind pose, never from last frame's answer —
            accumulate and a rounding error walks a boom off the station over a
@@ -2760,6 +2764,70 @@ function hullSolidAt(body, worldP) {
   _hullQ.subVectors(worldP, body.group.position);
   toBakedFrame(body, _hullQ, _hullQ);       // the hull is baked, same as the pads
   return hullSolidLocal(body.hull, _hullQ.x, _hullQ.y, _hullQ.z);
+}
+
+/* How much sky is there between this world point and the body's STRUCTURE? (v97)
+   Returns null for a body with no hull, so the caller keeps its old answer.
+
+   `distance − cfg.radius` is a sphere's answer, and for a sphere it is the right
+   one: a planet's collision ball IS its surface, near enough that the separate
+   ALT readout covers the rest. FLEET COMMAND is where that stops being true — a
+   268u ball standing in for a 1,479 × 430 box, hung off an origin 539u below its
+   own hull. NEAREST BODY read about 500u long there: 2,225 on the HUD for roughly
+   1,721 u of actual sky, and reading long on the one number you close on is the
+   worst direction for it to be wrong.
+
+   Same family as v94.1's marker fix — the origin is not the object — and the
+   second of the two leftovers that one deliberately left behind.
+
+   TWO LOWER BOUNDS PER SOLID, and the bigger one wins — because the obvious
+   version of this was measurably not good enough and the probe said so.
+
+     the broadphase SPHERE, |p−c| − r. Free, already there. But a sphere around a
+       long girder is mostly empty space, and MEASURED it ran 18.7% pessimistic:
+       331u short under the keel, 152u short over the top deck. That swaps a
+       ~500u-long lie for a ~300u-short one, which is not a fix.
+     the SOLID'S OWN PLANES, max over k of dot(n_k,p) − d_k. The solid lies inside
+       every one of its halfspaces, so the worst-violated one is a floor on the
+       distance — and it is EXACT whenever the nearest feature is a face, which
+       over a flat deck or along a girder's flank is essentially always.
+
+   Both are floors, so max() of them is a tighter floor, and min over the solids
+   is still a floor on the true gap. The number therefore reads SHORT, never long,
+   no matter which bound wins — the safe direction for a distance a pilot closes
+   on, and the property is structural rather than tuned.
+
+   ⚠ The plane bound reads dot(n,p) − d as a DISTANCE, which is only true for a
+   unit normal. Checked against what the game parsed, not what the emitter says:
+   |n| lands in 0.999993571 .. 1.000006648, i.e. 7 parts per million of float
+   rounding — 0.02u at 3,000u. hullEject already leans on the same fact.
+
+   The sphere doubles as the prune: it is a floor too, so a solid whose sphere
+   already loses cannot win, and its planes are skipped. */
+const _hullD = new THREE.Vector3();     // its own scratch: this runs from the HUD
+function hullDistance(body, worldP) {   // pass, _hullQ belongs to the physics pass
+  const H = body.hull;
+  if (!H) return null;
+  _hullD.subVectors(worldP, body.group.position);
+  toBakedFrame(body, _hullD, _hullD);
+  const px = _hullD.x, py = _hullD.y, pz = _hullD.z, S = H.solids;
+  let best = Infinity;
+  for (let i = 0; i < S.length; i++) {
+    const s = S[i];
+    const dx = px - s.cx, dy = py - s.cy, dz = pz - s.cz;
+    const sphere = Math.sqrt(dx * dx + dy * dy + dz * dz) - s.r;
+    if (sphere >= best) continue;        // already beaten — don't walk its planes
+    const p = s.p;
+    let face = -Infinity;
+    for (let k = 0; k < p.length; k += 4) {
+      const g = p[k] * px + p[k + 1] * py + p[k + 2] * pz - p[k + 3];
+      if (g > face) face = g;
+    }
+    if (face <= 0) return 0;             // inside this one: no sky at all
+    const d = face > sphere ? face : sphere;
+    if (d < best) best = d;
+  }
+  return best === Infinity ? Infinity : Math.max(0, best);
 }
 
 /* Clear the face by this much rather than landing exactly on it. A point moved
@@ -9810,11 +9878,43 @@ function homeName() {
   return p ? p.name : (homeWorld() ? homeWorld().cfg.name : "HOME");
 }
 const PAD_MARKER_RANGE_R = 4;   // within this many radii of home, the pad reticle takes over from the chevron
+
+/* How far out does the pad reticle serve this body? (v97)
+
+   `radius * 4` is a planet's number and it reads as generous, because a planet's
+   deck sits at about 1.0 radii — Charleston's is 1.0175, so the reticle switches
+   on ~3 radii of sky above it and ASSIST_RANGE's 600u is the thing you actually
+   feel. FLEET COMMAND inverts that: a 268u collision ball carrying decks out at
+   top 1.90 to 2.98, so `radius * 4` is 1,072u and the outer berths are already
+   800u of it. MEASURED, not reasoned — flying in along the radial, guidance
+   switched on between 272u and 563u above the deck depending on which berth, and
+   the body gate was the binding test on EVERY one of the sixteen. The assist
+   advertises 600u and no berth on the station got it.
+
+   ⚠ FOURTH OUTING FOR THIS EXACT SHAPE. A `radius * constant` reach is fine on a
+   sphere and wrong on a station, and it has now hidden in the collision gate
+   (v92), the camera reach (v93), the hull gate (v95) and here. If you are adding
+   a reach on a body, derive it from what it has to cover.
+
+   So: cover the highest deck, plus the range the assist promises over it.
+   `gateMul` is that highest deck already — derived from the pad table, widened
+   by the hull, floored at 1.35 — so this is the same number every other reach on
+   the body uses, plus the one distance that is genuinely about guidance.
+
+   A MAX, never a replacement: no body can lose reach it has today, so every
+   planet stays bit-identical and only a body whose decks outgrew its ball moves. */
+function padReticleReach(b) {
+  return Math.max(b.cfg.radius * PAD_MARKER_RANGE_R,
+                  b.cfg.radius * (b.gateMul || 1.35) + ASSIST_RANGE);
+}
+
 function drawHomeChevron(c, W, H) {
   if (cargo <= 0 || landedOn) return;
   if (!homeWorld()) return;
-  // close in, the pad reticle (drawPadMarker) is the guide — don't double up
-  if (shipObj.position.distanceTo(homeBody.group.position) <= homeBody.cfg.radius * PAD_MARKER_RANGE_R) return;
+  // close in, the pad reticle (drawPadMarker) is the guide — don't double up.
+  // Same reach the reticle itself uses, or the two disagree over a station and
+  // you get a chevron and a crosshair pointing at the same deck.
+  if (shipObj.position.distanceTo(homeBody.group.position) <= padReticleReach(homeBody)) return;
   _nCam.copy(homeBody.group.position).applyMatrix4(camera.matrixWorldInverse);
   _nProj.copy(homeBody.group.position).project(camera);
   let x = _nProj.x, y = _nProj.y;
@@ -9937,7 +10037,7 @@ function pickPadTarget() {
   for (const b of liveBodies) {
     if (!b.pads || !b.pads.length) continue;
     const d = shipObj.position.distanceTo(b.group.position);
-    if (d > b.cfg.radius * PAD_MARKER_RANGE_R || d >= bestD) continue;
+    if (d > padReticleReach(b) || d >= bestD) continue;
     bestD = d; best = b;                                   // nearest padded world in range
   }
   if (!best) return null;
@@ -10186,7 +10286,10 @@ function drawNavHud(dt) {
     _nProj.copy(_hudP).project(camera);
     if (Math.abs(_nProj.x) > 1 || Math.abs(_nProj.y) > 1) continue;  // off-screen → show nothing
     const sx = (_nProj.x * 0.5 + 0.5) * W, sy = (-_nProj.y * 0.5 + 0.5) * H;
-    const dist = Math.max(0, Math.round(p.d - p.b.cfg.radius));
+    // v94.1 moved this label onto the hull but left its NUMBER on the origin —
+    // the second of that fix's two known leftovers, closed here (v97).
+    const _hd = hullDistance(p.b, shipObj.position);
+    const dist = Math.max(0, Math.round(_hd != null ? _hd : p.d - p.b.cfg.radius));
     navPlanetLabel(sx, sy, p.b.cfg.name, dist, labelled === 0 ? NAV_TEAL : NAV_AMBER);
     labelled++;
   }
@@ -11789,7 +11892,13 @@ function animate() {
 
   let nearest = null, nearestDist = Infinity;
   for (const b of liveBodies) {
-    const d = shipObj.position.distanceTo(b.group.position) - b.cfg.radius;
+    /* v97: a body with a hull measures to its STRUCTURE, everything else to its
+       datum ball exactly as before. This also decides WHICH body is nearest, and
+       that was wrong the same way: reading FLEET COMMAND ~500u further off than
+       it is meant the panel handed the slot to another world while the station
+       filled the canopy. Costs one null check on the six bodies with no hull. */
+    const hd = hullDistance(b, shipObj.position);
+    const d = hd != null ? hd : shipObj.position.distanceTo(b.group.position) - b.cfg.radius;
     if (d < nearestDist) { nearestDist = d; nearest = b; }
   }
   if (nearest) {
