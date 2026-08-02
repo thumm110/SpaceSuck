@@ -3027,6 +3027,27 @@ function buildBody(cfg) {
              rather than as an offset. Planets leave it undefined and sit at
              their own centre, exactly as before. */
           model.position.y = cfg.modelOffsetY || 0;
+          /* ...and now the HUD has to be told the same thing (v94.1). Anything
+             that draws a marker ON a body — the nav label, the radar blip —
+             used to point at the origin, which for a planet IS its centre and
+             for FLEET COMMAND is 539u of empty space under the station. That
+             is the label Tanner flew into: floating well below the hull.
+
+             MEASURED off the model, never configured. A hand-typed offset is
+             the same landmine as a hand-copied pad table: it goes stale the
+             day an arm gets longer in Blender, and silently. Taken BEFORE the
+             model joins the holder, so the box comes out in the body's own
+             frame with the spin left out — bodyMark() rotates it back in per
+             frame, the same way the pad code un-freezes a baked direction.
+
+             ⚠ modelOffsetY is the GATE, not a coincidence: it is the one
+             declaration a body makes that says "my origin is not my centre".
+             Planets never set it, so hudOff stays null and every existing
+             world's label lands exactly where it always has. */
+          if (cfg.modelOffsetY) {
+            body.hudOff = new THREE.Box3().setFromObject(model)
+                            .getCenter(new THREE.Vector3());
+          }
           // the derelict ships dark (§9). Before it's added, so there is never
           // a frame where a dead station is lit up like a Christmas tree.
           if (cfg.derelict) body.glowsKilled = killGlow(model);
@@ -9417,6 +9438,28 @@ const navFont = "'Lucida Console', Monaco, monospace";
 const _nFwd = new THREE.Vector3(), _nRight = new THREE.Vector3(),
       _nRel = new THREE.Vector3(), _nCam = new THREE.Vector3(), _nProj = new THREE.Vector3(),
       _padW = new THREE.Vector3();   // live world position of the landing pad (v35)
+const _hudP = new THREE.Vector3(), _hudC = new THREE.Vector3();
+/* (v94.1) Where a body's MASS is, in world space — what a marker drawn ON that
+   body should point at. For every planet this is just its position: a ball's
+   origin IS its centre, `hudOff` is null, and nothing moves by a pixel. For
+   FLEET COMMAND it is 539u higher, because v93 dropped that station's origin
+   400u under the hub so the radials would stand upright at a berth — which
+   left the nav label and the radar blip pointing at empty space below it.
+
+   `hudOff` is measured off the .glb at load (see buildBody) and stored in the
+   body's OWN frame, so the spin has to be rotated back in here.
+
+   NOT used by the HOME chevron on purpose: home is a planet by design law —
+   nothing is ever delivered to a station — so that one cannot be wrong. Route
+   it through here the day that stops being true. */
+function bodyMark(b, out) {
+  out.copy(b.group.position);
+  if (!b.hudOff) return out;
+  _hudC.copy(b.hudOff);
+  const yaw = b.surface ? b.surface.rotation.y : (b.cfg.yaw || 0);
+  if (yaw) _hudC.applyAxisAngle(SPIN_AXIS, yaw);
+  return out.add(_hudC);
+}
 function sizeNavHud() {
   const dpr = Math.min(devicePixelRatio, 2);
   navCanvas.width = innerWidth * dpr; navCanvas.height = innerHeight * dpr;
@@ -9866,9 +9909,12 @@ function drawNavHud(dt) {
     // planet label on top of it. Only the world the reticle ACTUALLY claimed, so
     // a padded world it isn't serving keeps its label (v60).
     if (padTarget && p.b === padTarget.b) continue;
-    _nCam.copy(p.b.group.position).applyMatrix4(camera.matrixWorldInverse);
+    // anchor on the STATION, not on its origin — a planet's two are the same
+    // point, FLEET COMMAND's are 539u apart (v94.1, see bodyMark)
+    bodyMark(p.b, _hudP);
+    _nCam.copy(_hudP).applyMatrix4(camera.matrixWorldInverse);
     if (_nCam.z >= 0) continue;                            // behind the camera → skip
-    _nProj.copy(p.b.group.position).project(camera);
+    _nProj.copy(_hudP).project(camera);
     if (Math.abs(_nProj.x) > 1 || Math.abs(_nProj.y) > 1) continue;  // off-screen → show nothing
     const sx = (_nProj.x * 0.5 + 0.5) * W, sy = (-_nProj.y * 0.5 + 0.5) * H;
     const dist = Math.max(0, Math.round(p.d - p.b.cfg.radius));
@@ -9895,7 +9941,7 @@ function drawNavHud(dt) {
   // space junk — the radar's real job now (grey specks, fading with range)
   for (const j of junk) if (j.alive) navBlipAt(j.group.position, cx, cy, r, NAV_JUNK, 1.7, true);
   // a planet or the sun, but only when it's actually close (navBlipAt hides it beyond range)
-  for (const p of planets) navBlipAt(p.b.group.position, cx, cy, r, NAV_TEAL, 4.5);
+  for (const p of planets) navBlipAt(bodyMark(p.b, _hudP), cx, cy, r, NAV_TEAL, 4.5);
   const star = liveBodies.find(b => b.cfg.type === "star");
   if (star) navBlipAt(star.group.position, cx, cy, r, NAV_SUN, 4);
   // raiders: glowing, no fade arg — colored by faction (v47): red = bandit,
