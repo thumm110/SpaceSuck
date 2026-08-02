@@ -1446,6 +1446,11 @@ const BODIES = [
     // stands the ship on THIS, not on the ray out from the middle
     deckN: [0.0000, 1.0000, 0.0000],
     file: "station/spacesuck-fc.glb",
+    // 249 convex solids — the arms, tiers, masts and towers stop you (v95).
+    // ⛔ RE-EMITTED WITH THE .glb AND THE PAD TABLE, never on its own: all
+    // three are measured from the same origin in the same run, and a hull
+    // from a different run is an invisible wall you cannot see or debug.
+    hullFile: "station/spacesuck-fc-hull.json",
     landable: true,
     derelict: true,                 // §9: every *Glow emissive dialled to 0
     /* MIDSYSTEM AND DEAD IN THE WATER — Tanner's call after flying it, v93.
@@ -2538,6 +2543,7 @@ function canopyTop(body, n, fromCenter) {
 // scratch for the physics-path tree test — its OWN vectors, never a shared one
 // borrowed across the collision loop (that's how the old ram heisenbugs happened)
 const _treeUp = new THREE.Vector3();
+const _shipH = new THREE.Vector3();   // v95: the hull's exit normal for the player
 const _treeB = new THREE.Vector3();
 
 /* Undo the planet's CURRENT rotation (initial yaw + accumulated spin): rotate a
@@ -2583,6 +2589,211 @@ function fromBakedFrame(body, b, out) {
 function surfaceUp(body, n, out) {
   if (!body.deckN) return out.copy(n);
   return fromBakedFrame(body, body.deckN, out).normalize();
+}
+
+/* ======================= THE COLLISION HULL — a body that isn't a ball (v95)
+
+   Tanner, 2026-08-01: "I want any surface to be collidable. I do not want to be
+   able to fly through the ship. That is 100 percent un realistic. I am not
+   creating a cartoon." That killed plan §10.3 — "the arms are cosmetic
+   pass-through, and that's fine" — outright. Don't re-propose it; it reads as a
+   sensible saving every time, and it was already blessed once in the plan.
+
+   Everything else in this engine models a world as a BALL with cones drilled
+   out of it, and for seven planets that is exactly right. FLEET COMMAND is a
+   1,479 x 877 x 1,242 cage of girders. A sphere cannot describe it: make the
+   radius small and you fly through every arm, make it large and the station is
+   an invisible marble you bounce off from a kilometre out.
+
+   So a body may carry a HULL: a set of CONVEX SOLIDS, each a short list of
+   planes. A point is inside a solid when dot(n,p) <= d for EVERY plane — so the
+   common case, not being inside it, costs one dot product and an early out.
+   build_fc.py §13d emits 249 of them (1,805 planes, 6-15 each) beside the .glb.
+
+   ⛔ EMITTED, NEVER HAND-WRITTEN — and the file ships WITH the model. Same law
+   as the pad table: a hand-kept list of blocks goes stale the first time an arm
+   gets longer in Blender, and it goes stale SILENTLY. You fly through a girder
+   that is right there on the screen, and nothing anywhere says a word.
+
+   FRAME: the pad frame. Game units, Y-up, measured from the BODY ORIGIN — which
+   on FC sits 400u under the hub (see modelOffsetY). Pads and solids are emitted
+   together by the same run and are only ever correct together. */
+function loadHull(body, url) {
+  fetch(url + ASSET_V).then(r => r.json()).then(j => {
+    let reach = 0;
+    const solids = j.solids.map(s => {
+      /* planes flattened to [nx,ny,nz,d, nx,ny,nz,d, ...]. The inner loop is
+         the hot one — up to 500 bolt tests a frame — and one array walk beats
+         a pointer chase per plane. */
+      const p = new Float64Array(s.p.length * 4);
+      for (let i = 0; i < s.p.length; i++) p.set(s.p[i], i * 4);
+      reach = Math.max(reach, Math.hypot(s.c[0], s.c[1], s.c[2]) + s.r);
+      return {
+        name: s.n, rig: s.rig || null, node: null, bindInv: null,
+        cx: s.c[0], cy: s.c[1], cz: s.c[2], r2: s.r * s.r, p,
+        /* The moving nine keep their as-emitted copy. Every frame re-derives
+           the live planes FROM the bind pose, never from last frame's answer —
+           accumulate and a rounding error walks a boom off the station over a
+           long session, which is the kind of drift nobody ever catches. */
+        p0: s.rig ? Float64Array.from(p) : null,
+        c0: s.rig ? [s.c[0], s.c[1], s.c[2]] : null,
+      };
+    });
+    body.hull = {
+      solids, rigs: j.rigs || {}, unit: j.unit || 1,
+      originDZ: j.originDZ || 0, reach,
+      moving: solids.filter(s => s.rig),
+      bound: 0, warned: false,
+    };
+    /* ⚠ THE GATE HAS TO REACH THE HULL, not just the pads. gateMul is derived
+       from the highest pad (v92), which on FC puts the collision cut-off at
+       840u — and the outermost arm deck's own solid reaches 882u. That is a
+       42-unit shell in which the solids exist and NOTHING EVER TESTS THEM: the
+       bolts, the NPC clamp, the ship and the camera all skip the body before
+       they get there. Third time this exact stale-multiplier shape has hidden
+       somewhere on this station (v92 found it in the collision gate, v93 in the
+       camera reach). Derived, and it can only ever widen what the pads asked
+       for. 2% of headroom, the same margin the pad derivation uses. */
+    body.gateMul = Math.max(body.gateMul || 1.35, reach * 1.02 / body.cfg.radius);
+  }).catch(() => {});                  // no file → the body is just a ball
+}
+
+/* ---- carry the moving solids with the machinery they belong to.
+
+   Tanner asked this outright on 1 Aug — "the cranes when animated, the hit
+   blocks will follow?" — and the honest answer is only yes because of this
+   function. The hull is measured at ONE pose. FC hand-drives its eight pad
+   slews through 34° in updateCranes() every time you commit to a berth, so the
+   nine solids hanging off those booms are wrong on EVERY approach without this:
+   the boom you can see becomes air, and an invisible one parks over the pad you
+   are descending onto.
+
+   ⚠ The plan and the build script both say "the game doesn't run a mixer on
+   bodies today, so the snapshot is currently correct." That was true of a
+   MIXER and false of the station — updateCranes() is a hand-rolled animation
+   and it has been shipping since v94. Found by reading the driver, not the note.
+
+   The recipe is the emitter's, quoted from the file's own rigNote so the two
+   cannot drift: D = node-relative-to-root now, times the inverse of the pose it
+   was bound at; R is D's rotation; T = D.translation*unit + (I-R)*o with
+   o = (0, originDZ, 0). Then n' = R*n, d' = d + n'.T, c' = R*c + T. */
+const _rigInv = new THREE.Matrix4(), _rigRel = new THREE.Matrix4();
+const _rigD = new THREE.Matrix4(), _rigR = new THREE.Matrix4();
+const _rigT = new THREE.Vector3(), _rigV = new THREE.Vector3();
+
+function hullSync(body) {
+  const H = body.hull, root = body.hullRoot;
+  if (!H || !root || !H.moving.length) return;
+  /* the parents only. updateMatrixWorld(true) would walk the station's whole
+     node tree once a frame to read nine booms; updateWorldMatrix(true, false)
+     walks each boom's own ancestry instead. And it must be done HERE rather
+     than trusted from last frame — updateCranes() writes rotation.y and nothing
+     refreshes a matrix until the renderer does, so reading straight after it
+     gives you the pose from the previous frame. */
+  root.updateWorldMatrix(true, false);
+  _rigInv.copy(root.matrixWorld).invert();
+  for (const s of H.moving) {
+    if (!s.node) {
+      const bind = H.rigs[s.rig];
+      s.node = bind ? root.getObjectByName(s.rig) : null;
+      if (!s.node) {
+        /* A named rig that isn't in the model is a hole in the pipeline — a
+           renamed node, or a join pass that ate it — and the failure mode is a
+           block frozen where the machinery used to be. Say so once; leaving it
+           static is the safe half-answer, never a block that flies somewhere
+           it was never measured. */
+        if (!H.warned) {
+          H.warned = true;
+          console.warn("collision hull: rig node '" + s.rig + "' is not in the model —"
+                     + " its solids will not follow the animation");
+        }
+        continue;
+      }
+      s.bindInv = new THREE.Matrix4().fromArray(bind).invert();
+      H.bound++;
+    }
+    s.node.updateWorldMatrix(true, false);
+    _rigD.multiplyMatrices(_rigRel.multiplyMatrices(_rigInv, s.node.matrixWorld), s.bindInv);
+    _rigR.extractRotation(_rigD);
+    _rigT.setFromMatrixPosition(_rigD).multiplyScalar(H.unit);
+    /* + (I-R)*o. ZERO for every rig shipping today — the origin sits originDZ
+       below the hub, so conjugating into this frame leaves the translation
+       alone whenever R fixes the Y axis, and every current rig is a yaw or a
+       slide. Written anyway: key a TILT into one crane and a recipe missing
+       this term is off by up to 400 units, silently. */
+    _rigT.y += H.originDZ;
+    _rigT.sub(_rigV.set(0, H.originDZ, 0).applyMatrix4(_rigR));
+    const p = s.p, p0 = s.p0;
+    for (let k = 0; k < p.length; k += 4) {
+      _rigV.set(p0[k], p0[k + 1], p0[k + 2]).applyMatrix4(_rigR);
+      p[k] = _rigV.x; p[k + 1] = _rigV.y; p[k + 2] = _rigV.z;
+      p[k + 3] = p0[k + 3] + _rigV.dot(_rigT);
+    }
+    _rigV.set(s.c0[0], s.c0[1], s.c0[2]).applyMatrix4(_rigR).add(_rigT);
+    s.cx = _rigV.x; s.cy = _rigV.y; s.cz = _rigV.z;
+  }
+}
+
+/* ---- the two questions anything can ask a hull.
+   Both take a WORLD point and do the frame change once; hullSolidLocal is the
+   inner loop and is where every cycle actually goes. */
+const _hullQ = new THREE.Vector3(), _hullN = new THREE.Vector3();
+
+function hullSolidLocal(H, px, py, pz) {
+  const S = H.solids;
+  for (let i = 0; i < S.length; i++) {
+    const s = S[i];
+    const dx = px - s.cx, dy = py - s.cy, dz = pz - s.cz;
+    if (dx * dx + dy * dy + dz * dz > s.r2) continue;    // broad sphere, first
+    const p = s.p;
+    let inside = true;
+    for (let k = 0; k < p.length; k += 4)
+      if (p[k] * px + p[k + 1] * py + p[k + 2] * pz > p[k + 3]) { inside = false; break; }
+    if (inside) return s;
+  }
+  return null;
+}
+
+/* Which solid is this world point inside, if any? */
+function hullSolidAt(body, worldP) {
+  if (!body.hull) return null;
+  _hullQ.subVectors(worldP, body.group.position);
+  toBakedFrame(body, _hullQ, _hullQ);       // the hull is baked, same as the pads
+  return hullSolidLocal(body.hull, _hullQ.x, _hullQ.y, _hullQ.z);
+}
+
+/* Clear the face by this much rather than landing exactly on it. A point moved
+   to precisely `dot(n,p) == d` is still INSIDE by the emitter's definition, so
+   pushing by the bare depth frees nothing: the next frame measures a depth of
+   zero, pushes zero, and the ship sits welded inside the girder forever. Caught
+   by fc-solids.js's "can it get out again" assertion, which is there because a
+   solid you cannot escape is worse than one you fly through. Same shape as
+   DITCH_SKIN, and small enough that nothing can see it. */
+const HULL_SKIN = 0.05;
+
+/* How far out, and which way? Writes the WORLD-space direction to push into
+   `out` and returns the depth — 0 when the point is in clear air.
+
+   The exit is the SHALLOWEST plane, which for a convex solid is exactly the
+   minimum translation that frees it. Not the deepest: pushing out through the
+   far side of a girder is how you end up inside the next one. */
+function hullEject(body, worldP, out) {
+  const H = body.hull;
+  if (!H) return 0;
+  _hullQ.subVectors(worldP, body.group.position);
+  toBakedFrame(body, _hullQ, _hullQ);
+  const px = _hullQ.x, py = _hullQ.y, pz = _hullQ.z;
+  const s = hullSolidLocal(H, px, py, pz);
+  if (!s) return 0;
+  const p = s.p;
+  let best = Infinity, bi = 0;
+  for (let k = 0; k < p.length; k += 4) {
+    const depth = p[k + 3] - (p[k] * px + p[k + 1] * py + p[k + 2] * pz);
+    if (depth < best) { best = depth; bi = k; }
+  }
+  _hullN.set(p[bi], p[bi + 1], p[bi + 2]);
+  fromBakedFrame(body, _hullN, out).normalize();
+  return (best > 0 ? best : 0) + HULL_SKIN;
 }
 
 /* Bilinear sample of ANY lat/lon uint8 grid, in the as-baked frame → 0..255.
@@ -3053,6 +3264,11 @@ function buildBody(cfg) {
           if (cfg.derelict) body.glowsKilled = killGlow(model);
           holder.add(model);
           buildCranes(body, model);
+          /* the collision hull's rig nodes live in here. Stored rather than
+             resolved now, because the .glb and the hull json are two separate
+             fetches and either can land first — hullSync() binds them the
+             first frame both exist. */
+          body.hullRoot = model;
           // the GLB's cloud shell drifts like every other cloud layer
           const clouds = model.getObjectByName("Clouds");
           if (clouds) cloudLayers.push({ mesh: clouds, speed: 0.03 });
@@ -3068,6 +3284,10 @@ function buildBody(cfg) {
       // trunk/crown collision manifest (VERDANT) — fire-and-forget like the rest;
       // body.trees is undefined for a frame or two, and every consumer null-checks.
       if (cfg.treeFile) loadTrees(body, cfg.treeFile);
+      // the convex collision hull (v95) — FLEET COMMAND's girders. Same
+      // fire-and-forget shape: body.hull is undefined for a frame or two and
+      // every consumer null-checks, so the station is briefly a bare ball.
+      if (cfg.hullFile) loadHull(body, cfg.hullFile);
       // v77: volcanic vents. No fetch — they're four lines of config, baked into
       // unit directions once here so the per-frame path is a rotate and a scale.
       if (cfg.vents) buildVents(body);
@@ -4151,6 +4371,11 @@ function pointInTerrain(p) {
     if (!b.cfg.landable) return true;                // no height grid — the sphere IS the surface
     const d = Math.sqrt(d2);
     if (d < groundRadius(b, _solidN.multiplyScalar(1 / d))) return true;
+    /* ...and the structure (v95). The radial answer above is "how high is the
+       deck under this bearing", which on a station is only the truth where
+       there IS a deck — a mast, an arm truss and the belt tier all sit in what
+       the radial calls open sky. Shooting the station now hits the station. */
+    if (b.hull && hullSolidAt(b, p)) return true;
   }
   return false;
 }
@@ -4187,9 +4412,28 @@ function npcTerrainClamp(group, vel, margin) {
       }
       return true;
     }
+    /* Clear of the deck and still inside a girder (v95). Same treatment, out
+       the nearest face instead of straight up the radial — a raider flying the
+       gap between two arms has no radial floor to stop it and every reason to
+       be in there. Kept a FLOOR, not a bounce, for the same reason as above:
+       the pass reads as threading the structure, not as pinballing off it. */
+    if (b.hull) {
+      const dep = hullEject(b, group.position, _npcH);
+      if (dep > 0) {
+        group.position.addScaledVector(_npcH, dep + margin);
+        const into = vel.dot(_npcH);
+        if (into < 0) {
+          const spd = vel.length();
+          vel.addScaledVector(_npcH, -into);
+          if (vel.lengthSq() > 1e-6) vel.setLength(spd);
+        }
+        return true;
+      }
+    }
   }
   return false;
 }
+const _npcH = new THREE.Vector3();   // own scratch: hullEject writes the exit normal
 const NPC_GROUND_MARGIN = 45;   // fighter-sized clearance; capitals pass their own
 
 function junkRespawn(j, first) {
@@ -8442,6 +8686,7 @@ const chaseFwd = new THREE.Vector3();
 const chaseAxis = new THREE.Vector3();
 const chaseFixQ = new THREE.Quaternion();
 const CAM_GROUND_MARGIN = 2.5;             // v55: the lens keeps this much air under it
+const _camH = new THREE.Vector3();         // v95: hull exit normal for the lens
 const camGroundV = new THREE.Vector3();    // scratch for the ground clamp
 /* How far out the camera's ground clamp still bothers to look (v93).
 
@@ -10894,6 +11139,42 @@ function animate() {
             ship.throttle = 0;
           }
         }
+        /* ---- THE STRUCTURE (v95) ----
+           The clamp above answers "how high is the deck under me", and on a
+           station that is only the truth where there IS a deck. FLEET COMMAND's
+           masts, arm trusses, towers and belt tier all stand in what the radial
+           calls open sky, and until now you flew straight through every one of
+           them. Tanner: "I am not creating a cartoon."
+
+           Unlike the trees below this is a WALL, not a damage volume — that is
+           the whole point of the call. It can't wedge you the way a forest
+           could, because a convex solid always has a nearest face and the push
+           is along it: there is always a way out, and it is always the short one.
+
+           ⛔ FREE FLIGHT ONLY, and that falls out of where this sits rather
+           than from a flag. The parked, landing and liftoff branches above are
+           where the assist owns the ship's position — and a pad's deck plane
+           and that same deck's solid describe ONE surface from two directions.
+           Let both write in the same frame and a parked ship jitters between
+           them forever. The assist has you, or the hull does. Never both.
+
+           A point test at the ship's origin, deliberately, matching every other
+           ground test in the game (:11106). A radius here would have to be
+           smaller than GEAR_HEIGHT or it fights the pad on the frame before
+           touchdown, and 4 units of margin is not worth that coupling. The cost
+           is that a nose can visibly enter a girder before the hull stops —
+           flag for the seat, not a thing to guess at from here. */
+        if (b.hull) {
+          const dep = hullEject(b, shipObj.position, _shipH);
+          if (dep > 0) {
+            shipObj.position.addScaledVector(_shipH, dep);
+            const into = ship.velocity.dot(_shipH);
+            if (into < 0) {
+              if (into < -100) thump(-into);        // came in hot, same cut as the deck
+              ship.velocity.addScaledVector(_shipH, -into);
+            }
+          }
+        }
         /* trees poke ABOVE the height blanket, so the ground clamp never sees
            them — clip a trunk and it BITES (thump + speed-scaled damage) but you
            keep flying: a damage volume, not a wall, so you can't get wedged
@@ -11113,6 +11394,11 @@ function animate() {
   for (const belt of belts) belt.rotation.y += 0.02 * dt;
   for (const c of cloudLayers) c.mesh.rotation.y += c.speed * dt;
   updateCranes(dt);
+  /* ...and carry the collision blocks with the booms that just moved. Here,
+     immediately after, so the hull always describes the pose that is about to
+     be RENDERED — collision agreeing with the picture on the screen, rather
+     than with the one before it. */
+  for (const b of liveBodies) hullSync(b);
   if (shipMixer) {
     /* the authored idle float only plays AIRBORNE (v55): parked (or mid
        auto-liftoff) its weight eases to 0 and the mixer blends back to the
@@ -11687,6 +11973,14 @@ function animate() {
       const camFloor = groundRadius(nearest, camGroundV) + CAM_GROUND_MARGIN;
       if (cd < camFloor)
         camera.position.copy(nearest.group.position).addScaledVector(camGroundV, camFloor);
+    }
+    /* ...and out of the structure (v95). The radial floor only exists where
+       there's deck: swing the chase around a ship parked on an arm berth and
+       the lens used to pass clean through the mast beside it. Same push the
+       hull gives the ship, same margin the deck gets. */
+    if (nearest.hull) {
+      const dep = hullEject(nearest, camera.position, _camH);
+      if (dep > 0) camera.position.addScaledVector(_camH, dep + CAM_GROUND_MARGIN);
     }
   }
 
