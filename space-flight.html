@@ -496,8 +496,12 @@
   .mktRow.cursor .keep { background: rgba(125,255,168,.18); border-color: #7dffa8; }
   .mktRow.cursor .keep.held { background: rgba(255,211,77,.18); border-color: #ffd34d; }
   .mktRow.cursor .g { color: #eafff2 !important; }
-  /* a held row is a decision you made, so it stays legible even carrying nothing */
-  .mktRow.idle .keep.held { opacity: 1; }
+  /* v99 flipped this with the default. v98 kept HOLD cells bright on an empty row
+     because HOLD was the decision; now HOLD is what every row starts as, and five
+     bright gold cells over a hold you aren't carrying is noise claiming to be a
+     choice. SELL is the decision now, so SELL is what stays legible. */
+  .mktRow.idle .keep { opacity: 1; }
+  .mktRow.idle .keep.held { opacity: .42; }
   /* v84 — is this a good price BY THIS PORT'S OWN STANDARDS? Costs no column, and
      the phone dock sheet has none to give. HERE only: the away column already
      speaks gold for "move it", and two colour languages in one table is noise.
@@ -512,6 +516,19 @@
     text-align: center; border-top: 1px solid rgba(125,232,168,.18);
   }
   #marketboard .mktFoot b { color: #ffd34d; font-weight: normal; }
+  /* v99 — SELL ALL. Same two colours the row cells speak (green = this sells,
+     gold = this stays / this is running), one size up because it acts on the
+     whole hold. It is a row of the cursor's list rather than a footer
+     decoration, so it takes the same cursor treatment .keep does. */
+  #marketboard .mktAll {
+    margin-top: 6px; padding: 4px 8px; font-size: 10px; letter-spacing: 2px;
+    text-align: center; border: 1px solid rgba(125,255,168,.28);
+    border-radius: 3px; color: #7dffa8; cursor: pointer; user-select: none;
+  }
+  #marketboard .mktAll.on      { color: #ffd34d; border-color: rgba(255,211,77,.45); }
+  #marketboard .mktAll.cursor  { background: rgba(125,255,168,.18); border-color: #7dffa8; }
+  #marketboard .mktAll.on.cursor { background: rgba(255,211,77,.18); border-color: #ffd34d; }
+  #marketboard .mktAll.idle    { opacity: .42; }   /* nothing to sell — data, not a decision */
   /* the visit receipt (v88) — what the drain just did, because it does it fast
      and in silence. Wraps like .mktNote and under the same width cap, for the
      same reason: a five-good receipt must not decide the panel's width. */
@@ -883,6 +900,8 @@
        has height to spare in portrait, which is the whole reason the column
        layout goes full-width here. */
     body.docked #marketboard .mktRow .keep { padding: 9px 7px; }
+    /* v99 — same reason, and this one is the button you press hardest */
+    body.docked #marketboard .mktAll { padding: 10px 8px; }
   }
 
   /* the readout used to sit exactly where the stick now lives — lift and
@@ -5107,41 +5126,58 @@ const GOOD_IDS = Object.keys(GOODS);
 const hold = {};
 for (const g of GOOD_IDS) hold[g] = 0;
 
-/* ---- SELL or HOLD, per good (v98, off Tanner's own idea) ----
+/* ---- SELL or HOLD, per good (v98, off Tanner's own idea; default flipped v99) ----
    "when you land at a market, there should be an option to sell your hold or
    keep it. So I could sell my scrap for top dollar and hold alloy for the next
    market."
 
-   Until now the hold drained automatically the moment you touched down on
+   Before v98 the hold drained automatically the moment you touched down on
    anything that pays — which meant the price board could mark another port's
    better rate with a ▲ and then sell the stuff anyway. The board was advice you
    could not take, and v84's whole drift-and-glut layer had no decision to feed.
    This is that decision, and it is the ONLY thing standing between the board and
    being a receipt again.
 
-   ⛔ DEFAULT IS SELL, every good, always. A player who never opens the panel
-   plays exactly the game they played in v97 — that is the whole reason this is a
-   flag on the drain rather than a new step in it.
+   ⛔ DEFAULT IS HOLD, every good — and v99 flipped it there off a playtest:
+   "every time I stop on the pad it sells everything before I have the chance to
+   choose." v98 defaulted to SELL so that ignoring the panel played exactly the
+   v97 game. That was backwards-compatible and unusable, because the measurement
+   that makes the marks worth persisting is the same one that puts the default
+   out of reach: BANK_RATE is 26 units/sec, so a full 150-unit hold is gone in
+   under six seconds. You cannot set down, open the accordion, reach MARKET and
+   pick a row inside that. The panel existed and the game never let you get to
+   it. Selling is now something you DO, not something done to you.
 
-   ⚠ THE MARKS PERSIST ACROSS LANDINGS ON PURPOSE, and that fell out of a
-   measurement rather than a preference: BANK_RATE is 26 units/sec, so a full
-   150-unit hold is gone in under six seconds. Marks scoped to one visit would be
-   a race the player loses — you would still be reading the rows while the thing
-   you meant to keep was being sold. Persisting them makes the decision something
-   you make ONCE and arrive with. The cost is the honest one: at the port you
-   were saving it for, you have to say SELL. That extra press is also the
-   confirmation that you are selling where you meant to.
+   ⚠ THE MARKS PERSIST ACROSS LANDINGS ON PURPOSE, same measurement: marks scoped
+   to one visit would be a race the player loses. Persisting them makes the
+   decision something you make ONCE and arrive with — mark SCRAP sell and it
+   sells itself at every port from then on, while ALLOY rides along untouched.
+
+   SELL ALL is the other half of the flip, and it is ONE-SHOT BY DESIGN (his
+   call): it overrides every mark for THIS VISIT and is forgotten the moment you
+   leave the district, so it can never quietly recreate the thing the flip was
+   made to fix. A SELL ALL that stuck would put all five goods back to SELL
+   permanently and the very next landing would empty the hold on touchdown —
+   v98's bug, one press further away. Its lifetime is the visit's, so it expires
+   in strikeQuote() beside the receipt.
 
    Not persisted to localStorage, and that is not an oversight — the hold itself
    isn't either, so a mark that outlived its cargo would be a setting about
    nothing. */
 const holdKeep = {};
-for (const g of GOOD_IDS) holdKeep[g] = false;
+for (const g of GOOD_IDS) holdKeep[g] = true;
+let sellAllNow = false;        // v99: SELL ALL, this visit only (see strikeQuote)
+/* The EFFECTIVE mark, and the only one anything is allowed to read. The drain,
+   the rows, the collapsed bar and the footer all ask this — a reader that
+   consulted `holdKeep` directly would be true while SELL ALL was running and
+   the others were false, which is exactly how a panel starts disagreeing with
+   the bank it is supposed to BE. */
+function sellsHere(g) { return !holdKeep[g] || sellAllNow; }
 // what this port would actually take off you right now — the number the drain
 // moves, the bar quotes and the footer promises. All three must agree.
 function sellableUnits() {
   let n = 0;
-  for (const g of GOOD_IDS) if (!holdKeep[g]) n += hold[g];
+  for (const g of GOOD_IDS) if (sellsHere(g)) n += hold[g];
   return n;
 }
 function heldUnits() { return cargo - sellableUnits(); }
@@ -5654,6 +5690,11 @@ function strikeQuote(port) {
   if (port) for (const g of GOOD_IDS) quote[g] = portLive(port, g);
   for (const g of GOOD_IDS) visitSold[g] = 0;
   visitPaidCents = 0;
+  /* v99: SELL ALL is scoped to ONE visit, and this is the only place in the game
+     a change of district is noticed — including the change to NOTHING on
+     takeoff. So it expires here, with the receipt it belongs to. Anywhere else
+     and it would survive a flight, which is the whole thing it must never do. */
+  sellAllNow = false;
 }
 // THE rate. Everything that pays, prices or displays calls this one.
 function portRate(port, good) {
@@ -5897,7 +5938,8 @@ const marketEl = document.getElementById("marketboard");
 // blowing away the bar would take the accordion's own navigation with it
 const marketBodyEl = marketEl.querySelector(".dockbody");
 let marketDirty = true;        // port changed — rebuild on the next docked frame
-let marketCursor = 0;          // v98: which good the SELL/HOLD toggle is sitting on
+let marketCursor = 0;          // v98: which good the SELL/HOLD toggle is sitting on.
+                               // v99: GOOD_IDS.length means SELL ALL, one past the last row
 let marketCargoShown = -1;     // the hold the rows were drawn against. `cargo` is a
                                // valid signature for the whole hold because nothing
                                // ever writes a stack without it (the hold/cargo
@@ -5916,7 +5958,10 @@ let marketSigAt = 0;           // rate that drifts on its own moves neither the 
 function marketRows(port) {
   return GOOD_IDS.map(g => ({
     g, n: hold[g], here: portRate(port, g), away: bestElsewhere(port, g),
-    keep: !!holdKeep[g],                                   // v98
+    // v99: the EFFECTIVE mark, so a running SELL ALL shows on every row it is
+    // selling. The underlying holdKeep is untouched and comes back when the
+    // override expires — by which point the hold it was keeping is gone anyway.
+    keep: !sellsHere(g),                                   // v98 · v99
   }));
 }
 /* v84 — the port says so itself when a sag is YOUR doing. It's the only place the
@@ -5958,7 +6003,11 @@ function marketSignature(port, rows) {
   // v98: the marks and the cursor are ON the screen, so they belong in the
   // signature — toggling one changes nothing the hold/port flags would notice,
   // and the panel would sit there showing the state you just left.
-  let s = marketNote(port) + "|" + (dockBox === "market" ? marketCursor : -1) + "|";
+  // v99: and SELL ALL in its own right, not just through the rows it flips —
+  // with all five goods already marked SELL it changes nothing but the button,
+  // and the button would sit there reading the state you just left.
+  let s = marketNote(port) + "|" + (dockBox === "market" ? marketCursor : -1) +
+          (sellAllNow ? "|A|" : "|-|");
   for (const r of rows)
     s += r.n + ":" + r.here + ":" + (r.away ? r.away.rate + r.away.port.name : "-")
        + ":" + (r.keep ? "K" : "s") + "|";
@@ -5995,7 +6044,15 @@ function refreshMarket(port) {
              '<span class="n"></span>' + "</div>" +
              '<div class="mktSep"></div>';
 
-  let hereCents = 0, bestCents = 0;
+  /* v99: TWO here-totals, because the footer's VERB changes with them and the
+     verb is what keeps THE BOARD IS THE BANK true. `hereAll` is what this port
+     would pay for the whole hold — the advice number, and the only honest one
+     while nothing is selling. `hereSell` is what the drain in front of you will
+     actually pay. The bigger number is never the one wearing a promise: the
+     moment anything is marked SELL the footer says SELLING and quotes hereSell.
+     v98 had one total, which is why it could only ever say "SELLING 0 HERE" in
+     what is now the resting state. */
+  let hereAllCents = 0, hereSellCents = 0, bestCents = 0;
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     /* Accumulated in exact CENTS and floored ONCE at the end, which is exactly how
@@ -6003,13 +6060,12 @@ function refreshMarket(port) {
        paid, not an estimate that argues with the bank. Rates are 2dp at source, so
        the number you can read off the column IS the number in this sum. */
     const hc = Math.round(r.here * 100), ac = r.away ? Math.round(r.away.rate * 100) : 0;
-    /* v98: HERE counts only what this port is allowed to take. That is not a
-       presentation choice — THE BOARD IS THE BANK is this panel's load-bearing
-       property, and a HERE total that included goods marked HOLD would promise
-       money the drain in front of you will never pay. ROUTED deliberately still
-       counts the WHOLE hold: it is the "what is this worth if you work it
-       properly" number, which is the comparison you are marking rows against. */
-    if (!r.keep) hereCents += r.n * hc;
+    /* What this port is ALLOWED to take is its own total, kept apart from what
+       the hold is worth. ROUTED deliberately counts the WHOLE hold either way:
+       it is the "what is this worth if you work it properly" number, which is
+       the comparison you are marking rows against. */
+    hereAllCents += r.n * hc;
+    if (!r.keep) hereSellCents += r.n * hc;
     /* "take it elsewhere" is marked only when it's ACTIONABLE. A better price
        somewhere else for something you aren't carrying is trivia, and marking it
        would teach you to ignore the mark. Otherwise it is exactly what the two
@@ -6048,21 +6104,45 @@ function refreshMarket(port) {
      less than the drain then paid — on roughly half of all resumed drains. ROUTED
      doesn't get it: flying somewhere else changes soldPort, which empties the
      drawer, so routing genuinely forfeits the change. */
-  if (port === soldPort) hereCents += owedCents;
-  const hereTotal = Math.floor(hereCents / 100), bestTotal = Math.floor(bestCents / 100);
-  /* v98: the verb changes when you are holding something back, because "HOLD 40
-     HERE" while deliberately keeping 60 reads as the whole hold being worth 40.
-     With nothing marked this is byte-identical to v97. */
-  const held = heldUnits();
+  // owed at THIS port either way, so both totals get it — it is at most 99 cents
+  // and it only ever moves the floor by one, which is precisely the credit v84
+  // added it to stop losing.
+  if (port === soldPort) { hereAllCents += owedCents; hereSellCents += owedCents; }
+  const hereAll  = Math.floor(hereAllCents / 100),
+        hereSell = Math.floor(hereSellCents / 100),
+        routed   = Math.floor(bestCents / 100);
+  /* v99: the resting state is now a hold that ISN'T selling, so the footer has a
+     third thing to say and the verb is what says it. Nothing marked SELL → the
+     board is pure advice again and quotes the WHOLE hold (v97's own line, and
+     the reason this still reads like a price board instead of a bill for zero).
+     Anything marked SELL → SELLING, quoting only what the drain will pay. */
+  const held = heldUnits(), selling = cargo - held;
   html += '<div class="mktFoot">' +
           (cargo === 0 ? "HOLD EMPTY"
-            : held > 0
-              ? 'SELLING <b>' + hereTotal + '</b> HERE · KEEPING <b>' + held + '</b>'
-                + (bestTotal > hereTotal ? ' · <b>' + bestTotal + '</b> ROUTED' : "")
-            : bestTotal > hereTotal
-              ? 'HOLD <b>' + hereTotal + '</b> HERE · <b>' + bestTotal + '</b> ROUTED'
-              : 'HOLD <b>' + hereTotal + '</b> · BEST PRICE IS HERE') +
+            : selling === 0
+              ? (routed > hereAll
+                  ? 'HOLD <b>' + hereAll + '</b> HERE · <b>' + routed + '</b> ROUTED'
+                  : 'HOLD <b>' + hereAll + '</b> · BEST PRICE IS HERE')
+              : 'SELLING <b>' + hereSell + '</b> HERE'
+                + (held > 0 ? ' · KEEPING <b>' + held + '</b>' : "")
+                + (routed > hereSell ? ' · <b>' + routed + '</b> ROUTED' : "")) +
           "</div>";
+  /* v99 — SELL ALL, the other half of the flip. One press empties the hold at
+     this port, marks or no marks. It sits UNDER the footer because it is the
+     action on the number the footer just quoted, and it is the last thing ↓
+     reaches, which is where a "do the whole thing" control belongs.
+
+     It is a TOGGLE, like the row cells: press it again and the drain stops where
+     it stands. A drain you can't stop is the same trap one panel further out —
+     26 units a second means "undo" has to be a button, not a reflex.
+
+     Drawn even on an empty hold, dimmed. The cursor has to have somewhere to
+     land, and a control that appears and disappears under your thumb is worse
+     than one that is greyed. */
+  const allCur = dockBox === "market" && marketCursor === rows.length;
+  html += '<div class="mktAll' + (sellAllNow ? " on" : "") + (allCur ? " cursor" : "") +
+          (cargo === 0 ? " idle" : "") + '" data-sellall="1">' +
+          (sellAllNow ? "■ STOP SELLING" : "SELL ALL") + "</div>";
   /* The RECEIPT (v88): one line saying what this visit's drain actually did,
      at the struck quote, floored once — same cents discipline as the footer.
      Gated on quotePort so a board rebuilt for any other reason can never wear
@@ -9241,8 +9321,11 @@ function dockRowCount(k) {
   if (k === "shop") return SHOP.length;
   if (k === "jobs") return activeJob ? 0 : offeredJobs.length;
   // v98: every good is a row you can mark, including ones you aren't carrying —
-  // marks persist, so setting one before you own any is the point, not an edge case
-  if (k === "market") return GOOD_IDS.length;
+  // marks persist, so setting one before you own any is the point, not an edge
+  // case. v99 adds ONE more: the last index is SELL ALL, which is why this is
+  // +1 and not a second list — ↓ off the bottom good lands on it, and ↓ again
+  // wraps to the top, so a D-pad reaches everything with no new rule to learn.
+  if (k === "market") return GOOD_IDS.length + 1;
   return 0;
 }
 /* the collapsed bar's one line. It has to be worth the glass it costs: a bar
@@ -9267,11 +9350,21 @@ function dockSummary(k) {
      v98: which means goods marked HOLD are NOT in it. A collapsed bar reading
      WORTH 120 over a drain that will pay 40 is the same lie the footer would be
      telling, one panel further out — and the bar is the number you see without
-     opening anything. */
-  let c = curPort === soldPort ? owedCents : 0;
-  for (const g of GOOD_IDS) if (!holdKeep[g]) c += hold[g] * Math.round(portRate(curPort, g) * 100);
+     opening anything.
+     v99: and the VERB carries it, exactly as in the footer, because with HOLD
+     the default the bar's RESTING state is a hold that isn't selling. WORTH is
+     potential and nothing is moving; SELLING is money actually arriving. Left
+     alone, v98's line would have read "WORTH 0 · 150 HELD" on every landing —
+     a bar whose whole job is to be worth the glass it costs, reading zero. */
+  let c = curPort === soldPort ? owedCents : 0, all = c;
+  for (const g of GOOD_IDS) {
+    const v = hold[g] * Math.round(portRate(curPort, g) * 100);
+    all += v;
+    if (sellsHere(g)) c += v;
+  }
   const held = heldUnits();
-  return "WORTH " + Math.floor(c / 100) + (held ? " · " + held + " HELD" : "");
+  if (held === cargo) return "WORTH " + Math.floor(all / 100);
+  return "SELLING " + Math.floor(c / 100) + (held ? " · " + held + " HELD" : "");
 }
 // cheap enough to call every docked frame; the signature is what stops it
 // rewriting three bars 60 times a second for nothing
@@ -9312,9 +9405,11 @@ function dockMove(dy) {
 function dockAct() {
   if (dockBox === "shop") buyUpgrade(shopCursor);
   else if (dockBox === "jobs" && !activeJob && offeredJobs.length) acceptJob(jobCursor);
-  else if (dockBox === "market") toggleKeep(marketCursor);
+  // v99: the last row is SELL ALL, not a good
+  else if (dockBox === "market")
+    marketCursor === GOOD_IDS.length ? sellAll() : toggleKeep(marketCursor);
 }
-/* v98 — flip one good between SELL and HOLD. The drain reads `holdKeep` every
+/* v98 — flip one good between SELL and HOLD. The drain reads the marks every
    frame, so this takes effect on the very next one: mark a good mid-drain and it
    stops being taken, un-mark it and it starts. No commit step, and nothing to
    undo. Shares the shop's two sounds, since it is the same class of event — a
@@ -9322,11 +9417,35 @@ function dockAct() {
 function toggleKeep(i) {
   const g = GOOD_IDS[i];
   if (!g) return;
+  /* v99: while SELL ALL is running every row READS "SELL", so pressing one has
+     to do what it looks like it does — stop selling THAT good and leave the rest
+     going. Dropping the override on its own would instead restore five marks the
+     player cannot see, and four goods would stop selling for no visible reason.
+     So the override is CASHED IN first — what is on the screen becomes the marks
+     — and then the pressed row flips. What you see is what you get, which is the
+     only version of this that isn't a trick. */
+  if (sellAllNow) {
+    sellAllNow = false;
+    for (const k of GOOD_IDS) holdKeep[k] = false;
+  }
   holdKeep[g] = !holdKeep[g];
   marketCursor = i;              // a click moves the cursor too, so mouse and pad agree
   marketDirty = true;
   dockBarSig = "";               // the bar quotes what will SELL — it just changed
   holdMarkSound(holdKeep[g]);
+}
+/* v99 — dump the whole hold at this port, marks and all, for THIS VISIT ONLY.
+   Tanner's call, and see the header note for why it is one-shot: a SELL ALL that
+   stuck would set all five goods to SELL permanently, and the next landing would
+   empty the hold on touchdown — the bug the HOLD default was flipped to fix,
+   one press further away. Toggling it OFF stops the drain where it stands and
+   hands every good back its own mark, untouched. */
+function sellAll() {
+  sellAllNow = !sellAllNow;
+  marketCursor = GOOD_IDS.length;   // a click moves the cursor too, same as a row
+  marketDirty = true;
+  dockBarSig = "";
+  holdMarkSound(!sellAllNow);       // up-notes for "this sells", down for "it stays"
 }
 // the bars are real buttons, so a click/tap opens a box with no extra plumbing
 for (const k of ["shop", "jobs", "market"])
@@ -9338,6 +9457,12 @@ for (const k of ["shop", "jobs", "market"])
    old one would leak; the shop can bind per row only because its five rows are
    built once and then mutated in place. */
 marketBodyEl.addEventListener("click", e => {
+  // v99 — SELL ALL rides the same listener; it is rebuilt by the same innerHTML
+  if (e.target.closest(".mktAll")) {
+    setDockBox("market");
+    sellAll();
+    return;
+  }
   const cell = e.target.closest(".keep");
   if (!cell) return;
   setDockBox("market");                 // acting inside a box is also opening it
@@ -11860,7 +11985,10 @@ function animate() {
   /* v98: what the drain may TAKE, not what the hold contains. Gating on `cargo`
      here would leave `banking` true with every good marked HOLD — bankFlow would
      climb, the tick sound would fire on a drain that moves nothing, and the
-     finished-draining sound would never come because cargo never reaches zero. */
+     finished-draining sound would never come because cargo never reaches zero.
+     v99 made that the RESTING state rather than an edge case: HOLD is now the
+     default, so a plain landing carrying a full hold lands here with sellable
+     at 0 and nothing happens at all until you say so. */
   const sellable = sellableUnits();
   if (onPort && onPort.pay > 0 && sellable > 0) {
     // the drawer is scoped to THIS port and survives a takeoff, so a drain split
@@ -11876,8 +12004,9 @@ function animate() {
          invisible on a full sale, but it's the whole difference when a takeoff
          cuts one short — leaving with the stuff this port was underpaying for
          is strictly the better outcome, and it costs three lines.
-         v98: and a good you marked HOLD is not in the queue at all. */
-      const order = GOOD_IDS.filter(g => hold[g] > 0 && !holdKeep[g])
+         v98: and a good you marked HOLD is not in the queue at all — v99 asks
+         sellsHere(), so a running SELL ALL puts it back in without touching it. */
+      const order = GOOD_IDS.filter(g => hold[g] > 0 && sellsHere(g))
                             .sort((a, b) => portRate(onPort, b) - portRate(onPort, a));
       for (const g of order) {
         if (move <= 0) break;
@@ -11920,7 +12049,11 @@ function animate() {
   if (onPort !== curPort) {
     curPort = onPort;
     shopDirty = jobDirty = marketDirty = true;
-    shopCursor = jobCursor = 0;
+    /* v99 puts marketCursor in here too. The market list is a fixed six, so this
+       isn't the bounds fix the other two are — it's that the sixth row is SELL
+       ALL, and a cursor parked on it would carry to the next port, where one
+       press empties a hold you flew there to protect. Arrive on row one. */
+    shopCursor = jobCursor = marketCursor = 0;
   }
 
   const canShop = !!(onPort && onPort.shop);
