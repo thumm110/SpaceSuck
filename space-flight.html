@@ -1369,12 +1369,20 @@ const BODIES = [
        hand-copied once and went ~14u stale, and every landing there aimed
        beside the deck until v68 caught it.
 
-       THE ANNEX HAS NO `port` OF ITS OWN, AND THAT IS THE DESIGN. It sits 98u
-       from FOLLY, inside FOLLY's ~130u district (ang x PAD_DISTRICT_MUL 3.8), so
+       THE ANNEX HAS NO `port` OF ITS OWN, AND THAT IS THE DESIGN. It sits 145u
+       from FOLLY, inside FOLLY's ~210u district (ang x PAD_DISTRICT_MUL 3.8), so
        onSpaceport() hands back the rig's port on either deck. Correct: the two
        decks are ONE port joined by catwalks, and a salvage rig that paid two
        different prices depending on which end of its own complex you parked at
        would be nonsense. Not an accident — measured, and relied on.
+
+       v100 — BOTH DECKS GREW SO THE TRUCK FITS, and this relationship had to be
+       re-measured rather than assumed. The annex moved OUT (98u → 145u) when the
+       main deck went 40u → 64u of radius, which on its own would walk it out of
+       FOLLY's district and quietly split one port into two. It doesn't, because
+       the district grew with the cone: 0.0241 → 0.0387 takes FOLLY's reach from
+       130u to 210u, faster than the annex retreated. Both numbers move together
+       or this breaks — if either pad is ever re-tuned alone, check this again.
 
        ⚠️ The latent bug this replaced is still real, it just isn't reachable
        from here any more: onSpaceport() returns the FIRST pad in array order
@@ -1399,11 +1407,11 @@ const BODIES = [
          it actually consumes. It'll take hot goods at 0.95 — better than home,
          nowhere near the fence — and it pays badly for ore and volatiles: no
          smelter on a platform, and nobody stacks volatiles over lethal water. */
-      { lat:   7.0000, lon:  -34.0000, ang: 0.0241, top: 1.01000,      // the rig deck
+      { lat:   7.0000, lon:  -34.0000, ang: 0.0387, top: 1.01000,      // the rig deck
         port: { name: "FOLLY SALVAGE", pay: 0.65, shop: false, dispatch: false,
                 market: { scrap: 1.35, alloy: 1.20, ore: 0.35,
                           volatile: 0.35, contra: 0.95 } } },
-      { lat:   8.7015, lon:  -30.4124, ang: 0.0224, top: 1.00780 },   // FOLLY ANNEX — no port, see above
+      { lat:   9.5021, lon:  -28.6927, ang: 0.0361, top: 1.00780 },   // FOLLY ANNEX — no port, see above
       /* BULLS BAY — the honest capital, and FOLLY's mirror. A working island
          port with cranes and warehouses: it wants the raw industrial feed (ore,
          volatiles) and has no use for your scrap heap. It refuses contraband
