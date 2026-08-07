@@ -253,6 +253,145 @@
   #fleetBar .ss-btn { padding: 7px 18px; font-size: 12px; letter-spacing: 3px; }
   #fleetFrame { flex: 1 1 auto; width: 100%; border: 0; background: #05090f; }
 
+  /* ---- MERCANTILE EXCHANGE (v101, §1.1d): the road map you can carry ----
+     The price board only exists standing on a pad, so until now every routing
+     call was made from memory — and memory does not hold a 25-cell table. This
+     is that table, in the pause menu, readable anywhere.
+
+     It shows the STATIC BASE rates (portBase), never the live drifted ones.
+     Drift is ±8% against port spreads of 2×–7×, so a live number here would be
+     noise dressed as precision, and it would delete the reason to land: the pad
+     is where you see your real struck price and your own glut.
+
+     Styled as an INSTRUMENT, not a spreadsheet — chunky bezel, lamped port
+     selector, backlit gauge cells. It only LOOKS physical: every selection is
+     the four arrows and A, the same nav as the v85 dock accordion, because a
+     knob you have to grab and twist is one half the inputs can't reach. ---- */
+  #market {
+    position: fixed; inset: 0; z-index: 41; display: none;
+    align-items: center; justify-content: center;
+    font-family: "Lucida Console", Monaco, monospace; color: #7de8a8;
+    background: rgba(0,0,0,.66);
+  }
+  /* the bezel. Three tones and an inset highlight is what reads as MOULDED
+     rather than drawn — one 1px line is a web panel, this is a piece of
+     hardware. The four radial gradients are the corner screws. */
+  #marketPanel {
+    display: flex; flex-direction: column; gap: 9px;
+    padding: 15px; box-sizing: border-box;
+    width: min(880px, 96vw); max-height: 94vh; overflow-y: auto;
+    border: 3px solid #24382e; border-radius: 10px;
+    background-image:
+      radial-gradient(circle at 11px 11px, #35503f 0 2.5px, transparent 3px),
+      radial-gradient(circle at calc(100% - 11px) 11px, #35503f 0 2.5px, transparent 3px),
+      radial-gradient(circle at 11px calc(100% - 11px), #35503f 0 2.5px, transparent 3px),
+      radial-gradient(circle at calc(100% - 11px) calc(100% - 11px), #35503f 0 2.5px, transparent 3px),
+      linear-gradient(#16211c, #0a1310);
+    box-shadow: 0 0 0 1px rgba(125,232,168,.18) inset,
+                0 12px 44px rgba(0,0,0,.65), 0 0 34px rgba(125,232,168,.10);
+  }
+  #marketTitle {
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    padding: 7px 16px; font-size: 13px; letter-spacing: 5px; color: #9fe8c0;
+    background: #0a120f; border: 1px solid #24382e; border-radius: 4px;
+    box-shadow: 0 1px 0 rgba(125,232,168,.10) inset;
+    text-shadow: 0 0 10px rgba(125,232,168,.45);
+  }
+  #marketTitle .lamp { width: 7px; height: 7px; border-radius: 50%;
+                       background: #7de8a8; box-shadow: 0 0 9px rgba(125,232,168,.8); }
+  #marketTitle .sub { font-size: 9px; letter-spacing: 2px; color: #55705f; }
+  /* the port selector: one lamped detent per market, and it is a real rotary
+     row — the lit lamp is the position the switch is in */
+  #mcSel { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+  .mcDent {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    padding: 6px 11px 5px; min-width: 64px; cursor: pointer;
+    font-size: 9px; letter-spacing: 1px; color: #6f9382; white-space: nowrap;
+    background: linear-gradient(#141f1a, #0d1613);
+    border: 1px solid #24382e; border-radius: 4px;
+    box-shadow: 0 1px 0 rgba(255,255,255,.05) inset, 0 2px 0 #080f0c;
+  }
+  .mcDent .lamp { width: 6px; height: 6px; border-radius: 50%;
+                  background: #1d2b24; box-shadow: 0 0 0 1px #080f0c inset; }
+  .mcDent.on { color: #ffd34d; border-color: rgba(255,211,77,.55);
+               background: linear-gradient(#232f1e, #151d12);
+               box-shadow: 0 0 14px rgba(255,211,77,.16) inset, 0 1px 0 #080f0c; }
+  .mcDent.on .lamp { background: #ffd34d; box-shadow: 0 0 9px rgba(255,211,77,.9); }
+  /* the matrix. Column count comes from how many markets exist, so the template
+     is written by refreshMarketConsole — same reason the price board's is. */
+  #mcGrid { display: grid; gap: 4px; }
+  .mcRow { display: contents; }
+  .mcHead > span { font-size: 9px; letter-spacing: 1px; color: #6f9382;
+                   text-align: center; padding-bottom: 1px; }
+  .mcHead > span.on { color: #ffd34d; }
+  .mcGood { display: flex; align-items: center; padding-right: 8px;
+            font-size: 11px; letter-spacing: 1px; white-space: nowrap; }
+  /* a CELL is a small lit window, and the fill behind the number IS the gauge —
+     scaled to the best rate in its own ROW, so a glance across a row says who
+     wants this good without reading a single number. Keeping the gauge as a
+     background rather than a second line is what keeps five goods on a phone. */
+  .mcCell {
+    position: relative; overflow: hidden; text-align: center;
+    padding: 6px 4px; font-size: 12px; color: #cfe9d8;
+    background: #080f0c; border: 1px solid #1d2b24; border-radius: 3px;
+    cursor: pointer;
+  }
+  /* The fill FADES OUT at its right edge and carries a crisp 2px bar along its
+     bottom. A flat block with a hard edge read as a second, smaller box inside
+     the cell — the eye saw two panels, not one lit one, and it was worst
+     exactly where it matters, on a cell paying ~75% of the row's best. The soft
+     wash is the backlight, the bar at the bottom is the gauge, and only the bar
+     has an edge sharp enough to measure against. */
+  .mcCell .fill {
+    position: absolute; left: 0; top: 0; bottom: 0; z-index: 0;
+    background: linear-gradient(90deg, rgba(125,232,168,.20),
+                                rgba(125,232,168,.13) 65%, rgba(125,232,168,0));
+    box-shadow: inset 0 -2px 0 rgba(125,232,168,.45);
+  }
+  .mcCell .v { position: relative; z-index: 1; }
+  .mcCell.best { color: #ffd34d; border-color: rgba(255,211,77,.45);
+                 text-shadow: 0 0 9px rgba(255,211,77,.5); }
+  .mcCell.best .fill {
+    background: linear-gradient(90deg, rgba(255,211,77,.26),
+                                rgba(255,211,77,.17) 65%, rgba(255,211,77,0));
+    box-shadow: inset 0 -2px 0 rgba(255,211,77,.7);
+  }
+  /* the two cursors are DIFFERENT marks on purpose: the column is the port you
+     have dialled in, the row is the good, and their crossing is the readout. */
+  .mcCell.col, .mcCell.row { border-color: rgba(125,232,168,.4); }
+  .mcCell.cur { box-shadow: 0 0 0 1px #7dffa8, 0 0 14px rgba(125,255,168,.35); }
+  /* the main readout window: the one big number on the panel */
+  #mcRead {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    padding: 9px 14px; background: #050a08;
+    border: 1px solid #24382e; border-radius: 4px;
+    box-shadow: 0 0 20px rgba(125,232,168,.09) inset;
+  }
+  #mcRead .lbl { font-size: 12px; letter-spacing: 2px; color: #9fe8c0; }
+  #mcRead .at  { font-size: 10px; color: #55705f; }
+  #mcRead .cmp { font-size: 10px; letter-spacing: 1px; color: #6f9382; }
+  #mcRead .cmp.top { color: #ffd34d; text-shadow: 0 0 8px rgba(255,211,77,.4); }
+  #mcRead .big { margin-left: auto; font-size: 23px; letter-spacing: 2px;
+                 color: #ffd34d; text-shadow: 0 0 15px rgba(255,211,77,.55); }
+  #mcFoot { display: flex; align-items: center; gap: 12px; }
+  #mcHint { font-size: 9px; letter-spacing: 1px; color: #55705f; line-height: 1.6; }
+  #mcFoot .ss-btn { margin-left: auto; padding: 7px 18px;
+                    font-size: 12px; letter-spacing: 3px; }
+  /* phone: the same instrument, tightened. The panel scrolls rather than
+     shrinking the numbers past reading — this is a table you read at arm's
+     length on a 390px-tall landscape screen. */
+  @media (max-height: 560px), (max-width: 620px) {
+    #marketPanel { padding: 10px; gap: 6px; }
+    #marketTitle { font-size: 11px; letter-spacing: 3px; padding: 5px 10px; }
+    #marketTitle .sub { display: none; }
+    .mcDent { min-width: 52px; padding: 4px 7px 4px; font-size: 8px; }
+    .mcCell { padding: 4px 2px; font-size: 11px; }
+    .mcGood { font-size: 10px; padding-right: 5px; }
+    #mcRead { padding: 6px 10px; gap: 8px; }
+    #mcRead .big { font-size: 18px; }
+    #mcRead .lbl { font-size: 11px; }
+  }
+
   #hud {
     position: fixed; inset: 0; pointer-events: none;
     font-family: "Lucida Console", Monaco, monospace;
@@ -686,6 +825,13 @@
   /* VIEW is a toggle you press once an hour. Park it in the top-right strip
      beside the VIEW: readout it actually changes, where no thumb rests. */
   #btnView   { right: 18px; top: 36px; width: 50px; height: 50px; font-size: 10px; }
+  /* RATES (v101) sits under VIEW in the same quiet strip, for the same reason —
+     a panel you open between fights, not a control you fly with. It is also the
+     ONLY door onto the market console on glass: a phone has no ESC key and no
+     Start button, so the pause menu's MARKET button is unreachable there and
+     the whole feature would have shipped desktop-only. */
+  #btnRates  { right: 18px; top: 92px; width: 50px; height: 50px; font-size: 10px;
+               border-color: rgba(255,211,77,.55); color: #ffd34d; }
 
   /* landing assist (v78): no longer a button squatting on the left thumb's
      side full-time — a pop-up that exists only in the two moments it does
@@ -830,7 +976,13 @@
   body.docked #navhud, body.docked #stick, body.docked .bracket,
   body.docked #landtag, body.docked #assisttag,
   body.docked #btnFire, body.docked #btnThrust, body.docked #btnRev,
-  body.docked #btnBrake, body.docked #btnView { display: none !important; }
+  /* v101 — RATES stands down on the pad with the other two. Parked, the MARKET
+     box in the dock accordion is strictly better than the console: it quotes the
+     LIVE struck price, your own glut, and the best-elsewhere port per good. The
+     console's job is the flight between pads, and the docked sheet is the one
+     layout in the game with no room to spare. */
+  body.docked #btnBrake, body.docked #btnView,
+  body.docked #btnRates { display: none !important; }
   /* CONTROLS ▾ is the only in-game help affordance on a phone, so it stays
      while you're FLYING — but on the pad it lands right on the port name, and
      the sheet's whole point is that it's uncluttered. Read it in flight. */
@@ -963,6 +1115,7 @@
     <div class="volrow"><span>ENGINE</span><input id="volEngine" type="range" min="0" max="100" step="5"><span class="vpct" id="volEnginePct"></span></div>
     <button id="settingsCtrlsToggle" type="button">CONTROLS ▾</button>
     <div id="settingsCtrls"></div>
+    <button id="btnMarketPause" type="button" class="ss-btn sub">MARKET</button>
     <button id="btnFleetPause" type="button" class="ss-btn sub">FLEET</button>
     <button id="btnResume" type="button" class="ss-btn sub">CLOSE</button>
   </div>
@@ -977,6 +1130,25 @@
       <button id="btnFleetClose" type="button" class="ss-btn sub">CLOSE ✕</button>
     </div>
     <iframe id="fleetFrame" title="SpaceSuck fleet registry" loading="lazy"></iframe>
+  </div>
+</div>
+<!-- v101: MERCANTILE EXCHANGE — the portable market console. Standing rates for
+     every good at every port, carried in the pause menu, so a route can be
+     planned in flight instead of from memory. Read-only by design: it moves a
+     cursor, never a credit. Everything inside is built by refreshMarketConsole
+     off PORTS and GOOD_IDS, so a new market or a new good appears here for
+     free — the panel never re-implements the table. Sits above settings and
+     the registry (z41 > 40 > 30). -->
+<div id="market">
+  <div id="marketPanel">
+    <div id="marketTitle"><span class="lamp"></span>MERCANTILE EXCHANGE<span class="sub">STANDING RATES</span><span class="lamp"></span></div>
+    <div id="mcSel"></div>
+    <div id="mcGrid"></div>
+    <div id="mcRead"></div>
+    <div id="mcFoot">
+      <span id="mcHint">◄ ► PORT · ▲ ▼ GOOD · ENTER/Ⓐ SEEK BEST<br>STANDING RATES — THE PAD QUOTES THE LIVE PRICE</span>
+      <button id="btnMarketClose" type="button" class="ss-btn sub">CLOSE ✕</button>
+    </div>
   </div>
 </div>
 <div id="atmo"></div>
@@ -996,7 +1168,8 @@
       <b>W</b> thrust · <b>S</b> reverse · <b>X</b> full stop<br>
       <b>A / D</b> roll · <b>← / →</b> turn · <b>↑ / ↓</b> nose down / up<br>
       <b>SHIFT</b> boost · <b>SPACE</b> fire · <b>V</b> view (cockpit / chase / cinematic)<br>
-      <b>E</b> answer a hail — hire a neutral raider as your wingman
+      <b>E</b> answer a hail — hire a neutral raider as your wingman<br>
+      <b>R</b> market rates — every port's standing price, anywhere (freezes the world)
       <div class="grp">MOUSE</div>
       <b>Click</b> capture — steer · <b>ESC</b> release<br>
       <b>Right-drag</b> orbit camera · <b>Wheel</b> zoom
@@ -1004,7 +1177,7 @@
       <b>L-stick</b> roll / pitch · <b>R-stick</b> look around<br>
       <b>RT / LT</b> thrust / reverse · <b>LB / RB</b> nose left / right<br>
       <b>A</b> fire · <b>B</b> boost · <b>X</b> stop · <b>Y</b> view · <b>Start</b> pause<br>
-      <b>D-pad ↑</b> answer a hail
+      <b>D-pad ↑</b> answer a hail · <b>Back</b> market rates
       <div class="grp">MENUS — FRONT DOOR &amp; THE PAD</div>
       One scheme everywhere: <b>← →</b> pick the panel (or the ship),
       <b>↑ ↓</b> walk its rows, <b>A / ENTER</b> act. Arrow keys, D-pad or
@@ -1135,6 +1308,7 @@
 <button class="touchbtn" id="btnRev">REVERSE</button>
 <button class="touchbtn" id="btnFire">FIRE</button>
 <button class="touchbtn" id="btnView">VIEW</button>
+<button class="touchbtn" id="btnRates">RATES</button>
 <button class="touchbtn" id="btnLand">LANDING ASSIST</button>
 
 <!-- three.js lives NEXT TO this file now (no internet needed). If it's
@@ -9499,6 +9673,11 @@ addEventListener("keydown", e => {
   if (e.code === "KeyE" && !keys["KeyE"] && !paused) tryRecruit(); // answer a hail (v47)
   if (e.code === "KeyG" && !keys["KeyG"] && !paused) tryAssist();  // landing assist / leave pad (v68)
   if (e.code === "KeyM" && !keys["KeyM"]) toggleMusic(); // music on/off (v48) — effects stay up
+  /* v101 — [R] RATES: the market console, from anywhere. Deliberately NOT gated
+     on `paused` like [E] and [G] above: those two move the world, this one only
+     opens a table, and it freezes the world on its way in rather than reading
+     through a frozen one. [M] was the mnemonic and music already had it. */
+  if (e.code === "KeyR" && !keys["KeyR"]) toggleMarketConsole();
   if (e.code === "Space") e.preventDefault();           // Space fires; don't scroll
   /* ---- the arrows drive whichever menu is up (v85) ----
      Front door: up/down walks the list, left/right changes ship, ENTER acts.
@@ -9835,6 +10014,10 @@ bindHold("btnFire",   v => touchFire   = v);
 document.getElementById("btnView").addEventListener("touchstart", e => {
   e.preventDefault(); initAudio(); toggleView();
 });
+// v101 — RATES: a tap opens the market console, the glass equivalent of [R]
+document.getElementById("btnRates").addEventListener("touchstart", e => {
+  e.preventDefault(); initAudio(); toggleMarketConsole();
+});
 
 /* ============ 11c. GAMEPAD — Xbox pad, standard mapping ============
    The Gamepad API has no stick events; state is POLLED every frame in
@@ -9850,6 +10033,7 @@ document.getElementById("btnView").addEventListener("touchstart", e => {
 let padIndex = null;
 let padViewHeld = false;      // edge-detect for the view toggle
 let padStartHeld = false;     // edge-detect for pad-Start pause (v54)
+let padBackHeld = false;      // edge-detect for pad-Back → market console (v101)
 let padBHeld = false;         // edge-detect for B → landing assist / launch (v68)
 let padUpHeld = false;        // D-pad Up in FLIGHT = answer a hail (v47)
 let padFireArmed = true;      // A must be RELEASED once after startGame (v85)
@@ -10891,6 +11075,206 @@ addEventListener("keydown", e => {
   }
 }, true);
 
+/* ---- MERCANTILE EXCHANGE (v101, §1.1d) ---------------------------------
+   The one thing v83's price board could never do: be read anywhere but a pad.
+   Prices only existed standing on a deck, so the only market information you
+   carried into a routing decision was whatever you remembered from the port you
+   just left — and the table is 25 cells wide. Best-vs-home runs +30% to 3.3×
+   and best-vs-worst 2.4× to 7.5×, so what was missing was not money, it was the
+   MAP. This panel is the map.
+
+   It changes no number anywhere. Letting a player REACH money that was already
+   on the table is not raising income — no payout moves, no drop value moves, no
+   entry in any market dict changes — which is what keeps it clear of the frozen
+   -income rule. The test is: did a number in a table change, or did the player
+   just learn something?
+
+   It quotes portBase, the STATIC table, deliberately. Drift is ±8% against
+   spreads of 2×–7×, so a live number here would be noise wearing the costume of
+   precision — and worse, it would delete the reason to land: the pad is where
+   you see the struck quote and your own saturation, and neither of those is
+   knowable from a menu. The footer says so out loud, because a panel of prices
+   that isn't the price you'll be paid has to admit it. */
+const marketConsoleEl = document.getElementById("market");
+const mcSelEl = document.getElementById("mcSel");
+const mcGridEl = document.getElementById("mcGrid");
+const mcReadEl = document.getElementById("mcRead");
+let mcPort = 0, mcGood = 0;          // the two selectors: which port, which good
+const marketConsoleOpen = () => marketConsoleEl.style.display === "flex";
+
+/* HOME FIRST, then the rest in PORTS order — and home is found by its FLAG,
+   never by an index. PORTS follows BODIES, where AZURE precedes EARTH, so
+   PORTS[0] is not home and never was; adding a world silently re-orders the
+   lot. Home leads because every other number on the panel is read against it. */
+function mcPorts() {
+  return PORTS.filter(p => p.home).concat(PORTS.filter(p => !p.home));
+}
+/* Every rate on this panel in integer CENTS — the same units the change drawer
+   settles in. Floats would make "is this the best" a comparison that can miss
+   by 1e-16, and the whole panel is built out of that one question. */
+function mcCents(port, good) { return Math.round(portBase(port, good) * 100); }
+
+function refreshMarketConsole() {
+  const ports = mcPorts();
+  if (!ports.length) return;
+  mcPort = (mcPort % ports.length + ports.length) % ports.length;
+  mcGood = (mcGood % GOOD_IDS.length + GOOD_IDS.length) % GOOD_IDS.length;
+
+  // the rotary: one lamped detent per market, the lit one is the switch position
+  let s = "";
+  for (let i = 0; i < ports.length; i++)
+    s += '<div class="mcDent' + (i === mcPort ? " on" : "") + '" data-port="' + i + '">' +
+         '<span class="lamp"></span>' + portShort(ports[i]) +
+         (ports[i].home ? " ⌂" : "") + "</div>";
+  mcSelEl.innerHTML = s;
+
+  let h = '<div class="mcRow mcHead"><span></span>';
+  for (let i = 0; i < ports.length; i++)
+    h += "<span" + (i === mcPort ? ' class="on"' : "") + ">" + portShort(ports[i]) + "</span>";
+  h += "</div>";
+  for (let r = 0; r < GOOD_IDS.length; r++) {
+    const g = GOOD_IDS[r];
+    /* The gauge is scaled to the best rate in its OWN ROW. Scaling it globally
+       would make every row a comparison against contraband at the fence and
+       flatten the four rows you're actually choosing between; per row, a glance
+       across says who wants this good, which is the question the panel is for. */
+    let max = 0;
+    for (const p of ports) max = Math.max(max, mcCents(p, g));
+    h += '<div class="mcRow"><span class="mcGood" style="color:' +
+         GOODS[g].color + '">' + GOODS[g].name + "</span>";
+    for (let i = 0; i < ports.length; i++) {
+      const c = mcCents(ports[i], g);
+      h += '<div class="mcCell' + (max && c === max ? " best" : "") +
+           (i === mcPort ? " col" : "") + (r === mcGood ? " row" : "") +
+           (i === mcPort && r === mcGood ? " cur" : "") +
+           '" data-cell="' + i + "," + r + '">' +
+           '<span class="fill" style="width:' + (max ? (c / max) * 100 : 0) + '%"></span>' +
+           '<span class="v">' + (c / 100).toFixed(2) + "</span></div>";
+    }
+    h += "</div>";
+  }
+  mcGridEl.innerHTML = h;
+  // written here rather than in the stylesheet for the same reason the price
+  // board's is: how many columns there are depends on how many markets exist
+  mcGridEl.style.gridTemplateColumns = "auto repeat(" + ports.length + ", 1fr)";
+
+  // the readout: what the two selectors are crossed on, and what it costs you
+  const p = ports[mcPort], g = GOOD_IDS[mcGood], c = mcCents(p, g);
+  let bestC = 0, bestP = null;
+  for (const q of ports) { const qc = mcCents(q, g); if (qc > bestC) { bestC = qc; bestP = q; } }
+  /* The comparison is stated as what this port COSTS you against the best, not
+     as what the best pays over this one, because the number you are standing on
+     is the one you're deciding about. "−73% vs RUSTHOLLOW" is a reason to fly. */
+  const top = bestC > 0 && c >= bestC;
+  mcReadEl.innerHTML =
+    '<span class="lbl" style="color:' + GOODS[g].color + '">' + GOODS[g].name + "</span>" +
+    '<span class="at">AT</span><span class="lbl">' + p.name + "</span>" +
+    '<span class="cmp' + (top ? " top" : "") + '">' +
+      (top ? "◆ BEST IN SYSTEM" : "−" + Math.round((1 - c / bestC) * 100) + "% vs " + portShort(bestP)) +
+    "</span>" +
+    '<span class="big">' + (c / 100).toFixed(2) + "</span>";
+}
+/* a dry detent click. Short and quiet on purpose — this panel is read in long
+   sweeps, and anything with a tail turns twenty presses into a melody. */
+function mcClickSound(hi) {
+  if (!audio) return;
+  const { ctx } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = "square";
+  o.frequency.value = hi ? 880 : 620;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.03, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+  o.connect(g); g.connect(audio.sfx);
+  o.start(t); o.stop(t + 0.06);
+}
+function mcMove(dPort, dGood) {
+  mcPort += dPort; mcGood += dGood;
+  refreshMarketConsole();
+  mcClickSound(false);
+}
+/* The five motions, shared by BOTH pad polls — the front door's and the paused
+   one. They live in different halves of animate() either side of a return, so
+   this is one function rather than two copies that drift. */
+function mcPadNav(nav) {
+  if (nav.left)  mcMove(-1, 0);
+  if (nav.right) mcMove(1, 0);
+  if (nav.up)    mcMove(0, -1);
+  if (nav.down)  mcMove(0, 1);
+  if (nav.act)   mcSeek();
+}
+/* ENTER / Ⓐ — SEEK BEST: swing the port selector to whoever pays most for the
+   good the row cursor is sitting on. The one press that answers "where does
+   this go", and it is still read-only — it moves a cursor, not a credit. */
+function mcSeek() {
+  const ports = mcPorts(), g = GOOD_IDS[mcGood];
+  let best = -1;
+  for (let i = 0; i < ports.length; i++)
+    if (mcCents(ports[i], g) > best) { best = mcCents(ports[i], g); mcPort = i; }
+  refreshMarketConsole();
+  mcClickSound(true);
+}
+/* Opening from FLIGHT freezes the world and closing hands it straight back, in
+   one press each way. Reading a 25-cell table with the hull still moving is not
+   a thing anyone wants to do, and the alternative — pause first, then find a
+   button — is three inputs for one glance. It goes through openSettings rather
+   than setting `paused` itself so there is still exactly ONE pause path in the
+   file; the settings panel sits behind this one and is almost entirely covered.
+   If the pause menu was ALREADY up then we froze nothing, so closing must not
+   thaw it — that's the whole job of the flag. */
+let mcPausedUs = false;
+function openMarketConsole() {
+  if (gameStarted && !paused) { openSettings(); mcPausedUs = true; }
+  refreshMarketConsole();
+  marketConsoleEl.style.display = "flex";
+}
+function closeMarketConsole() {
+  marketConsoleEl.style.display = "none";
+  if (mcPausedUs) { closeSettings(); mcPausedUs = false; }
+}
+function toggleMarketConsole() {
+  marketConsoleOpen() ? closeMarketConsole() : openMarketConsole();
+}
+document.getElementById("btnMarketPause").addEventListener("click", openMarketConsole);
+document.getElementById("btnMarketClose").addEventListener("click", closeMarketConsole);
+// the detents and the cells are real controls, so a click or a tap dials them —
+// and it moves the same two cursors the arrows do, so pad and mouse agree
+mcSelEl.addEventListener("click", e => {
+  const d = e.target.closest(".mcDent");
+  if (!d) return;
+  mcPort = +d.dataset.port; refreshMarketConsole(); mcClickSound(false);
+});
+mcGridEl.addEventListener("click", e => {
+  const c = e.target.closest(".mcCell");
+  if (!c) return;
+  const ij = c.dataset.cell.split(",");
+  mcPort = +ij[0]; mcGood = +ij[1]; refreshMarketConsole(); mcClickSound(false);
+});
+/* THE ARROWS HAVE TO BE TAKEN ABOVE THE PAUSE GATE, and that is the whole
+   reason this listener exists. The main keydown handler drives every menu in
+   the game, but its nav block is gated on `!paused` (v84 — a live [G] through
+   the pause backdrop was a hole worth closing), and this panel only ever opens
+   FROM the pause menu. So the console takes its five keys in the capture phase,
+   before that handler runs, and stops them dead there.
+   Stopping them is also what keeps the ship still: ArrowLeft/Right/Up/Down are
+   live flight controls read off `keys[]`, and swallowing the keydown means the
+   flag is never set, so a sweep across the table can't leave the hull turning
+   when you close the panel. */
+addEventListener("keydown", e => {
+  if (!marketConsoleOpen()) return;
+  if (e.key === "Escape") { closeMarketConsole(); e.stopImmediatePropagation(); return; }
+  // edge-detected like the v85 accordion: a held arrow doesn't repeat. Five
+  // ports and five goods both wrap, so nothing is ever more than two presses away.
+  if (e.repeat) return;
+  let hit = true;
+  if (e.code === "ArrowLeft") mcMove(-1, 0);
+  else if (e.code === "ArrowRight") mcMove(1, 0);
+  else if (e.code === "ArrowUp") mcMove(0, -1);
+  else if (e.code === "ArrowDown") mcMove(0, 1);
+  else if (e.code === "Enter") mcSeek();
+  else hit = false;
+  if (hit) { e.preventDefault(); e.stopImmediatePropagation(); }
+}, true);
+
 /* sliders: 0-100 on screen ↔ 0..1 in `settings`. Every notch applies live
    and persists; releasing EFFECTS answers with a chime at the new level,
    so the knob can be set by ear. */
@@ -10926,11 +11310,19 @@ function animate() {
       const mgp = navigator.getGamepads()[padIndex];
       if (mgp) {
         const nav = navEdges(mgp);
-        if (nav.up)    menuMove(-1);
-        if (nav.down)  menuMove(1);
-        if (nav.left)  pickShip(-1);
-        if (nav.right) pickShip(1);
-        if (nav.act)   menuAct();
+        /* v101 — the market console layers OVER the front door and takes the
+           same five motions, so whichever is on top owns them. Without this
+           branch a pad left/right still read as "change ship" through an open
+           panel: the hull swapping behind a table you're reading, which is the
+           same two-things-own-one-input tell v85 fixed for the dock. */
+        if (marketConsoleOpen()) mcPadNav(nav);
+        else {
+          if (nav.up)    menuMove(-1);
+          if (nav.down)  menuMove(1);
+          if (nav.left)  pickShip(-1);
+          if (nav.right) pickShip(1);
+          if (nav.act)   menuAct();
+        }
       }
     }
     /* WHERE THE SHIP SITS IN FRAME (v85, MEASURED since v85.1). The hull is the
@@ -11038,6 +11430,27 @@ function animate() {
     const sBtn = !!(gp && gp.buttons[9] && gp.buttons[9].pressed);  // Start / Menu
     if (sBtn && !padStartHeld) togglePause();
     padStartHeld = sBtn;
+    /* v101 — Back/Select opens the market console, in flight or paused. It was
+       the last free button on the pad, and "bring up the map" is what a Back
+       button means on every other controller in the world. */
+    const bBtn = !!(gp && gp.buttons[8] && gp.buttons[8].pressed);
+    if (bBtn && !padBackHeld) toggleMarketConsole();
+    padBackHeld = bBtn;
+  }
+  /* v101 — THE PAD REACHES THE CONSOLE. Every other pad poll in this loop lives
+     BELOW the pause return, so until now a controller in a frozen game could do
+     nothing at all but unpause it. The console is a panel you READ while paused,
+     so it needs its own poll up here — the same shape the front door needed in
+     v85, and for the same reason: the main poll is on the far side of a return.
+     navEdges is sampled on every paused frame, not only while the panel is open,
+     because a detector that only ran while it was up would swallow the first
+     press on the way in — the same note as the flight poll below. */
+  if (paused && padIndex !== null) {
+    const cgp = navigator.getGamepads()[padIndex];
+    if (cgp) {
+      const nav = navEdges(cgp);
+      if (marketConsoleOpen()) mcPadNav(nav);
+    }
   }
   if (paused) {
     renderer.render(scene, camera);
