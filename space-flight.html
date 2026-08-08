@@ -4178,6 +4178,11 @@ function npcGlowScale(host, size) {
 }
 
 let fireCooldown = 0;
+/* v102: seconds since you last pulled the trigger. A scavenger decides whether
+   to come over on this — "fly close HOLDING FIRE and they hail you" has been
+   the rule since v47 and nothing on screen ever showed it. Counts blaster
+   shots only; the collector beam is not a weapon and nobody flinches at it. */
+let gunsColdT = 99;
 const muzzleL = new THREE.Vector3(), muzzleR = new THREE.Vector3(),
       boltDir = new THREE.Vector3(), flashLocal = new THREE.Vector3();
 
@@ -6722,6 +6727,46 @@ const ALLY_FEE = 150;            // the recruit fee — bank sink between platin
 const ALLY_CAP = 2;              // two wingmen, a vic — Tanner's call from the brainstorm
 const ALLY_SPD = 300, ALLY_CATCHUP_SPD = 460;   // formation cruise / burn-to-rejoin
 const BEACON_HOSTILE = 0xff3020, BEACON_NEUTRAL = 0xffb020, BEACON_ALLY = 0x30e0c8;
+/* ---- v102: JETS CAN HOVER --------------------------------------------------
+   The FORM slot used to carry a 60 u/s speed FLOOR, with a comment saying jets
+   don't hover, so a wingman wove a lazy circle around his slot whenever you
+   stopped. Tanner overturned it, and he's right: YOUR ship parks in space (X
+   scrubs the throttle and the velocity to nothing) and nothing in the flight
+   model says a scavenger's can't.
+
+   Station keeping IS the player's own model, not a new one: fly to the slot
+   nose-first exactly as before, and once you're there cut the thrust and trim.
+   That distinction is the whole safety argument — the trim can translate, but
+   it is bounded at STATION_TRIM and it is reachable ONLY from FORM/PRESENT.
+   Nothing in a fight can touch it, so v42's rule that a raider carves and can
+   never sidestep is untouched. */
+const STATION_DEAD = 26;         // inside this of the slot: stop flying, hold
+const STATION_TRIM = 55;         // u/s ceiling on the station-keeping nudge
+const STATION_GRAB = 2.6;        // how hard the trim pulls toward the slot (1/s)
+const STATION_SETTLE = 3.2;      // how fast velocity converges on the trim (1/s)
+/* ---- v102: THE INTRODUCTION ------------------------------------------------
+   A neutral used to trawl past on a 700-1,800u wander leg while a "HIRE AS
+   WINGMAN" prompt blinked at the edge of the screen — the prompt appeared and
+   vanished on HIS pathing, not on any decision either of you made. A
+   notification, not a meeting. Tanner: "instead of them fly by, they stop in
+   front of the user so you can see their ship."
+
+   It fixes something real and not only cosmetic: there are two scavenger hulls
+   and until this version you could not tell which one you were buying. That was
+   survivable while a wingman was scenery. It stops being survivable in stage 3,
+   where he shoots and he dies.
+
+   GUNS COLD is the second entry condition on purpose. "Fly close holding fire
+   and they hail you" has been the written rule since v47 (:6706) and the player
+   had no way to see it. Hanging the pull-up off it makes the mechanic teach
+   itself with no tutorial line. */
+const PRESENT_COLD_T = 1.6;      // seconds off the trigger before he'll come over
+const PRESENT_AHEAD = 95;        // the slot: ahead of your nose...
+const PRESENT_SIDE  = 40;        // ...and offset, so he is never a wall ON it
+const PRESENT_UP    = 3;
+const PRESENT_T     = 22;        // he doesn't wait forever — back to work
+const PRESENT_COOL  = 14;        // ...and won't immediately offer again
+const PRESENT_LEAVE = HAIL_R * 1.35;   // hysteresis: drifting out and back shouldn't yo-yo him
 const HAIL_LINES = [             // junker chatter — the raider's name goes in
   "EASY, FLYER. GUNS COLD, SALVAGE WARM.",       // front; {P} is the pilot's
   "THIS YOUR PATCH? DIDN'T SEE A FLAG ON IT.",   // callsign (FLYER if blank)
@@ -6736,6 +6781,34 @@ let hailTarget = null;           // nearest in-range neutral this frame — the 
 const pirTmpA = new THREE.Vector3(), pirTmpB = new THREE.Vector3(), pirTmpC = new THREE.Vector3();
 const pirSeg = new THREE.Vector3(), pirToC = new THREE.Vector3(), pirNearPt = new THREE.Vector3();
 const pirAimObj = new THREE.Object3D();   // scratch for the mirror-lookAt trick (nose is -Z)
+/* v102 station keeping gets its OWN scratch rather than borrowing pirTmpA.
+   pirTmpA is documented as holding the unit pirate→ship vector for a whole
+   loop iteration (:8736) and several blocks downstream read it — the same
+   shared-scratch trap the junk ram carries a warning about. */
+const staTmpA = new THREE.Vector3();
+
+/* One place that counts the wing. Three callers wanted it (the recruit, the
+   HUD's WING'S FULL line, and v102's "don't let strangers park on the nose of
+   a man who already has two"), and they were each rolling their own loop. */
+function allyCount() {
+  let n = 0;
+  for (const q of pirates) if (q.alive && q.faction === "ally") n++;
+  return n;
+}
+
+/* v102: near the slot he HOLDS (the physics trims instead of flying); far from
+   it he flies there nose-first like anything else. Shared by FORM and PRESENT
+   — the only two states that station-keep. */
+function stationKeep(p) {
+  const d = p.group.position.distanceTo(p.wanderPt);
+  p.holding = d < STATION_DEAD;
+  /* Distance-proportional so he settles onto the slot instead of orbiting it:
+     far = burn, at the slot = your speed. Pre-v102 the floor here was 60 and
+     it is what made hovering impossible — the physics thrusts along the nose
+     every frame, so a cap of 60 meant a permanent 60 u/s lap of the slot. */
+  p.formCap = Math.min(d > 700 ? ALLY_CATCHUP_SPD : ALLY_SPD,
+                       Math.max(STATION_TRIM, ship.velocity.length() + d * 0.8));
+}
 
 /* A scavenger's fighter: welded slab-and-scrap, nose -Z like everything else.
    Materials are FRESH PER CALL — two pirates sharing mats would both flash
@@ -6904,6 +6977,11 @@ for (let i = 0; i < RAIDER_SLOTS.length; i++) {
     wingSide: 0,                   // ally slot: -1 left wing, +1 right — the vic
     hailed: false,                 // edge-detect: the hail chirp plays once per contact
     hailLine: 0,                   // which junker line this one opens with
+    // ---- v102: the introduction + station keeping ----
+    presentSide: 0,                // which side he pulled up on — picked once, so he takes the short way
+    presentCool: 0,                // seconds before this one offers again after giving up
+    faceDir: new THREE.Vector3(),  // while holding, the nose points HERE — not at the slot
+    holding: false,                // on station: trim instead of fly (the physics branch reads it)
     mixer: null,                   // the hull's authored idle float — runs only while loitering
   });
 }
@@ -8411,6 +8489,7 @@ function pirateSpawn(p) {
      read the paint is there to give you. The beacon still carries the tell up
      close (amber = business, red = duck) and only a bandit earns the ping. */
   p.wingSide = 0; p.hailed = false;
+  p.presentSide = 0; p.presentCool = 0; p.holding = false;   // v102: a fresh slot owes nobody an introduction
   p.hailLine = (Math.random() * HAIL_LINES.length) | 0;
   /* Fresh callsign, avoiding anyone already on the field. Four scavenger slots
      draw on three junker names, and NEUTRAL_CAP lets two fly at once, so a
@@ -8696,7 +8775,11 @@ function updateEnemies(dt) {
       }
     }
   }
-  let hailBest = null, hailD2 = HAIL_R * HAIL_R;   // nearest open channel this frame
+  // nearest open channel this frame. v102: the RANGE is now per-pirate (a guy
+  // holding the present slot keeps the channel out to the hysteresis edge, so
+  // the deal doesn't blink off while he's still parked in front of you), so the
+  // radius test moved onto each candidate and this stays a pure nearest-wins.
+  let hailBest = null, hailD2 = Infinity;
   for (const p of pirates) {
     if (!p.alive) {
       p.respawnIn -= dt;
@@ -8765,23 +8848,68 @@ function updateEnemies(dt) {
        your wing. Neutral and ally write their flight target into wanderPt;
        the shared jet physics below flies whatever point the brain picked. */
     p.stateT += dt;
+    /* v102 — `holding` is a decision this frame's brain makes, never state that
+       carries. Only stationKeep() turns it back on, and only FORM/PRESENT call
+       it. Written as a latch first, and the latch had a real bug in it: shoot a
+       neutral holding the present slot and pirateProvoke flips him hostile
+       without touching `holding`, so the hostile branch would read a stale true
+       and TRIM instead of fly — a raider frozen in space matching your velocity,
+       for good. Clearing it here kills that whole class rather than that one
+       path, which is why it lives above the faction chain and not inside it. */
+    p.holding = false;
     if (p.faction === "neutral") {
-      /* LOITER: wander legs that drift AROUND your shell, never across it —
-         perturb the current bearing instead of rolling a fresh one, so the
-         path stays off your hull and accidental rams stay rare. */
-      p.wanderT -= dt;
-      if (p.wanderT <= 0 || p.group.position.distanceToSquared(p.wanderPt) < 120 * 120) {
-        p.wanderT = 6 + Math.random() * 5;
-        pirTmpC.copy(pirTmpA).negate();                     // unit ship→pirate: the current bearing
-        randUnit(pirTmpB);
-        pirTmpC.addScaledVector(pirTmpB, 0.7).normalize();  // swing it up to ~35°
-        p.wanderPt.copy(shipObj.position).addScaledVector(pirTmpC, 700 + Math.random() * 1100);
+      if (p.presentCool > 0) p.presentCool -= dt;
+      /* v102 — LOITER <-> PRESENT. Three conditions to come over, and each one
+         is doing a job: you're CLOSE (it's the same 420u channel the hail has
+         always used), your guns have been COLD (the v47 rule, finally visible),
+         and there's a WING SLOT FREE — a pilot who already has two shouldn't
+         have strangers parking on his nose, and the HUD's WING'S FULL line
+         still covers the case where you fill the wing mid-introduction. */
+      if (p.state === "PRESENT") {
+        if (p.stateT > PRESENT_T || dist > PRESENT_LEAVE || gunsColdT < PRESENT_COLD_T
+            || landedOn || allyCount() >= ALLY_CAP) {
+          p.state = "LOITER"; p.stateT = 0; p.wanderT = 0;
+          p.presentCool = PRESENT_COOL;
+        }
+      } else if (dist < HAIL_R && gunsColdT >= PRESENT_COLD_T && p.presentCool <= 0
+                 && !landedOn && allyCount() < ALLY_CAP) {
+        p.state = "PRESENT"; p.stateT = 0;
+        // pull up on the side he is ALREADY on: the short way round, and it
+        // varies by approach instead of always being the same shoulder
+        staTmpA.set(1, 0, 0).applyQuaternion(shipObj.quaternion);   // your right, in world
+        p.presentSide = staTmpA.dot(pirTmpA) < 0 ? 1 : -1;          // pirTmpA is pirate→ship, so flip the read
+      }
+
+      if (p.state === "PRESENT") {
+        /* The slot: ahead of your nose (-Z is forward, same frame as the vic),
+           offset a hull's width to one side so he is never a wall on it, and
+           a touch high so he reads as presenting rather than blocking. */
+        pirTmpC.set(p.presentSide * PRESENT_SIDE, PRESENT_UP, -PRESENT_AHEAD)
+               .applyQuaternion(shipObj.quaternion);
+        p.wanderPt.copy(shipObj.position).add(pirTmpC);
+        p.faceDir.copy(pirTmpA);   // nose on YOU — the whole point is a look at his ship
+        stationKeep(p);
+      } else {
+        /* LOITER: wander legs that drift AROUND your shell, never across it —
+           perturb the current bearing instead of rolling a fresh one, so the
+           path stays off your hull and accidental rams stay rare. */
+        p.wanderT -= dt;
+        if (p.wanderT <= 0 || p.group.position.distanceToSquared(p.wanderPt) < 120 * 120) {
+          p.wanderT = 6 + Math.random() * 5;
+          pirTmpC.copy(pirTmpA).negate();                     // unit ship→pirate: the current bearing
+          randUnit(pirTmpB);
+          pirTmpC.addScaledVector(pirTmpB, 0.7).normalize();  // swing it up to ~35°
+          p.wanderPt.copy(shipObj.position).addScaledVector(pirTmpC, 700 + Math.random() * 1100);
+        }
       }
     } else if (p.faction === "ally") {
       if (landedOn) {
-        /* you're parked; a jet can't hover. Circle overhead instead — legs
-           perturbed around the planet's shell (same trick as the loiter, so
-           the chords never cut through the terrain). */
+        /* You're parked on a world, so there is no slot to hold — he flies
+           COVER instead, legs perturbed around the planet's shell (the loiter
+           trick, so the chords never cut through the terrain). v102 could park
+           him in mid-air now that hovering is allowed, and deliberately does
+           not: a wingman circling the deck reads as watching the approach, and
+           a jet frozen over a pad reads as a bug. */
         p.wanderT -= dt;
         if (p.wanderT <= 0 || p.group.position.distanceToSquared(p.wanderPt) < 200 * 200) {
           p.wanderT = 8 + Math.random() * 6;
@@ -8793,15 +8921,13 @@ function updateEnemies(dt) {
         p.formCap = NEUTRAL_SPD;
       } else {
         /* FORM: hold the vic slot — wingSide out, a touch high, trailing, in
-           YOUR frame. The speed cap is distance-proportional (far = burn,
-           at the slot = your speed), so it settles onto the wing instead of
-           orbiting you; the floor keeps the jet honest — it weaves a lazy
-           little circle when you stop, because jets don't hover. */
+           YOUR frame. v102: once he's inside STATION_DEAD of it he stops and
+           holds, matching your heading, instead of weaving the lazy circle the
+           old 60 u/s floor forced on him. */
         pirTmpC.set(p.wingSide * 55, 8, 70).applyQuaternion(shipObj.quaternion);
         p.wanderPt.copy(shipObj.position).add(pirTmpC);
-        const slotDist = p.group.position.distanceTo(p.wanderPt);
-        p.formCap = Math.min(slotDist > 700 ? ALLY_CATCHUP_SPD : ALLY_SPD,
-                             Math.max(60, ship.velocity.length() + slotDist * 0.8));
+        shipObj.getWorldDirection(p.faceDir).negate();   // on station he flies YOUR line
+        stationKeep(p);
       }
     } else if (p.state === "HUNT") {
       if (dist < PIRATE_ATTACK_R) {
@@ -8856,6 +8982,12 @@ function updateEnemies(dt) {
     } else {
       pirTmpB.copy(p.wanderPt);      // LOITER / FORM: the brain already picked the point
     }
+    /* v102 — ON STATION the nose stops chasing the flight target and points
+       where the brain SAID: at you for an introduction, along your line for a
+       wingman. Overriding the aim point is the whole edit; the slerp below is
+       untouched, so he still swings his nose at a capped rate like everything
+       else in the sky. */
+    if (p.holding) pirTmpB.copy(p.group.position).add(p.faceDir);
     // nose: mirror-lookAt (lookAt aims +Z, the nose is -Z — the shipBreach
     // trick), then a slerp CLAMPED to PIRATE_TURN rad/s. Proportional slerp
     // alone has no ceiling — the clamp is what makes it out-turnable.
@@ -8864,21 +8996,35 @@ function updateEnemies(dt) {
     const turnCap = p.state === "ATTACK" ? PIRATE_TURN : PIRATE_TURN_CRUISE;
     const ang = p.group.quaternion.angleTo(pirAimObj.quaternion);
     if (ang > 1e-4) p.group.quaternion.slerp(pirAimObj.quaternion, Math.min(1, turnCap * dt / ang));
-    // thrust along the nose, grip the velocity around the carve, damp,
-    // cap by state, integrate. Bleeding speed in a hard turn is free physics.
-    p.group.getWorldDirection(pirTmpC).negate();
-    p.vel.addScaledVector(pirTmpC, PIRATE_ACCEL * dt);
-    const spd = p.vel.length();
-    if (spd > 1) {
-      pirTmpC.multiplyScalar(spd);           // nose direction at current speed
-      p.vel.lerp(pirTmpC, 1 - Math.exp(-PIRATE_GRIP * dt));
+    if (p.holding) {
+      /* TRIM, not flight. Chase the slot's own motion — which is YOUR velocity,
+         since both station slots are anchored in your frame — plus a capped
+         pull toward the slot itself. Stop and he stops with you; that is the
+         hover. Two bounds keep it from becoming the velocity-steered UFO v42
+         deleted: the correction can never exceed STATION_TRIM, and `holding`
+         is only ever set by stationKeep(), which only FORM and PRESENT call. */
+      staTmpA.subVectors(p.wanderPt, p.group.position).multiplyScalar(STATION_GRAB);
+      if (staTmpA.length() > STATION_TRIM) staTmpA.setLength(STATION_TRIM);
+      staTmpA.add(ship.velocity);
+      p.vel.lerp(staTmpA, 1 - Math.exp(-STATION_SETTLE * dt));
+    } else {
+      // thrust along the nose, grip the velocity around the carve, damp,
+      // cap by state, integrate. Bleeding speed in a hard turn is free physics.
+      p.group.getWorldDirection(pirTmpC).negate();
+      p.vel.addScaledVector(pirTmpC, PIRATE_ACCEL * dt);
+      const spd = p.vel.length();
+      if (spd > 1) {
+        pirTmpC.multiplyScalar(spd);           // nose direction at current speed
+        p.vel.lerp(pirTmpC, 1 - Math.exp(-PIRATE_GRIP * dt));
+      }
+      p.vel.multiplyScalar(Math.pow(0.995, dt * 60));
+      const maxSpd = p.state === "ATTACK"  ? PIRATE_PASS_SPD
+                   : p.state === "BREAK"   ? PIRATE_EXTEND_SPD
+                   : p.state === "LOITER"  ? NEUTRAL_SPD
+                   : p.state === "PRESENT" ? p.formCap      // v102: he has to be able to CATCH you
+                   : p.state === "FORM"    ? p.formCap : PIRATE_MAX_SPD;
+      if (p.vel.length() > maxSpd) p.vel.setLength(maxSpd);
     }
-    p.vel.multiplyScalar(Math.pow(0.995, dt * 60));
-    const maxSpd = p.state === "ATTACK" ? PIRATE_PASS_SPD
-                 : p.state === "BREAK"  ? PIRATE_EXTEND_SPD
-                 : p.state === "LOITER" ? NEUTRAL_SPD
-                 : p.state === "FORM"   ? p.formCap : PIRATE_MAX_SPD;
-    if (p.vel.length() > maxSpd) p.vel.setLength(maxSpd);
     p.group.position.addScaledVector(p.vel, dt);
     /* v75: a raider's flight target IS your position, and nothing in its brain
        ever knew terrain existed — so it would happily fly a pursuit line
@@ -8928,9 +9074,14 @@ function updateEnemies(dt) {
        same load-bearing order as the junk ram: a lethal hit breaches,
        teleports the ship, and respawns the field mid-call. ---- */
     const rr = PIRATE_HIT_R + SHIP_HIT_R;
-    // allies are exempt: formation flying + a collision kill would eat the
-    // wingman you just paid for on the first hard brake. He ghosts instead.
-    if (!landedOn && p.faction !== "ally" && shipObj.position.distanceToSquared(p.group.position) < rr * rr) {
+    /* Allies are exempt: formation flying + a collision kill would eat the
+       wingman you just paid for on the first hard brake. He ghosts instead.
+       v102 extends that to a neutral holding the PRESENT slot, for the same
+       reason one step earlier — he is parked 95u off your nose because the
+       game put him there, so billing you hull AND the hire for flying forward
+       is a gotcha, not a mechanic. Loitering neutrals still ram normally. */
+    if (!landedOn && p.faction !== "ally" && p.state !== "PRESENT"
+        && shipObj.position.distanceToSquared(p.group.position) < rr * rr) {
       const relSpd = pirTmpB.subVectors(ship.velocity, p.vel).length();
       const dmg = Math.min(RAM_DMG_CAP, (Math.max(0, relSpd - RAM_FREE_SPD) / 100) * PIRATE_RAM_HURT);
       ship.velocity.multiplyScalar(0.9);     // it still bleeds your speed
@@ -8944,13 +9095,16 @@ function updateEnemies(dt) {
     }
 
     // an in-range neutral opens the channel — nearest one wins, the HUD draws it
-    if (p.faction === "neutral" && !landedOn && dist * dist < hailD2) {
+    const hailR = p.state === "PRESENT" ? PRESENT_LEAVE : HAIL_R;
+    if (p.faction === "neutral" && !landedOn && dist < hailR && dist * dist < hailD2) {
       hailD2 = dist * dist; hailBest = p;
     }
 
     // the authored idle float, LOITER only — a wandering scavenger bobs and
     // rolls like it's half-watching the field; everyone else flies too hard
-    if (p.state === "LOITER" && p.mixer) p.mixer.update(dt);
+    // v102: PRESENT runs it too — a hull holding station dead still looks dead,
+    // and the authored float is exactly the "idling in front of you" read
+    if ((p.state === "LOITER" || p.state === "PRESENT") && p.mixer) p.mixer.update(dt);
 
     // the tail light rides how hard it's flying. Running lights by faction:
     // hostile strobes fast and angry, neutral blinks slow amber, a wingman's
@@ -10832,8 +10986,7 @@ function drawNavHud(dt) {
      hardware in hand, same trick as the shop. */
   if (hailTarget && !landedOn) {
     const hp = hailTarget;
-    let allies = 0;
-    for (const q of pirates) if (q.alive && q.faction === "ally") allies++;
+    const allies = allyCount();
     c.save();
     c.textAlign = "center"; c.shadowBlur = 6;
     c.fillStyle = NAV_AMBER; c.shadowColor = NAV_AMBER;
@@ -12300,6 +12453,7 @@ function animate() {
 
   /* ---- blasters: fire from both cannons, advance live bolts ---- */
   fireCooldown -= dt;
+  gunsColdT += dt;          // v102: reset to 0 on every shot, just below
   /* v60: guns are cold while parked. Every INCOMING damage path already exempts
      a parked ship, so a live trigger on the deck was a free kill box — and it
      only got worse once a port's sky stopped being a safe harbor: hostiles now
@@ -12320,6 +12474,7 @@ function animate() {
     blasterSound();
     padRumble(0.25, 35);
     fireCooldown = fireGap;   // v89: paced by the AUTOLOADER tier, not a const
+    gunsColdT = 0;            // v102: a scavenger holding station backs off when you shoot
   }
   for (const b of bolts) {
     if (b.life <= 0) continue;
