@@ -6617,7 +6617,13 @@ const RED_BOLT = 0xff4444;        // aqua and orange both mean "yours" (10b) —
    scavengers you provoked), which is 16-20 in flight, and the overflow doesn't
    look like a full sky — it looks like incoming fire winking out of existence
    halfway to you. */
-const PIRATE_BOLT_COUNT = 32;
+/* v103: 32 -> 44. The pool now carries BOTH sides' fire (see spawnPirateBolt),
+   and a full wing adds two shooters to the four hostiles it was sized for. A
+   wingman's 2-bolt burst on a 3.2s cycle only puts ~1 in the air at a time, so
+   12 slots is generous — and this is a ring buffer that overwrites the oldest
+   with no liveness check, so the cost of being tight is incoming fire winking
+   out of existence halfway to you. */
+const PIRATE_BOLT_COUNT = 44;
 const PIRATE_BOLT_SPEED = 850;    // ~57% of BOLT_SPEED: dodgeable on purpose
 const PIRATE_BOLT_LIFE = 2.2;
 const PIRATE_BOLT_DMG = 7;
@@ -6767,6 +6773,37 @@ const PRESENT_UP    = 3;
 const PRESENT_T     = 22;        // he doesn't wait forever — back to work
 const PRESENT_COOL  = 14;        // ...and won't immediately offer again
 const PRESENT_LEAVE = HAIL_R * 1.35;   // hysteresis: drifting out and back shouldn't yo-yo him
+/* ---- Stage 3 (v103): THE HIRED GUN EARNS IT --------------------------------
+   Tanner, 4 Aug: "It has to be comparable to the load carried… If the hired gun
+   can die it should also fight back." Both halves ship together, because either
+   one alone is worse than nothing: a wingman who shoots but cannot die is a
+   free turret that permanently solves the raider threat for 150 credits, and
+   one who dies but cannot shoot is a decoy with a receipt.
+
+   ⭐ THE TUNING THAT MATTERS IS HIS HEALTH, NOT HIS GUN, and it is the opposite
+   of the obvious read. ALLY_CAP is 2 and HOSTILE_CAP is 2, so a full wing is a
+   permanent 3-on-2 the moment it is bought — and the dogfight is the 30-second
+   layer this whole game stands on. Make him tanky and you have sold the player
+   a one-time answer to the only thing in the sky that shoots back. So he is a
+   scavenger hull and dies like one: ALLY_HP is EXACTLY a raider's three, which
+   turns the 150 from a purchase into a running cost.
+
+   His gun is worse than a bandit's in every direction — half the burst, 60%
+   longer between them, and more than twice the aim slop. He is there to pull
+   attention off you (see the grudge below), not to out-shoot you. */
+const ALLY_HP = 3;               // a raider's exactly. Fragile is the feature.
+const ALLY_ENGAGE_R = 1500;      // he breaks formation for a bandit this close to YOU...
+const ALLY_FIRE_R = 700;         // ...but only opens up inside this
+const ALLY_BURST = 2;            // a bandit fires 4
+const ALLY_BURST_GAP = 0.18;
+const ALLY_BURST_COOL = 3.2;     // a bandit's is 2.0
+const ALLY_AIM_ERR = 0.09;       // a bandit's is 0.04 — junker with a welded-on gun
+const ALLY_FIRE_CONE = 0.93;
+const ALLY_BOLT = 0x30e0c8;      // the wing's beacon teal, so "red means duck" survives
+/* The grudge is what makes a wingman worth 150 rather than worth a damage
+   number: put bolts into a bandit and it comes after HIM instead of you. A
+   TIMER and not a switch on purpose — the fight always comes back to you. */
+const GRUDGE_T = 6;
 const HAIL_LINES = [             // junker chatter — the raider's name goes in
   "EASY, FLYER. GUNS COLD, SALVAGE WARM.",       // front; {P} is the pilot's
   "THIS YOUR PATCH? DIDN'T SEE A FLAG ON IT.",   // callsign (FLYER if blank)
@@ -6775,6 +6812,10 @@ const HAIL_LINES = [             // junker chatter — the raider's name goes in
   "WORD'S OUT ON YOU, {P}. GOOD WORD, MOSTLY.",
 ];
 let hailTarget = null;           // nearest in-range neutral this frame — the [E] target
+// v103: the "WINGMAN DOWN" toast (the jobFlash/gunshipFlash pattern). He is a
+// named pilot you paid for, so losing him gets a line rather than a silent gap
+// on your wing that you notice two minutes later.
+let wingFlash = 0, wingFlashMsg = "";
 // pirate-owned scratch — NEVER junkTmp*/scrapTmp*: a lethal ram below runs
 // shipBreach → junkRespawn × 44, which rewrites the junk scratch mid-call
 // (the same trap documented at the junk ram)
@@ -6786,6 +6827,23 @@ const pirAimObj = new THREE.Object3D();   // scratch for the mirror-lookAt trick
    loop iteration (:8736) and several blocks downstream read it — the same
    shared-scratch trap the junk ram carries a warning about. */
 const staTmpA = new THREE.Vector3();
+/* v103: the bolt loop's own start-of-frame point. It used to borrow pirTmpA,
+   which was fine while a bolt had exactly ONE thing to test against; now it
+   tests against the player AND every ally AND every hostile, with pirateDamage
+   (which writes pirTmpA itself) called in the middle. Its own vector, and the
+   whole reentrancy question goes away. */
+const boltP0 = new THREE.Vector3();
+
+/* Swept segment-vs-sphere for one pirate bolt against one target, writing the
+   contact point into pirNearPt. Reads boltP0/pirSeg, which the loop sets once
+   per bolt — v103 runs it against three different target sets per frame and
+   duplicating the maths three times is how the sides drift apart. */
+function boltNear(at, r, segLen2) {
+  pirToC.subVectors(at, boltP0);
+  const t = segLen2 > 0 ? THREE.MathUtils.clamp(pirToC.dot(pirSeg) / segLen2, 0, 1) : 0;
+  pirNearPt.copy(boltP0).addScaledVector(pirSeg, t);
+  return pirNearPt.distanceToSquared(at) <= r * r;
+}
 
 /* One place that counts the wing. Three callers wanted it (the recruit, the
    HUD's WING'S FULL line, and v102's "don't let strangers park on the nose of
@@ -6982,6 +7040,10 @@ for (let i = 0; i < RAIDER_SLOTS.length; i++) {
     presentCool: 0,                // seconds before this one offers again after giving up
     faceDir: new THREE.Vector3(),  // while holding, the nose points HERE — not at the slot
     holding: false,                // on station: trim instead of fly (the physics branch reads it)
+    // ---- v103: stage 3 ----
+    foe: null,                     // ally: the bandit he peeled off for
+    grudge: null,                  // hostile: the wingman who shot it...
+    grudgeT: 0,                    // ...and how long it stays angry at him instead of you
     mixer: null,                   // the hull's authored idle float — runs only while loitering
   });
 }
@@ -8490,6 +8552,7 @@ function pirateSpawn(p) {
      close (amber = business, red = duck) and only a bandit earns the ping. */
   p.wingSide = 0; p.hailed = false;
   p.presentSide = 0; p.presentCool = 0; p.holding = false;   // v102: a fresh slot owes nobody an introduction
+  p.foe = null; p.grudge = null; p.grudgeT = 0;              // v103: no history either
   p.hailLine = (Math.random() * HAIL_LINES.length) | 0;
   /* Fresh callsign, avoiding anyone already on the field. Four scavenger slots
      draw on three junker names, and NEUTRAL_CAP lets two fly at once, so a
@@ -8581,6 +8644,11 @@ function pirateDamage(p, at, boltVel) {
     burstSparks(at, p.vel, 8);
     junkTinkSound(dist);
     p.vel.addScaledVector(pirTmpA.copy(boltVel).normalize(), 25);   // the hit shoves it
+    /* v103: a wingman takes the hit, the flash and the shove — but never the
+       flinch. BREAK is a hostile state (it is the extend off a firing pass,
+       the player's window) and dropping him into it would leave him running an
+       attack rhythm against nothing. He is yours; he stays on the job. */
+    if (p.faction === "ally") return;
     // getting shot makes it flinch: break off NOW and come back around —
     // reads as a living thing, and gives you a beat to line up the next shot
     pirTmpC.subVectors(shipObj.position, p.group.position).normalize();
@@ -8590,7 +8658,19 @@ function pirateDamage(p, at, boltVel) {
     p.state = "BREAK"; p.stateT = 0;
     return;
   }
+  if (p.faction === "ally") { allyDown(p, dist); return; }
   pirateKill(p, dist);
+}
+
+/* v103: a wingman dies like anything else in the sky — the bang, and nothing
+   else. pirateDESTROY, never pirateKill: his wreck drops no scrap and never
+   advances the kill counter. You paid 150 for the man; billing his death as
+   loot would be grotesque, and it would also quietly turn "my wingman died"
+   into a payday, which is the exact shape of income this project has frozen. */
+function allyDown(p, dist) {
+  const who = p.name;
+  pirateDestroy(p, dist);
+  wingFlash = 3; wingFlashMsg = "✖ WINGMAN DOWN — " + who;
 }
 
 /* Player bolts vs pirates — junkTestBolt's sibling: same swept segment-vs-
@@ -8630,10 +8710,18 @@ for (let i = 0; i < PIRATE_BOLT_COUNT; i++) {
   mesh.add(glow);
   mesh.visible = false;
   scene.add(mesh);
-  pirateBolts.push({ mesh, vel: new THREE.Vector3(), life: 0 });
+  // v103: `glow` is kept on the slot because an ally bolt has to recolour BOTH
+  // the cylinder and its sprite — recolouring only the mesh leaves a teal bolt
+  // wrapped in a red halo, which reads as incoming at exactly the range the
+  // halo is the only thing you can see.
+  pirateBolts.push({ mesh, glow, vel: new THREE.Vector3(), life: 0, ally: false, owner: null });
 }
 let pirateBoltCursor = 0;
-function spawnPirateBolt(pos, dir, srcVel) {
+/* v103: `owner` is the WINGMAN who fired, or nothing for a hostile. It does two
+   jobs — it decides who the bolt can hurt in the update loop, and it is what a
+   bandit holds its grudge against. One shared pool rather than a third one:
+   terrain is then cover for everybody on the same frame, by construction. */
+function spawnPirateBolt(pos, dir, srcVel, owner) {
   const b = pirateBolts[pirateBoltCursor];
   pirateBoltCursor = (pirateBoltCursor + 1) % PIRATE_BOLT_COUNT;
   b.mesh.position.copy(pos);
@@ -8641,6 +8729,13 @@ function spawnPirateBolt(pos, dir, srcVel) {
   b.vel.copy(srcVel).addScaledVector(dir, PIRATE_BOLT_SPEED);  // inherits the pirate's velocity, same physics as yours
   b.life = PIRATE_BOLT_LIFE;
   b.mesh.visible = true;
+  b.ally = !!owner;
+  b.owner = owner || null;
+  // teal is the wing's beacon colour, so the v40 read survives untouched: red
+  // still means duck, and you never have to work out whose bolt is whose
+  const hex = b.ally ? ALLY_BOLT : RED_BOLT;
+  b.mesh.material.color.setHex(hex);
+  b.glow.material.color.setHex(hex);
   // muzzle flash from the ember pool (a grow-flash, like a kill pop in
   // miniature) — the blink that tells you WHERE the shot came from
   emitEmber(pos, srcVel, 9, 0.12, true);
@@ -8702,6 +8797,8 @@ function tryRecruit() {
   shopDirty = true;                // the outfitter quotes the same bank
   p.faction = "ally";
   p.state = "FORM"; p.stateT = 0;
+  p.hp = ALLY_HP;      // v103: the fee tops him off — you're buying a fresh one
+  p.foe = null;
   p.wingSide = leftTaken ? 1 : -1; // first hire takes the left wing — a vic fills outward
   p.beacon.material.color.setHex(BEACON_ALLY);
   hailTarget = null;
@@ -8857,6 +8954,31 @@ function updateEnemies(dt) {
        for good. Clearing it here kills that whole class rather than that one
        path, which is why it lives above the faction chain and not inside it. */
     p.holding = false;
+    /* ---- v103: WHO IS IT ANGRY AT ----
+       You, unless a wingman has just put bolts into it. That is the whole
+       product of hiring one — he pulls fire off you — and it is also what
+       makes ALLY_HP mean anything: without it a wingman only ever dies by
+       wandering through a bolt aimed at somebody else.
+
+       `dist` deliberately stays the distance to the PLAYER: the harbour, the
+       cull and the sound fades are all about where YOU are, not about who the
+       raider is currently chasing. Everything the FIGHT reasons about uses
+       markDist instead, so a bandit gone after a wingman runs its whole
+       HUNT/ATTACK/BREAK rhythm against him rather than flying at you and
+       shooting sideways. */
+    if (p.grudgeT > 0) {
+      p.grudgeT -= dt;
+      // clamp AND drop the reference on expiry. Letting it run negative left a
+      // stale pointer at a wingman it is no longer angry at — harmless to the
+      // flight (every read gates on grudgeT > 0) and actively misleading to
+      // anything that inspects it, which is how the test found it.
+      if (p.grudgeT <= 0 || !p.grudge || !p.grudge.alive || p.grudge.faction !== "ally") {
+        p.grudgeT = 0; p.grudge = null;
+      }
+    }
+    const mark    = p.grudgeT > 0 ? p.grudge.group.position : shipObj.position;
+    const markVel = p.grudgeT > 0 ? p.grudge.vel            : ship.velocity;
+    const markDist = p.grudgeT > 0 ? p.group.position.distanceTo(mark) : dist;
     if (p.faction === "neutral") {
       if (p.presentCool > 0) p.presentCool -= dt;
       /* v102 — LOITER <-> PRESENT. Three conditions to come over, and each one
@@ -8919,27 +9041,64 @@ function updateEnemies(dt) {
           p.wanderPt.copy(landedOn.group.position).addScaledVector(pirTmpC, landedOn.cfg.radius * 1.6);
         }
         p.formCap = NEUTRAL_SPD;
+        p.foe = null;
+        p.state = "FORM";
       } else {
-        /* FORM: hold the vic slot — wingSide out, a touch high, trailing, in
-           YOUR frame. v102: once he's inside STATION_DEAD of it he stops and
-           holds, matching your heading, instead of weaving the lazy circle the
-           old 60 u/s floor forced on him. */
-        pirTmpC.set(p.wingSide * 55, 8, 70).applyQuaternion(shipObj.quaternion);
-        p.wanderPt.copy(shipObj.position).add(pirTmpC);
-        shipObj.getWorldDirection(p.faceDir).negate();   // on station he flies YOUR line
-        stationKeep(p);
+        /* ---- v103: HE PEELS OFF. FORM <-> ESCORT, and the leash is measured
+           from YOU rather than from him: a wingman who chases a fleeing raider
+           across the sky is a wingman who is not beside you, and "there is
+           someone on your wing" is the entire thing you bought. Drop the foe
+           the moment it dies, surrenders (a provoked scavenger that gets hired
+           away, say) or leaves your bubble. */
+        if (p.foe && (!p.foe.alive || p.foe.faction !== "hostile"
+            || p.foe.group.position.distanceToSquared(shipObj.position) > ALLY_ENGAGE_R * ALLY_ENGAGE_R))
+          p.foe = null;
+        if (!p.foe) {
+          let bd = ALLY_ENGAGE_R * ALLY_ENGAGE_R;
+          for (const q of pirates) {
+            if (!q.alive || q.faction !== "hostile") continue;
+            const d2 = q.group.position.distanceToSquared(shipObj.position);   // nearest to YOU, not to him
+            if (d2 < bd) { bd = d2; p.foe = q; }
+          }
+        }
+        if (p.foe) {
+          if (p.state !== "ESCORT") {
+            p.state = "ESCORT"; p.stateT = 0;
+            /* PRIMED, the same way a bandit is on HUNT->ATTACK. The first cut
+               left burstLeft at 0, so the first tick fell through to the
+               reload arm and he did nothing for a full BURST_COOL after
+               peeling off — a 9-second engagement in the test produced zero
+               shots. He'd routinely fly a whole fight without firing. */
+            p.burstLeft = ALLY_BURST; p.fireT = 0.8;
+            randUnit(p.aimErr).multiplyScalar(Math.random() * 300 * ALLY_AIM_ERR);
+          }
+          // his flight line IS his firing solution, the same way a bandit's
+          // ATTACK is — crude lead, and the gun's own slop does the missing
+          p.wanderPt.copy(p.foe.group.position).addScaledVector(p.foe.vel, 0.5);
+          p.formCap = PIRATE_MAX_SPD;
+        } else {
+          /* FORM: hold the vic slot — wingSide out, a touch high, trailing, in
+             YOUR frame. v102: once he's inside STATION_DEAD of it he stops and
+             holds, matching your heading, instead of weaving the lazy circle the
+             old 60 u/s floor forced on him. */
+          if (p.state !== "FORM") { p.state = "FORM"; p.stateT = 0; }
+          pirTmpC.set(p.wingSide * 55, 8, 70).applyQuaternion(shipObj.quaternion);
+          p.wanderPt.copy(shipObj.position).add(pirTmpC);
+          shipObj.getWorldDirection(p.faceDir).negate();   // on station he flies YOUR line
+          stationKeep(p);
+        }
       }
     } else if (p.state === "HUNT") {
-      if (dist < PIRATE_ATTACK_R) {
+      if (markDist < PIRATE_ATTACK_R) {
         p.state = "ATTACK"; p.stateT = 0;
         p.burstLeft = PIRATE_BURST; p.fireT = 0.6;              // primed: first burst ~0.6s in
         // random FRACTION of max slop — randUnit alone is always length 1,
         // which made every burst miss by exactly the max (found by probe:
         // 12 shots, 0 hits on a parked ship). Some bursts fly true now.
-        randUnit(p.aimErr).multiplyScalar(Math.random() * dist * PIRATE_AIM_ERR);
+        randUnit(p.aimErr).multiplyScalar(Math.random() * markDist * PIRATE_AIM_ERR);
       }
     } else if (p.state === "ATTACK") {
-      if (dist < PIRATE_BREAK_R || p.stateT > PIRATE_ATTACK_T) {
+      if (markDist < PIRATE_BREAK_R || p.stateT > PIRATE_ATTACK_T) {
         p.state = "BREAK"; p.stateT = 0;
         // extend along the overshoot — straight, no jinking. Don't "fix"
         // this into an evasive weave: this leg is the player's reward.
@@ -8959,7 +9118,7 @@ function updateEnemies(dt) {
           }
           p.jinkDir.normalize();
         }
-      } else if (dist > PIRATE_REENGAGE_R) {
+      } else if (markDist > PIRATE_REENGAGE_R) {
         p.state = "HUNT"; p.stateT = 0;
       }
     } else if (p.stateT > PIRATE_BREAK_T) {  // BREAK is just a timer
@@ -8972,10 +9131,10 @@ function updateEnemies(dt) {
        jet physics you fly, tuned slightly worse. The old velocity-steered
        UFO could sidestep at full speed; nothing here can. ---- */
     if (p.state === "HUNT") {
-      pirTmpB.copy(shipObj.position).addScaledVector(ship.velocity, 0.8);   // crude pursuit lead
+      pirTmpB.copy(mark).addScaledVector(markVel, 0.8);                     // crude pursuit lead
     } else if (p.state === "ATTACK") {
-      pirTmpB.copy(shipObj.position)                                        // the firing solution IS the flight path
-             .addScaledVector(ship.velocity, (dist / PIRATE_BOLT_SPEED) * PIRATE_LEAD)
+      pirTmpB.copy(mark)                                                    // the firing solution IS the flight path
+             .addScaledVector(markVel, (markDist / PIRATE_BOLT_SPEED) * PIRATE_LEAD)
              .add(p.aimErr);
     } else if (p.state === "BREAK") {
       pirTmpB.copy(p.group.position).addScaledVector(p.jinkDir, 800);       // extend: hold the escape line
@@ -9022,6 +9181,7 @@ function updateEnemies(dt) {
                    : p.state === "BREAK"   ? PIRATE_EXTEND_SPD
                    : p.state === "LOITER"  ? NEUTRAL_SPD
                    : p.state === "PRESENT" ? p.formCap      // v102: he has to be able to CATCH you
+                   : p.state === "ESCORT"  ? p.formCap      // v103: off the wing and into it
                    : p.state === "FORM"    ? p.formCap : PIRATE_MAX_SPD;
       if (p.vel.length() > maxSpd) p.vel.setLength(maxSpd);
     }
@@ -9064,7 +9224,48 @@ function updateEnemies(dt) {
           p.burstLeft = PIRATE_BURST;
           p.fireT = PIRATE_BURST_COOL + Math.random();
           randUnit(pirTmpC);
-          p.aimErr.copy(pirTmpC).multiplyScalar(Math.random() * dist * PIRATE_AIM_ERR);  // fresh slop each burst (fraction, not max)
+          p.aimErr.copy(pirTmpC).multiplyScalar(Math.random() * markDist * PIRATE_AIM_ERR);  // fresh slop each burst (fraction, not max)
+        }
+      }
+    }
+
+    /* ---- v103: THE WING SHOOTS BACK. Same maths as the block above — the
+       velocity-cancel, the muzzle walk, the cone gate — with every constant
+       swapped for a worse one. Half the burst, 60% longer between them, more
+       than twice the slop. Two wingmen with a bandit's gun would delete a
+       raider before you had finished turning, and the dogfight IS the game.
+       He suppresses; you kill. ---- */
+    if (p.state === "ESCORT" && p.foe && p.foe.alive && !landedOn) {
+      const foeD = p.group.position.distanceTo(p.foe.group.position);
+      if (foeD < ALLY_FIRE_R) {
+        p.fireT -= dt;
+        if (p.fireT <= 0) {
+          if (p.burstLeft > 0) {
+            pirTmpB.copy(p.foe.group.position)
+                   .addScaledVector(p.foe.vel, (foeD / PIRATE_BOLT_SPEED) * PIRATE_LEAD)
+                   .add(p.aimErr);
+            pirTmpC.subVectors(pirTmpB, p.group.position).normalize();  // the shot he WANTS
+            p.group.getWorldDirection(pirTmpA).negate();                // the nose he HAS
+            if (pirTmpA.dot(pirTmpC) > ALLY_FIRE_CONE) {
+              if (p.muzzles) p.muzzles[p.burstLeft % p.muzzles.length].getWorldPosition(pirTmpB);
+              else pirTmpB.copy(p.group.position).addScaledVector(pirTmpA, 12);
+              // the v41 fix, and he needs it more than a bandit does: he shoots
+              // while carrying YOUR velocity out of a formation break
+              pirTmpA.copy(p.vel).addScaledVector(pirTmpC, -p.vel.dot(pirTmpC));
+              pirTmpC.multiplyScalar(PIRATE_BOLT_SPEED).sub(pirTmpA).normalize();
+              spawnPirateBolt(pirTmpB, pirTmpC, p.vel, p);   // `p` is the owner — that's the grudge hook
+              pirateShotSound(dist);
+              p.fireT = ALLY_BURST_GAP;
+              p.burstLeft--;
+            } else {
+              p.fireT = 0.1;   // nose not on yet — retry shortly, don't waste the burst
+            }
+          } else {
+            p.burstLeft = ALLY_BURST;
+            p.fireT = ALLY_BURST_COOL + Math.random();
+            randUnit(pirTmpC);
+            p.aimErr.copy(pirTmpC).multiplyScalar(Math.random() * foeD * ALLY_AIM_ERR);
+          }
         }
       }
     }
@@ -9126,25 +9327,46 @@ function updateEnemies(dt) {
   if (music) music.setDanger(pirates.some(p => p.alive && p.faction === "hostile")
                           || gunships.some(g => g.alive && g.hostile));   // a hot capital scares the band too
 
-  /* ---- hostile bolts: advance, swept-test the one target they have ---- */
+  /* ---- pirate bolts: advance, then swept-test whatever THIS bolt can hurt.
+     v103 split the pool by side (b.ally), so one loop now serves three target
+     sets: your wing's fire hits hostiles, incoming fire hits you or any
+     wingman in the line, and terrain is cover for all of it on the same
+     frame. ---- */
   for (const b of pirateBolts) {
     if (b.life <= 0) continue;
     b.life -= dt;
     if (b.life <= 0) { b.mesh.visible = false; continue; }
-    pirTmpA.copy(b.mesh.position);
+    boltP0.copy(b.mesh.position);
     b.mesh.position.addScaledVector(b.vel, dt);
     // v75: parked ships don't get shelled (junk-ram parity) — and now the bolt
     // is actually RETIRED rather than left flying and drawing. This is the one
     // Tanner was watching: red bolts streaking across the ground past a parked
     // ship, harmless, looking exactly like fire passing through the planet.
     if (landedOn) { b.life = 0; b.mesh.visible = false; continue; }
-    pirSeg.subVectors(b.mesh.position, pirTmpA);
+    pirSeg.subVectors(b.mesh.position, boltP0);
     const segLen2 = pirSeg.lengthSq();
-    pirToC.subVectors(shipObj.position, pirTmpA);
-    const t = segLen2 > 0 ? THREE.MathUtils.clamp(pirToC.dot(pirSeg) / segLen2, 0, 1) : 0;
-    pirNearPt.copy(pirTmpA).addScaledVector(pirSeg, t);
-    if (pirNearPt.distanceToSquared(shipObj.position) <= SHIP_HIT_R * SHIP_HIT_R) {
-      b.life = 0; b.mesh.visible = false;
+    let spent = false;
+    if (b.ally) {
+      /* v103 — YOUR WING'S FIRE: hostiles only. It passes through you and
+         through the rest of the wing, which is the same rule your own bolts
+         already follow (:8527). Formation flying at 55u plus a burst of two
+         would otherwise make friendly fire the leading cause of death on both
+         sides, and "I paid 150 and then shot him myself" is not an interesting
+         failure — it is just annoying. */
+      for (const q of pirates) {
+        if (!q.alive || q.faction !== "hostile") continue;
+        if (!boltNear(q.group.position, PIRATE_HIT_R, segLen2)) continue;
+        b.life = 0; b.mesh.visible = false; spent = true;
+        // ...and NOW it's angry at him. Set before pirateDamage, which may
+        // despawn the slot outright and take the chance with it.
+        if (b.owner && b.owner.alive && b.owner.faction === "ally") {
+          q.grudge = b.owner; q.grudgeT = GRUDGE_T;
+        }
+        pirateDamage(q, pirNearPt, b.vel);
+        break;
+      }
+    } else if (boltNear(shipObj.position, SHIP_HIT_R, segLen2)) {
+      b.life = 0; b.mesh.visible = false; spent = true;
       thump(140);
       padRumble(0.45, 60);
       /* NO spillCargo on a bolt hit — spilling stays a ram-only mechanic.
@@ -9152,13 +9374,26 @@ function updateEnemies(dt) {
          A lethal bolt breaches mid-loop and teleports the ship; the bolts
          still in flight this frame miss at 20000u and expire — leave it. */
       shipDamage(PIRATE_BOLT_DMG);
+    } else {
+      /* v103 — and a wingman flying through the line eats it. This is the
+         ONLY way incoming fire can kill him, which is deliberate: he is not
+         separately targeted, he is in the way. Combined with the grudge above
+         (a bandit he shoots comes after him), that is enough to make him die
+         at a rate you feel without ever making the fight stop being yours. */
+      for (const q of pirates) {
+        if (!q.alive || q.faction !== "ally") continue;
+        if (!boltNear(q.group.position, PIRATE_HIT_R, segLen2)) continue;
+        b.life = 0; b.mesh.visible = false; spent = true;
+        pirateDamage(q, pirNearPt, b.vel);
+        break;
+      }
     }
     // v75: worlds are solid — tested LAST, same order as the player's bolts, so
     // terrain is cover for both sides and for neither of you more than the
     // other. See the long note in the gunship loop for why the order matters.
-    else if (pointInTerrain(b.mesh.position)) {
+    if (!spent && pointInTerrain(b.mesh.position)) {
       b.life = 0; b.mesh.visible = false;
-      burstSparks(pirTmpA, SPARK_STILL, 3);   // splash at the last point OUTSIDE the rock
+      burstSparks(boltP0, SPARK_STILL, 3);   // splash at the last point OUTSIDE the rock
     }
   }
   /* Pirate bolts deliberately DON'T test junk: routing them through
@@ -11045,6 +11280,17 @@ function drawNavHud(dt) {
     c.fillStyle = NAV_GOLD; c.shadowColor = NAV_GOLD; c.shadowBlur = 8;
     c.font = "16px " + navFont;
     c.fillText(freightFlashMsg, W / 2, H * 0.38);
+    c.restore();
+  }
+  // --- I: a wingman died (v103). Teal, one row below the freight banner —
+  // the wing's own colour, so the toast matches the beacon that just went out.
+  if (wingFlash > 0) {
+    wingFlash = Math.max(0, wingFlash - dt);
+    c.save();
+    c.textAlign = "center"; c.globalAlpha = Math.min(1, wingFlash);
+    c.fillStyle = "#30e0c8"; c.shadowColor = "#30e0c8"; c.shadowBlur = 8;
+    c.font = "16px " + navFont;
+    c.fillText(wingFlashMsg, W / 2, H * 0.42);
     c.restore();
   }
 }
