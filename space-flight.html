@@ -228,6 +228,21 @@
     border-radius: 6px;
   }
   #settings.ctrls #settingsCtrls { display: block; }
+  /* v105: where the pad's cursor is sitting in the pause menu. It reuses the
+     front door's `padfocus` rather than inventing a third cursor class — the
+     game already had two (`padfocus` on the front door, `cursor` in the dock)
+     and a third name for the same idea is how a highlight ends up styled in one
+     panel and invisible in another. None of these seven rows are in MENU_ITEMS,
+     so the two uses can never collide.
+     outline rather than a border, and offset rather than padding, because the
+     panel is a flex column — anything that changes a row's BOX would shuffle
+     the rows under the cursor as it moves, which is the one thing a cursor
+     must never do. */
+  #settingsPanel .padfocus {
+    background: rgba(110,231,216,.18);
+    outline: 1px solid rgba(110,231,216,.55);
+    outline-offset: 3px; border-radius: 3px;
+  }
 
   /* ---- FLEET REGISTRY (v58): the standalone ship database, framed in a
      glass panel over the hangar (z 40 > settings 30 > start 20). The iframe
@@ -1184,7 +1199,11 @@
       left stick — and on glass, just tap the bar you want.<br>
       Parked at a port the panels stack into one column: <b>OUTFITTER</b>,
       <b>DISPATCH</b>, <b>MARKET</b>. One opens at a time; the closed bars still
-      tell you what's inside.
+      tell you what's inside.<br>
+      Same scheme in here: <b>↑ ↓</b> walks these rows, <b>← →</b> works the
+      slider you're on, <b>A</b> presses the button you're on, <b>B</b> closes.
+      Whichever panel is on top takes the pad — so <b>B</b> backs you out of the
+      registry or this menu one layer at a time.
       <div class="grp">TOUCH</div>
       <b>Left thumb</b> flight stick — touch anywhere on the left of the glass,
       the stick comes to you<br>
@@ -10538,7 +10557,7 @@ let padFireArmed = true;      // A must be RELEASED once after startGame (v85)
    The left stick counts as a D-pad here. It's what a thumb reaches for, and
    there is nothing else for it to do on a menu or a parked ship. */
 let navUpHeld = false, navDownHeld = false, navLeftHeld = false,
-    navRightHeld = false, navActHeld = false;
+    navRightHeld = false, navActHeld = false, navBackHeld = false;
 function navEdges(gp) {
   const ay = gp.axes.length > 1 ? padAxis(gp.axes[1]) : 0;
   const ax = gp.axes.length > 0 ? padAxis(gp.axes[0]) : 0;
@@ -10547,9 +10566,16 @@ function navEdges(gp) {
   const l = !!(gp.buttons[14] && gp.buttons[14].pressed) || ax < -0.55;
   const r = !!(gp.buttons[15] && gp.buttons[15].pressed) || ax >  0.55;
   const a = !!(gp.buttons[0] && gp.buttons[0].pressed);
+  /* v105: B is the sixth motion, and it only ever means CLOSE THE PANEL ON TOP.
+     It has its own held flag rather than reusing padBHeld — that one belongs to
+     the flight poll's landing assist, which lives below the pause return and
+     therefore never runs on the same frame as this. Two owners sharing one flag
+     would make a menu press eat the next assist press on the way out. */
+  const b = !!(gp.buttons[1] && gp.buttons[1].pressed);
   const e = { up: u && !navUpHeld, down: d && !navDownHeld, left: l && !navLeftHeld,
-              right: r && !navRightHeld, act: a && !navActHeld };
+              right: r && !navRightHeld, act: a && !navActHeld, back: b && !navBackHeld };
   navUpHeld = u; navDownHeld = d; navLeftHeld = l; navRightHeld = r; navActHeld = a;
+  navBackHeld = b;
   return e;
 }
 let lastPadRumble = 0;
@@ -11534,6 +11560,7 @@ function openSettings() {
   settingsTitleEl.textContent = gameStarted ? "PAUSED" : "SETTINGS";
   btnResumeEl.textContent = gameStarted ? "RESUME" : "CLOSE";
   settingsEl.style.display = "flex";
+  settingsCursor = 0; renderSettingsCursor();   // v105: the pad always opens on MUSIC
   if (gameStarted) {
     paused = true;
     if (document.pointerLockElement) document.exitPointerLock();  // free the mouse for the sliders
@@ -11551,6 +11578,82 @@ function togglePause() {
 }
 document.getElementById("btnSettings").addEventListener("click", openSettings);
 btnResumeEl.addEventListener("click", closeSettings);
+const settingsOpen = () => settingsEl.style.display === "flex";
+
+/* ---- v105: THE PAD WORKS THE PAUSE MENU ------------------------------------
+   His 9 Aug note: "would be great for the controller to be able to work the
+   game menu's." Start already opened this panel (v54) and Back already reached
+   the market console (v101) — what a pad could never touch was the panel
+   ITSELF. Pausing with a controller put seven controls on the glass and no way
+   to press any of them, so the only thing the pad could do in a frozen game was
+   unpause it again.
+
+   Same no-modes model as the front door and the dock accordion (v85): UP/DOWN
+   walks the rows, LEFT/RIGHT works the focused slider, A acts on the focused
+   button, B closes. A row is EITHER a slider or a button, never both, so which
+   motion applies is a property of where you are rather than a mode you have to
+   hold in your head — and the two that don't apply are simply inert. */
+const settingsRowEls = [
+  document.getElementById("volMusic"),
+  document.getElementById("volSfx"),
+  document.getElementById("volEngine"),
+  document.getElementById("settingsCtrlsToggle"),
+  document.getElementById("btnMarketPause"),
+  document.getElementById("btnFleetPause"),
+  btnResumeEl,
+];
+let settingsCursor = 0;
+/* Resolved fresh on every move rather than cached at boot. Nothing hides these
+   seven today — but the day one of them goes conditional, a cursor parked on a
+   display:none row is a press that does nothing, which reads as "the pad is
+   broken" rather than as a bug in one button. */
+function settingsRows() {
+  return settingsRowEls.filter(el => el && (el.offsetWidth > 0 || el.offsetHeight > 0));
+}
+function renderSettingsCursor() {
+  const rows = settingsRows();
+  if (settingsCursor >= rows.length) settingsCursor = 0;
+  // the highlight belongs on a slider's whole ROW, not on the 170px input
+  for (const el of settingsRowEls)
+    if (el) (el.closest(".volrow") || el).classList.remove("padfocus");
+  const cur = rows[settingsCursor];
+  if (cur) (cur.closest(".volrow") || cur).classList.add("padfocus");
+}
+function settingsMove(dy) {
+  const n = settingsRows().length;
+  if (!n) return;
+  settingsCursor = (settingsCursor + dy + n) % n;
+  renderSettingsCursor();
+}
+/* LEFT/RIGHT on a slider. It fires BOTH input and change, because the mixer
+   splits its work across the two: the live apply listens on `input`, and the
+   EFFECTS row's preview blip listens on `change`. A synthetic event that only
+   sends one leaves half the row dead — and the dead half is the audible one,
+   so a pad-driven slider would move on screen and change nothing you can hear. */
+function settingsAdjust(dx) {
+  const el = settingsRows()[settingsCursor];
+  if (!el || el.type !== "range") return;
+  const step = Number(el.step) || 1;
+  const was = Number(el.value);
+  const v = Math.max(Number(el.min), Math.min(Number(el.max), was + dx * step));
+  if (v === was) return;                       // already at a rail — don't fake an event
+  el.value = String(v);
+  el.dispatchEvent(new Event("input",  { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+}
+function settingsAct() {
+  const el = settingsRows()[settingsCursor];
+  if (!el || el.type === "range") return;      // A on a slider is inert, not a click
+  el.click();
+}
+function settingsPadNav(nav) {
+  if (nav.up)    settingsMove(-1);
+  if (nav.down)  settingsMove(1);
+  if (nav.left)  settingsAdjust(-1);
+  if (nav.right) settingsAdjust(1);
+  if (nav.act)   settingsAct();
+  if (nav.back)  closeSettings();
+}
 
 /* ---- FLEET REGISTRY (v58): the hangar's ship database ----
    Opens the standalone fleet-registry.html in-window as an iframe over the
@@ -11807,17 +11910,24 @@ function animate() {
     /* the pad works the front door (v85). Same five motions as the dock, same
        edge-detector — the whole reason it needs its own call up here is that
        the main poll is on the far side of this return. */
-    if (padIndex !== null && settingsEl.style.display !== "flex" &&
-        fleetEl.style.display !== "flex") {
+    /* v105 — the gate used to be `settings closed && fleet closed`, which meant
+       that with SETTINGS up at the front door this whole block was skipped and
+       navEdges never ran. Two things were wrong with that. The pad had nothing
+       to do in the panel, and the edge detector went unsampled while it was
+       open — so the first press after closing it was swallowed, exactly the
+       trap the v85 comment above warns about. Sample ALWAYS, then route. */
+    if (padIndex !== null) {
       const mgp = navigator.getGamepads()[padIndex];
       if (mgp) {
         const nav = navEdges(mgp);
-        /* v101 — the market console layers OVER the front door and takes the
-           same five motions, so whichever is on top owns them. Without this
-           branch a pad left/right still read as "change ship" through an open
+        /* Whoever is on top owns the same five motions — market console 41,
+           fleet registry 40, settings 30, the front door itself 20. Without the
+           ordering a pad left/right still read as "change ship" through an open
            panel: the hull swapping behind a table you're reading, which is the
            same two-things-own-one-input tell v85 fixed for the dock. */
-        if (marketConsoleOpen()) mcPadNav(nav);
+        if (marketConsoleOpen()) { mcPadNav(nav); if (nav.back) closeMarketConsole(); }
+        else if (fleetEl.style.display === "flex") { if (nav.back) closeFleet(); }
+        else if (settingsOpen()) settingsPadNav(nav);
         else {
           if (nav.up)    menuMove(-1);
           if (nav.down)  menuMove(1);
@@ -11951,7 +12061,21 @@ function animate() {
     const cgp = navigator.getGamepads()[padIndex];
     if (cgp) {
       const nav = navEdges(cgp);
-      if (marketConsoleOpen()) mcPadNav(nav);
+      /* v105 — WHOEVER IS ON TOP OWNS THE FIVE MOTIONS, and the branches run in
+         z-order: market console 41, fleet registry 40, settings 30. Opening the
+         console from flight opens THIS panel underneath it (see mcPausedUs), so
+         without the ordering a press meant for the table would also be walking
+         the mixer behind it — two things owning one input, the same tell v85
+         fixed for the dock. */
+      if (marketConsoleOpen()) { mcPadNav(nav); if (nav.back) closeMarketConsole(); }
+      else if (fleetEl.style.display === "flex") {
+        /* The registry is an iframe, so there is nothing in it this poll can
+           drive. B still has to work: the pad can now OPEN this panel from the
+           pause menu, and a panel you can enter but not leave is worse than one
+           you could never reach. */
+        if (nav.back) closeFleet();
+      }
+      else if (settingsOpen()) settingsPadNav(nav);
     }
   }
   if (paused) {
