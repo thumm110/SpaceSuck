@@ -5306,6 +5306,12 @@ const GOODS = {
   contra:   { name: "CONTRABAND", color: "#ff8bf5" },   // hot goods. Home won't touch it; the fence pays triple
 };
 const GOOD_IDS = Object.keys(GOODS);
+/* v104: the same five colours as THREE.Color objects, built once. The scrap
+   sprite wears its good's tint now (see emitScrap), and parsing "#ff8bf5" six
+   times per satellite kill would be six string parses for a number that never
+   changes. `color` stays the string because the HUD and the price board want
+   CSS; `tint` is the same value for the renderer. */
+for (const g of GOOD_IDS) GOODS[g].tint = new THREE.Color(GOODS[g].color);
 /* `hold` is the truth, `cargo` is its running total. Keeping the total as a
    plain number means every v81 reader of `cargo` — the spill severity, the
    HUD, the drain loop, the docs — keeps working untouched. Both are updated
@@ -5378,6 +5384,91 @@ const SCRAP_DROP = {
   debris:    { bits: 4, value: 1, good: "scrap" },   //  4
   satellite: { bits: 6, value: 4, good: "alloy" },   // 24 — a dead satellite is salvaged ALLOY, not loose scrap
 };
+
+/* ---- WHERE YOU ARE DECIDES WHAT IT IS (v104, §1.1d) ---------------------
+   The junk field is a bubble that rides your hull (block 10c), so until now
+   every port in the game was fed by an IDENTICAL field: 53 units of scrap and
+   144 of alloy, everywhere, forever. That is the whole reason there was never
+   a supply-side argument for leaving EARTH — and it left the price board with
+   five rows when the field could only ever fill two of them. ORE, VOLATILES
+   and CONTRABAND were unreachable to a salvager who shoots rocks; you had to
+   kill something that shoots back.
+
+   This table changes WHAT a piece salvages as, by where you are standing, and
+   nothing else. Same 32 slots, same bits, same values, same credits at a flat
+   1.00 port — RULE 1 holds, a good is still a LABEL and not a multiplier. The
+   only thing that moves is which port's column your hold lands in.
+
+   ⛔ THE CEILING DOES NOT MOVE. That is the constraint this table was tuned
+   against, not a happy accident. A full field clear is 197 units — 17
+   asteroids + 9 debris = 53 scrap, 6 satellites = 144 alloy, so six pieces
+   carry 73% of the field's value and the satellite is the only knob that
+   really moves a total. Priced at every port, before and after:
+
+       FOLLY SALVAGE   244.35 -> 244.35   the best route in the game, untouched
+       ANGEL OAK       230.00 -> 237.20   +3.1%
+       CHARLESTON      197.00 -> 197.00   home, flat, untouched
+       RUSTHOLLOW      166.70 -> 195.50   +17.3%, and still 20% BELOW FOLLY
+       BULLS BAY       118.20 -> 118.20   the ore/volatile port, untouched
+
+   So the best achievable credits per clear is exactly what it was. What
+   changes is that the WORST port stops being 32% off the pace and comes up to
+   roughly home's number — close enough that SATURATION decides the circuit,
+   which is the layer that was already built and had nothing to bite on. Glut
+   runs 40% deep; a 20% spread is comfortably inside what it can swing, and a
+   32% one was not.
+
+   ⚠ The obvious bigger version is deliberately NOT taken. satellite -> contra
+   at RUBICON would put RUSTHOLLOW at 253 and make the fence the best port in
+   the game by 3.6% — a CEILING move, so it is Tanner's call and not a tuning
+   detail. The knob is one word in this table.
+
+   Keyed by NAME, never by index: adding a world re-orders BODIES. */
+const FIELD_MIX = {
+  // ANGEL OAK's headline rate is volatiles at 1.50 — its best number, and the
+  // joint-best in the game — and until now nothing you could shoot produced a
+  // single unit of it. A derelict's propellant and coolant tanks are the
+  // honest source, and satellites are what VERDANT's own rates already reward.
+  VERDANT: { satellite: "volatile" },
+  // Debris over the fence world is jettisoned cargo: smugglers dump the load
+  // when the law shows up, and RUSTHOLLOW pays 1.50 to take it back off you.
+  // Deliberately the DEBRIS and not the satellites — 9 slots x 4 units is 36
+  // units, enough that the trip reads as a different job, small enough that
+  // the alloy still decides the total and the ceiling above stays put.
+  RUBICON: { debris: "contra" },
+};
+/* How far out a world still flavours the field. Generous on purpose: the junk
+   bubble itself reaches 3,000u, so a tight neighbourhood would have you
+   crossing the line mid-fight and watching the drops change under you. 1.5R +
+   6,000 gives VERDANT ~7,000u and RUBICON ~10,800u — both comfortably wider
+   than the bubble, and the two can never overlap (their orbits hold them at
+   least 20,500u apart even when they line up, against 17,800u of combined
+   reach). */
+const FIELD_MIX_MUL = 1.5, FIELD_MIX_PAD = 6000;
+/* The nearest flavoured world to `p`, or null out in the deep. Walks
+   liveBodies the way junkBlockingBody does; nearest wins, so an overlap could
+   never be ambiguous even if the orbits changed to allow one. */
+function fieldMixAt(p) {
+  let best = null, bestD2 = Infinity;
+  for (const b of liveBodies) {
+    const mix = FIELD_MIX[b.cfg.name];
+    if (!mix) continue;
+    const reach = b.cfg.radius * FIELD_MIX_MUL + FIELD_MIX_PAD;
+    const d2 = p.distanceToSquared(b.group.position);
+    if (d2 < reach * reach && d2 < bestD2) { best = mix; bestD2 = d2; }
+  }
+  return best;
+}
+/* What a piece of `type` salvages as for whoever is shooting it, falling back
+   to the flat SCRAP_DROP label out in the deep. Reads the SHIP's position and
+   not the rock's, deliberately: the bubble is 3,000u wide, so sampling
+   per-rock would sit you at the edge of a world catching a mixed bag with
+   nothing on screen explaining why. Crossing the line changes the whole field
+   at once, which is the only version a player can actually read. */
+function fieldGood(type, fallback) {
+  const mix = fieldMixAt(shipObj.position);
+  return (mix && mix[type]) || fallback;
+}
 /* Ramming knocks cargo loose (v31). It scatters as live scrap you can chase
    back down, so we can be dramatic with the amount — the real loss is only
    what drifts out of reach while you're still moving. Scales with hit severity
@@ -5423,18 +5514,30 @@ function emitScrap(pos, vel, value, good) {
   scrapCursor = (scrapCursor + 1) % SCRAP_COUNT;
   p.s.position.copy(pos); p.vel.copy(vel);
   p.value = value; p.good = good || "scrap"; p.life = SCRAP_LIFE; p.alive = true;
+  /* v104: the bit wears its good's colour. Every sprite owns its OWN material
+     (built in the pool loop above), so this is per-bit and cannot bleed across
+     the pool. It overturns the v82 call written into the GOODS block — "the
+     scrap sprite stays gold, because a bit you can't identify at 200u would
+     just be five confusing colours" — on Tanner's 6 Aug verdict ("I suppose we
+     can do color for now"). What changed the arithmetic behind that call is
+     v98's SELL/HOLD: now that each good is a decision at the pad, knowing what
+     a bit IS before you burn fuel toward it is worth something it wasn't worth
+     then. The fallback is the old gold, so an unknown good can never emit a
+     black sprite — an invisible bit would be a silent theft. */
+  p.mat.color.copy(GOODS[p.good] ? GOODS[p.good].tint : SCRAP_COLOR);
   p.s.scale.setScalar(SCRAP_SIZE); p.mat.opacity = 1; p.s.visible = true;
 }
 // only ever called from junkKill — a shot-down piece pays, a rammed one doesn't
 function junkDropScrap(j) {
   const d = SCRAP_DROP[j.type];
   if (!d) return;
+  const good = fieldGood(j.type, d.good);   // v104: where you're working decides
   for (let i = 0; i < d.bits; i++) {
     randUnit(scrapTmp);
     // inherit the piece's drift + a gentle outward puff, so scrap roughly
     // hangs where the kill happened instead of racing off out of reach
     scrapTmp.multiplyScalar(8 + Math.random() * 18).add(j.vel);
-    emitScrap(j.group.position, scrapTmp, d.value, d.good);
+    emitScrap(j.group.position, scrapTmp, d.value, good);
   }
 }
 
