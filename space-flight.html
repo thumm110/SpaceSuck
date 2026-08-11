@@ -454,6 +454,19 @@
     background: #6ee7d8; box-shadow: 0 0 8px rgba(110,231,216,.6);
   }
   #hullpct { letter-spacing: 2px; }
+  /* v106 gun heat — deliberately the same bar as the hull, one size down and
+     empty-by-default, so the two read as one column: the top bar is what you
+     have left, the bottom one is what you're spending. Fill color comes from
+     JS (teal → amber → red) for the same reason the hull's does. */
+  #gunbar {
+    width: 132px; height: 5px; margin: 2px 0 6px;
+    border: 1px solid rgba(110,231,216,.30); position: relative;
+  }
+  #gunfill {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 0%;
+    background: #6ee7d8; box-shadow: 0 0 8px rgba(110,231,216,.6);
+  }
+  #gunstate { letter-spacing: 2px; }
   #revtag { color: #ffb066; text-shadow: 0 0 6px rgba(255,176,102,.6); visibility: hidden; }
   #kills { color: #ff9a3c; text-shadow: 0 0 6px rgba(255,154,60,.6); letter-spacing: 2px; }
   #cargo { color: #ffd34d; text-shadow: 0 0 7px rgba(255,211,77,.7); letter-spacing: 2px; font-size: 15px; }
@@ -1083,6 +1096,7 @@
   body.touch #flightdata { bottom: 182px; font-size: 10px; line-height: 1.42; }
   body.touch #flightdata .big { font-size: 18px; }
   body.touch #hullbar { width: 92px; height: 6px; }
+  body.touch #gunbar  { width: 92px; height: 5px; }
   body.touch #cargo, body.touch #bank { font-size: 12px; }
   body.touch #nearest { font-size: 10px; }
   body.touch #nearest .name { font-size: 13px; }
@@ -1293,6 +1307,8 @@
     <span id="pilotrow" style="display:none"><span class="dim">PILOT</span> <span id="pilot"></span><br></span>
     <span class="dim">HULL</span> <span id="hullpct">100%</span>
     <div id="hullbar"><div id="hullfill"></div></div>
+    <span class="dim">GUNS</span> <span id="gunstate">READY</span>
+    <div id="gunbar"><div id="gunfill"></div></div>
     <span class="dim">VELOCITY</span><br>
     <span class="big" id="speed">0</span> <span class="dim">u/s</span>
     <span id="revtag">◀ REV</span><br>
@@ -4205,6 +4221,38 @@ let gunsColdT = 99;
 const muzzleL = new THREE.Vector3(), muzzleR = new THREE.Vector3(),
       boltDir = new THREE.Vector3(), flashLocal = new THREE.Vector3();
 
+/* ---- v106: GUN HEAT — the penalty for HELD fire -------------------------
+   fireGap already limited how FAST you can shoot; nothing limited how LONG.
+   Heat is the sustain limit: every bolt dumps the same charge into the same
+   battery cells, the cells shed it slowly, and when they cap the trigger
+   still pulls — it just fires blanks with a dry click until they recover.
+
+   HEAT_PER_SHOT IS FLAT ON PURPOSE, and it's the whole design. Every
+   AUTOLOADER tier runs off the same cells, so a faster gun doesn't get more
+   sustained fire — it gets the SAME ~22 bolts, sooner. Upgrading buys burst,
+   not uptime. (A battery upgrade that raises the ceiling is the later buy.)
+
+   HEAT_RESET is what makes an overheat cost something: capping doesn't just
+   pause you, it locks the guns until the cells drop back near cold. Hold the
+   trigger to the cap and you're a passenger for about a second and a half.
+
+   ⚠ HEAT_IDLE IS LOAD-BEARING — the cells do NOT shed heat while you're
+   shooting. Cooling that runs every frame fights the trigger instead of
+   following it: at tier 0 the gun makes 8.3 shots/sec, so a flat 0.34/sec
+   bleed cancels almost the entire 0.374/sec gain and a held trigger takes
+   THIRTY SECONDS to cap — a heat system you could never reach. Gate the bleed
+   behind "off the trigger for a beat" and both numbers stay honest: the bar
+   climbs at exactly HEAT_PER_SHOT a shot and falls at exactly HEAT_COOL. It
+   also makes the tier ladder exact — 23 shots to cap at EVERY tier, just
+   sooner — which is the design, and is what the test pins. */
+const HEAT_PER_SHOT = 0.045;   // 23 bolts from cold to cap, at any tier
+const HEAT_COOL     = 0.50;    // per second, once idle — full bar in ~2s
+const HEAT_IDLE     = 0.35;    // seconds off the trigger before the bleed starts
+const HEAT_RESET    = 0.35;    // overheated guns stay locked until heat < this
+const DRY_CLICK_GAP = 0.22;    // blanks click slower than the gun fires
+let gunHeat = 0;               // 0 = cold, 1 = capped
+let gunsOverheated = false;    // latched at the cap, cleared under HEAT_RESET
+
 function blasterSound() {
   if (!audio) return;
   const { ctx } = audio, t = ctx.currentTime;
@@ -4217,6 +4265,23 @@ function blasterSound() {
   g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
   o.connect(g); g.connect(audio.sfx);
   o.start(t); o.stop(t + 0.14);
+}
+
+/* v106: the sound of a trigger that does nothing. Deliberately NOT a laser —
+   no pitch sweep, no tail, just a short dead tick well under the blaster's
+   volume, so an overheat reads as "the gun stopped" and not "the gun changed
+   sound". It's the audible half of the heat bar. */
+function dryClickSound() {
+  if (!audio) return;
+  const { ctx } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = "square";
+  o.frequency.setValueAtTime(150, t);          // flat — a tick, not a note
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.045, t + 0.003);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.035);
+  o.connect(g); g.connect(audio.sfx);
+  o.start(t); o.stop(t + 0.04);
 }
 
 /* ============ 10c. SPACE JUNK (v22) ============
@@ -4440,6 +4505,8 @@ const STRUCT_SLAM_MUL = 0.35;// hull per u/s of CLOSING speed over RAM_FREE_SPD,
 const FLASH_WHITE = new THREE.Color(0xffffff);
 const killsEl = document.getElementById("kills");
 const hullFillEl = document.getElementById("hullfill");
+const gunFillEl = document.getElementById("gunfill");     // v106 gun heat
+const gunStateEl = document.getElementById("gunstate");
 const hullPctEl = document.getElementById("hullpct");
 const breachEl = document.getElementById("breachtag");
 const ditchEl = document.getElementById("ditchtag");
@@ -6156,6 +6223,10 @@ const SHOP = [
      tuned against the old base gate, so tier 0 fights run ~8% longer now,
      which is the point; the capitals' answer is the TAIL GUN (v89), not more
      hp — see updateGunships. */
+  /* v106: this tier now buys BURST, not uptime. Gun heat is flat per shot at
+     every tier (same cells), so a faster loader reaches the cap in the same 23
+     bolts — just sooner. The row still honestly reads "+n% FIRE RATE"; what it
+     no longer means is "+n% shooting". The ceiling is the later battery buy. */
   { name: "AUTOLOADER", vals: [0.12, 0.10, 0.085, 0.072], costs: [600, 900, 1400],
     next: l => "+" + Math.round((SHOP[4].vals[l] / SHOP[4].vals[l + 1] - 1) * 100) + "% FIRE RATE" },
 ];
@@ -12927,12 +12998,28 @@ function animate() {
   /* ---- blasters: fire from both cannons, advance live bolts ---- */
   fireCooldown -= dt;
   gunsColdT += dt;          // v102: reset to 0 on every shot, just below
+  /* v106: the cells shed heat only once you're OFF the trigger for a beat —
+     gunsColdT is already "seconds since the last shot", so the bleed rides it
+     for free. Clearing the latch here (not at the trigger) means the guns come
+     back on their own whether or not you're still holding it down: a blank
+     doesn't reset gunsColdT, so leaning on a locked trigger still cools. */
+  if (gunHeat > 0 && gunsColdT > HEAT_IDLE)
+    gunHeat = Math.max(0, gunHeat - HEAT_COOL * dt);
+  if (gunsOverheated && gunHeat < HEAT_RESET) gunsOverheated = false;
+  const triggerDown = keys["Space"] || padFire || touchFire;
   /* v60: guns are cold while parked. Every INCOMING damage path already exempts
      a parked ship, so a live trigger on the deck was a free kill box — and it
      only got worse once a port's sky stopped being a safe harbor: hostiles now
      come to RustHollow, can't touch you on the pad, and used to be shootable
      from it. Exempt from harm, exempt from dealing it. */
-  if ((keys["Space"] || padFire || touchFire) && fireCooldown <= 0 && !landedOn) {
+  /* v106: BLANKS. The trigger is never dead — an overheated pull still costs
+     you the gate and still makes a noise, it just doesn't spawn a bolt. That's
+     the difference between a gun that's overheated and a gun that's broken. */
+  if (triggerDown && gunsOverheated && fireCooldown <= 0 && !landedOn) {
+    dryClickSound();
+    padRumble(0.08, 15);
+    fireCooldown = Math.max(fireGap, DRY_CLICK_GAP);
+  } else if (triggerDown && fireCooldown <= 0 && !landedOn) {
     shipObj.getWorldDirection(boltDir).negate();          // nose forward (-Z)
     retroGlows[0].getWorldPosition(muzzleL);              // left prong tip (also refreshes shipObj world matrix)
     retroGlows[1].getWorldPosition(muzzleR);              // right prong tip
@@ -12948,6 +13035,10 @@ function animate() {
     padRumble(0.25, 35);
     fireCooldown = fireGap;   // v89: paced by the AUTOLOADER tier, not a const
     gunsColdT = 0;            // v102: a scavenger holding station backs off when you shoot
+    // v106: the shot's charge, added AFTER the bolt — the pull that caps the
+    // cells is still a real shot, so the bar fills on the way out, not in.
+    gunHeat += HEAT_PER_SHOT;
+    if (gunHeat >= 1) { gunHeat = 1; gunsOverheated = true; }
   }
   for (const b of bolts) {
     if (b.life <= 0) continue;
@@ -13194,6 +13285,19 @@ function animate() {
   hullFillEl.style.background = hullCol;
   hullPctEl.style.color = hullCol;
   hullPctEl.textContent = Math.round(hullPct * 100) + "%";
+  /* v106 gun heat. The bar reads the same direction as the hull's — teal is
+     fine, red is trouble — but it FILLS instead of emptying, which is what
+     stops the two being confused at a glance. LOCKED blinks so an overheat is
+     visible from the corner of the eye while you're busy not dying. */
+  const heatCol = gunsOverheated ? "#ff5544"
+                : gunHeat > 0.66 ? "#ffb066" : "#6ee7d8";
+  gunFillEl.style.width = (gunHeat * 100) + "%";
+  gunFillEl.style.background = heatCol;
+  gunStateEl.style.color = heatCol;
+  const gunTxt = gunsOverheated
+    ? (Math.floor(clock.elapsedTime * 4) % 2 ? "LOCKED" : "OVERHEAT")
+    : gunHeat > 0.66 ? "HOT" : "READY";
+  if (gunStateEl.textContent !== gunTxt) gunStateEl.textContent = gunTxt;
   if (dmgFlash > 0) {
     dmgFlash = Math.max(0, dmgFlash - dt * 2.2);
     dmgFlashEl.style.opacity = dmgFlash;
