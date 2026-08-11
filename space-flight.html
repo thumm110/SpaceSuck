@@ -4229,7 +4229,7 @@ const muzzleL = new THREE.Vector3(), muzzleR = new THREE.Vector3(),
 
    HEAT_PER_SHOT IS FLAT ON PURPOSE, and it's the whole design. Every
    AUTOLOADER tier runs off the same cells, so a faster gun doesn't get more
-   sustained fire — it gets the SAME ~22 bolts, sooner. Upgrading buys burst,
+   sustained fire — it gets the SAME 30 bolts, sooner. Upgrading buys burst,
    not uptime. (A battery upgrade that raises the ceiling is the later buy.)
 
    HEAT_RESET is what makes an overheat cost something: capping doesn't just
@@ -4243,9 +4243,13 @@ const muzzleL = new THREE.Vector3(), muzzleR = new THREE.Vector3(),
    THIRTY SECONDS to cap — a heat system you could never reach. Gate the bleed
    behind "off the trigger for a beat" and both numbers stay honest: the bar
    climbs at exactly HEAT_PER_SHOT a shot and falls at exactly HEAT_COOL. It
-   also makes the tier ladder exact — 23 shots to cap at EVERY tier, just
-   sooner — which is the design, and is what the test pins. */
-const HEAT_PER_SHOT = 0.045;   // 23 bolts from cold to cap, at any tier
+   also makes the tier ladder exact — 30 shots to cap at EVERY tier, just
+   sooner — which is the design, and is what the test pins.
+
+   ⚠ 0.034 is not a round number and must not be "tidied" to 0.033 or 0.035.
+   It is picked so shot 29 lands at 0.986 and shot 30 at 1.020 — the only
+   window that gives EXACTLY the 30 Tanner asked for after flying v106. */
+const HEAT_PER_SHOT = 0.034;   // 30 bolts from cold to cap, at any tier
 const HEAT_COOL     = 0.50;    // per second, once idle — full bar in ~2s
 const HEAT_IDLE     = 0.35;    // seconds off the trigger before the bleed starts
 const HEAT_RESET    = 0.35;    // overheated guns stay locked until heat < this
@@ -4267,21 +4271,40 @@ function blasterSound() {
   o.start(t); o.stop(t + 0.14);
 }
 
-/* v106: the sound of a trigger that does nothing. Deliberately NOT a laser —
-   no pitch sweep, no tail, just a short dead tick well under the blaster's
-   volume, so an overheat reads as "the gun stopped" and not "the gun changed
-   sound". It's the audible half of the heat bar. */
+/* v106: the sound of a trigger that does nothing — pew pew pew becomes click
+   click click. Deliberately NOT a laser: no pitch sweep, no tail.
+
+   ⚠️ v106.1 REBUILT THIS, and the reason matters. The first version was a
+   150 Hz square at 0.045 — a quarter of the blaster's level, at a frequency
+   laptop and phone speakers roll off hard. Tanner flew it and reported the
+   dry click as MISSING. It was firing every time; it was just inaudible.
+   A click is a broadband transient, not a low tone, so it's built the way
+   thump() is — a filtered noise burst — with a little square-wave body under
+   it so it reads mechanical. Keep it under the blaster's 0.16 peak in
+   PERCEIVED level, not in the gain number: bandpassed noise measures far
+   hotter than it sounds. */
 function dryClickSound() {
   if (!audio) return;
   const { ctx } = audio, t = ctx.currentTime;
+  const len = Math.floor(ctx.sampleRate * 0.05);
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++)                  // hard attack, very fast decay
+    d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 6);
+  const src = ctx.createBufferSource(); src.buffer = buf;
+  const f = ctx.createBiquadFilter();
+  f.type = "bandpass"; f.frequency.value = 2100; f.Q.value = 1.1;
+  const ng = ctx.createGain(); ng.gain.value = 0.5;
+  src.connect(f); f.connect(ng); ng.connect(audio.sfx);
+  src.start(t);
   const o = ctx.createOscillator(); o.type = "square";
-  o.frequency.setValueAtTime(150, t);          // flat — a tick, not a note
+  o.frequency.setValueAtTime(320, t);            // the body — a sear, not a note
+  o.frequency.exponentialRampToValueAtTime(90, t + 0.02);
   const g = ctx.createGain();
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(0.045, t + 0.003);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.035);
+  g.gain.setValueAtTime(0.09, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
   o.connect(g); g.connect(audio.sfx);
-  o.start(t); o.stop(t + 0.04);
+  o.start(t); o.stop(t + 0.06);
 }
 
 /* ============ 10c. SPACE JUNK (v22) ============
@@ -6224,8 +6247,8 @@ const SHOP = [
      which is the point; the capitals' answer is the TAIL GUN (v89), not more
      hp — see updateGunships. */
   /* v106: this tier now buys BURST, not uptime. Gun heat is flat per shot at
-     every tier (same cells), so a faster loader reaches the cap in the same 23
-     bolts — just sooner. The row still honestly reads "+n% FIRE RATE"; what it
+     every tier (same cells), so a faster loader reaches the cap in the same 30
+     shots — just sooner. The row still honestly reads "+n% FIRE RATE"; what it
      no longer means is "+n% shooting". The ceiling is the later battery buy. */
   { name: "AUTOLOADER", vals: [0.12, 0.10, 0.085, 0.072], costs: [600, 900, 1400],
     next: l => "+" + Math.round((SHOP[4].vals[l] / SHOP[4].vals[l + 1] - 1) * 100) + "% FIRE RATE" },
