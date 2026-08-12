@@ -1551,6 +1551,7 @@ const BODIES = [
   {
     name: "AZURE", type: "planet", style: "gltf", seed: 42,
     radius: 1425,                   // the archipelago world — only ~7.7% land
+    safe: "approach",               // v107: the run-in to its markets, never its lane
     orbit: { radius: 49500, speed: 0.004, angle: 0.3, y: -3600 },
     spin: 0.0015,                   // v64: halved system-wide (was 0.015 originally)
     file: "planets/azure.glb",      // built by build_azure.py (Blender)
@@ -1802,6 +1803,7 @@ const BODIES = [
   {
     name: "EARTH", type: "planet", style: "gltf", seed: 3,
     radius: 2500,                   // the flagship destination
+    safe: "world",                  // v107: company ground — the v44 harbor, now declared
     // angle π/2 parks Earth's orbit on the spawn side of the sun — you
     // still start the game with home in the windshield
     orbit: { radius: 68500, speed: 0.0025, angle: Math.PI / 2, y: -400 },
@@ -1867,6 +1869,7 @@ const BODIES = [
   {
     name: "VERDANT", type: "planet", style: "gltf", seed: 99,
     radius: 675,                    // the smallest world — you can lap it in a minute
+    safe: "world",                  // v107: the advanced civilisation keeps its own sky
     orbit: { radius: 42500, speed: 0.005, angle: 5.4, y: 6000 },
     spin: 0.002,                    // v64: halved system-wide (was 0.03 originally,
                                     // the fastest in the system). A parked ship RIDES
@@ -6890,6 +6893,38 @@ const PIRATE_RESPAWN_MIN = 80, PIRATE_RESPAWN_MAX = 150;
    pursuer breaks off and runs for open space, then slinks away entirely.
    Player-centric on purpose: the harbor protects YOU near the bank. */
 const PIRATE_SAFE_R = 2;         // radii around the pads world — atmosphere + approach both covered
+/* v107: SAFETY IS A PROPERTY OF WHO OWNS THE PLACE. Tanner, 9 Aug: "I would
+   like the approaches to markets to be a safe zone. I am also thinking of
+   making verdant entirely safe like earth since it is the smart/advanced
+   civilization." That is one sentence a player can infer without being told,
+   and it is a WORLD flag rather than anything derived from `home`:
+
+     safe: "world"     EARTH (company ground) · VERDANT (the advanced world)
+     safe: "approach"  AZURE — the run-in to a MARKET, and nothing else
+     no flag           RUBICON. A pirate market is never safe, and CINDER and
+                       KRONOS own nothing.
+
+   ⛔ DELIBERATELY NOT DERIVED FROM `home`. It would be tidier to say "the home
+   world is safe" and let EARTH fall out of it, but then moving the home port
+   would move the safety with it — and RUSTHOLLOW becoming home must never make
+   a pirate market safe. Ownership grants this, not banking. (v60's rule that
+   fencing costs you the protection is the same rule seen from the other side.)
+
+   ⛔ AND THE ONE THAT WILL BE "SIMPLIFIED" BACK: PROTECT FOLLY'S PAD, NEVER
+   FOLLY'S LANE. FOLLY SALVAGE is on AZURE and prices the best clear in the game
+   at 244.35. Give AZURE a world bubble and the top of the money ladder becomes
+   the safest place to work — money and danger would point in opposite
+   directions. That is why "approach" is a CONE down a pad's own district and
+   not a sphere around the planet: it is a funnel ~210u wide at the deck, and
+   the rest of AZURE's sky stays exactly as hostile as it was. */
+const PIRATE_SAFE_MIN = 3000;    // ...but a small world's SKY isn't small. VERDANT
+                                 // is r675, so 2 radii would be a 1,350u bubble —
+                                 // less than the 2,600u a raider spawns at, i.e.
+                                 // "entirely safe" that never once stopped a spawn.
+                                 // EARTH is unaffected (2 x 2500 already clears it).
+const PIRATE_APPROACH_R = 1800;  // u from the DECK, inside the district cone. Three
+                                 // times the [G] assist range, so it covers the
+                                 // committed nose-down part you can't fight from.
 const PIRATE_HARBOR_GONE = 1200; // fled this far while you're in harbor → quietly gone
 const PIRATE_RAM_HURT = 6;       // hull per 100 u/s closing — a fighter, not a boulder
 const PIRATE_SCRAP_BITS = 8, PIRATE_SCRAP_VAL = 5;   // 40 — richest kill that shoots back (satellite = 24; v50 freight pays more, but freight runs)
@@ -7036,6 +7071,10 @@ let wingFlash = 0, wingFlashMsg = "";
 // shipBreach → junkRespawn × 44, which rewrites the junk scratch mid-call
 // (the same trap documented at the junk ram)
 const pirTmpA = new THREE.Vector3(), pirTmpB = new THREE.Vector3(), pirTmpC = new THREE.Vector3();
+// v107: the safe-approach deck position. Its own vector rather than _asstPad,
+// which is documented "helper only, never the loop" — pirateInHarbor() runs
+// every frame and would be borrowing a scratch the HUD believes it owns.
+const pirTmpPad = new THREE.Vector3();
 const pirSeg = new THREE.Vector3(), pirToC = new THREE.Vector3(), pirNearPt = new THREE.Vector3();
 const pirAimObj = new THREE.Object3D();   // scratch for the mirror-lookAt trick (nose is -Z)
 /* v102 station keeping gets its OWN scratch rather than borrowing pirTmpA.
@@ -8732,12 +8771,51 @@ function updateGunships(dt) {
 }
 /* ================= end 10i: GUNSHIPS ================= */
 
-// v60: the harbor belongs to HOME, not to "whatever world has a pad". A pirate
-// market is the last place that should be safe — fencing at RustHollow costs you
-// the payout AND the protection, which is the whole point of the trip home.
+/* v60: the harbor belonged to HOME, not to "whatever world has a pad". A pirate
+   market is the last place that should be safe — fencing at RustHollow costs you
+   the payout AND the protection, which is the whole point of the trip home.
+   v107 keeps that result and changes what grants it: a world's own `safe` flag
+   (see PIRATE_SAFE_MIN above). RUSTHOLLOW's world carries no flag, so RUBICON is
+   as hostile as it ever was, deck to orbit. */
+
+// ① OWNED SKY — the whole neighbourhood, for a world that owns its own space.
+function pirateWorldSafe() {
+  for (const b of liveBodies) {
+    if (!b.cfg || b.cfg.safe !== "world") continue;
+    const r = Math.max(b.cfg.radius * PIRATE_SAFE_R, PIRATE_SAFE_MIN);
+    if (shipObj.position.distanceTo(b.group.position) < r) return true;
+  }
+  return false;
+}
+
+/* ② THE APPROACH — a funnel down a MARKET's own district cone, nothing wider.
+   Reuses pickPadTarget()'s alignment rather than inventing a second one, so the
+   sky you're safe in is exactly the sky the reticle says you're lined up with;
+   two ideas of "on approach" would drift apart on the first pad that moved.
+
+   Three gates, and each is load-bearing:
+     · the world is flagged "approach"    — AZURE only
+     · the pad carries a PORT             — a wild platform protects nothing, so
+                                            VERDANT's derelict and FC's 43 fill
+                                            cones can never grant this by accident
+     · you are INSIDE the district cone   — not merely near the planet
+   plus PIRATE_APPROACH_R from the deck itself. */
+function pirateApproachSafe() {
+  const tgt = pickPadTarget();
+  if (!tgt || tgt.b.cfg.safe !== "approach") return false;
+  if (!tgt.pad.port) return false;
+  if (tgt.dot <= tgt.pad.districtCos) return false;
+  const b = tgt.b, pad = tgt.pad;
+  const yaw = b.surface ? b.surface.rotation.y : (b.cfg.yaw || 0);
+  // live deck position — the baked direction un-frozen by the planet's spin,
+  // same recipe landingTarget() uses
+  pirTmpPad.set(pad.dx, pad.dy, pad.dz).applyAxisAngle(SPIN_AXIS, yaw)
+           .multiplyScalar(b.cfg.radius * pad.top).add(b.group.position);
+  return shipObj.position.distanceTo(pirTmpPad) < PIRATE_APPROACH_R;
+}
+
 function pirateInHarbor() {
-  const h = homeWorld();
-  return !!h && shipObj.position.distanceTo(h.group.position) < h.cfg.radius * PIRATE_SAFE_R;
+  return pirateWorldSafe() || pirateApproachSafe();
 }
 
 function pirateSpawn(p) {
