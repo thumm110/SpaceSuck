@@ -7483,6 +7483,25 @@ const HAULER_DEFS = [
     // v82: the collector's hold is full of what it just picked up — SCRAP. Shooting
     // the salvager for its salvage is the most on-theme drop in the game.
     role: "salvage", good: "scrap" },                                                      // and it WORKS the field (v57)
+  /* SS TAXMAN (v108) — the institutional collector, finished in the shipyard
+     2026-07-26 and parked ever since because §7b wants it berthing at the FC
+     arms. It doesn't need the station to have a job: it's a collector, and the
+     collector role already works the junk field. This is the interim posting.
+
+     The numbers are deliberately the worst trade in the sky. hp 14 is the
+     toughest hull flying — more than the escorted piñata's 9 — and 10x7 = 70
+     is LESS than the little PACKRAT's 98. Shooting it is the single worst
+     credits-per-second in the game, which is the joke (it already banked
+     everything; the hold is receipts) and is also what keeps a fifth traffic
+     slot from being an income raise. len 34 sits it between the PACKRAT (22)
+     and the everyday truck (52); the hull is BROADER than it is long (33.8 x
+     29.9 raw), so the capsule clamps to a 17u sphere by design — see the
+     chunky-hull note in the loader. No `thruster` override: its seats are
+     exactly ThrusterL/C/R, so burner discovery finds all three itself. */
+  { file: "collector/ss-taxman.glb",       name: "SS TAXMAN",          hp: 14, bits: 10, val: 7,   // 70 — the worst payday flying
+    first: 260, firstRnd: 140, rMin: 400, rMax: 760, len: 34,
+    role: "salvage", good: "scrap",
+    banner: "◆ REVENUE SWEEP — SS TAXMAN ◆" },   // ~580s mean period earns a shout (v81 rule)
   // SS CANARY (v69) — the container run. Biggest hull in the fleet, and the only
   // hauler carrying its cargo on the OUTSIDE: 12 separately-named Cargo00..Cargo11
   // crates in an open ribbed spine, so a future "shoot it and it sheds one" is a
@@ -7663,6 +7682,25 @@ function salvageDrop(h) {
   if (h.state === "SALVAGE") { h.state = "CRUISE"; haulerPickLeg(h); }
 }
 
+/* v108: there are TWO collectors in the sky now (PACKRAT + TAXMAN), and the
+   scan had no notion of a piece already being spoken for. Both would lock the
+   same rock, both would reel it — in opposite directions — and the loser's
+   validation would then regurgitate a piece the winner had already swallowed.
+   Claim is just "is anyone else's target this piece": ≤2 salvagers against 44
+   slots, so the cost is noise, and it reads at a glance.
+
+   ⚠ `q !== self` is DEFENSIVE AND CURRENTLY UNREACHABLE — falsification proved
+   it: dropping the term leaves the whole suite green. A collector only ever
+   scans from CRUISE, and every path into CRUISE runs salvageDrop first, which
+   nulls target — so the asker's own target is always null at scan time. It
+   stays because the predicate should mean "claimed by someone ELSE" on its own
+   terms; the day a collector scans while still holding a piece (looking for
+   something better) it becomes load-bearing. Nothing tests it, on purpose. */
+function salvageClaimed(j, self) {
+  for (const q of haulers) if (q !== self && q.alive && q.target === j) return true;
+  return false;
+}
+
 function updateSalvage(h, dt) {
   if (h.state === "CRUISE") {
     // normal trucking, plus a slow lookout for the next meal
@@ -7672,7 +7710,7 @@ function updateSalvage(h, dt) {
     h.scanT = SALV_SCAN_T;
     let best = null, bestD2 = SALV_RANGE * SALV_RANGE;
     for (const j of junk) {
-      if (!j.alive || j.radius > SALV_MAX_R) continue;
+      if (!j.alive || j.radius > SALV_MAX_R || salvageClaimed(j, h)) continue;
       const d2 = j.group.position.distanceToSquared(h.group.position);
       if (d2 < bestD2) { best = j; bestD2 = d2; }
     }
