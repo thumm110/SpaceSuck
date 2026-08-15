@@ -13873,9 +13873,27 @@ setTimeout(() => {
   if (location.hash === "#reset")
     try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
   if (doorstep) {
-    shipObj.position.set(doorstep.position[0] - doorstep.radius * 0.3,
-                         doorstep.position[1] + doorstep.radius * 0.5,
-                         doorstep.position[2] - doorstep.radius * 2.0);
+    /* v109: a world whose feature is a BELT gets its doorstep IN the belt.
+       The plain radius-scaled offset below is right for a planet you are going
+       to land on, and wrong for KRONOS: it lands 3,563u out, which is inside
+       the ore annulus by 163u and inside the RINGS visually, so you would be
+       pulling ore with no belt rock on screen and one nudge inward from it
+       switching off. A dev shortcut that starts you on the wrong side of the
+       thing you came to look at is worse than no shortcut.
+       The X axis lies in the belt plane (the group is tilted about X), so a
+       plain X offset at the belt's mean radius puts you in the middle of the
+       rocks. The small lift is so the band reads as a band rather than an
+       edge-on line. */
+    if (doorstep.belt) {
+      const mid = (doorstep.belt.inner + doorstep.belt.outer) / 2;
+      shipObj.position.set(doorstep.position[0] + mid,
+                           doorstep.position[1] + 300,
+                           doorstep.position[2]);
+    } else {
+      shipObj.position.set(doorstep.position[0] - doorstep.radius * 0.3,
+                           doorstep.position[1] + doorstep.radius * 0.5,
+                           doorstep.position[2] - doorstep.radius * 2.0);
+    }
     const c = new THREE.Vector3(...doorstep.position);
     shipObj.lookAt(shipObj.position.clone().multiplyScalar(2).sub(c));
   }
