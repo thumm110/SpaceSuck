@@ -3489,6 +3489,9 @@ const HALO_GAIN = 0.8;    // how hot a lit halo burns, on top of its emissive co
    out byte-identical to rung 1 on the first pass. Floating it off along the
    averaged normal is also just what a real lamp's glow does. */
 const HALO_LIFT = 0.6;    // model-local units out along the fixture's own normal
+const BERTH_LIFT = 34;    // WORLD units a berth strobe floats above its deck
+const BERTH_RING = 6;     // strobes per berth, on a circle at the pad's own radius
+const BERTH_RGB = [0.16, 1.0, 0.52];   // clear-to-land green — the one hue FC does not already use
 let haloTex = null;       // lazy: softBlobTexture exists by now, boltGlowTex does not yet
 function getHaloTex() {
   return haloTex || (haloTex = softBlobTexture("rgba(255,255,255,0.95)"));
@@ -3541,12 +3544,9 @@ function buildGlowHalos(body, model) {
       }
     });
   });
-  const n = buckets.size;
-  if (!n) return 0;
-  const xyz = new Float32Array(n * 3);
-  const col = new Float32Array(n * 3);     // all zero — the derelict, and the honest default
+  if (!buckets.size) return 0;
+  const xyzList = [];                      // grows: model fixtures first, then berths
   const byMat = new Map();                 // material NAME -> [point index, ...]
-  let i = 0;
   for (const b of buckets.values()) {
     nv.set(b.nx, b.ny, b.nz);
     // a fixture whose faces point every which way (a lamp head, a mast tip)
@@ -3554,16 +3554,69 @@ function buildGlowHalos(body, model) {
     // off in an arbitrary direction
     const lift = nv.lengthSq() > 1e-6 ? HALO_LIFT : 0;
     if (lift) nv.normalize();
-    xyz[i*3]     = b.x / b.n + nv.x * lift;
-    xyz[i*3 + 1] = b.y / b.n + nv.y * lift;
-    xyz[i*3 + 2] = b.z / b.n + nv.z * lift;
     if (!byMat.has(b.mat)) byMat.set(b.mat, []);
-    byMat.get(b.mat).push(i);
-    i++;
+    byMat.get(b.mat).push(xyzList.length / 3);
+    xyzList.push(b.x / b.n + nv.x * lift,
+                 b.y / b.n + nv.y * lift,
+                 b.z / b.n + nv.z * lift);
   }
+  /* ---- BERTH LIGHTS (v111.1) ------------------------------------------
+     MEASURED, one material at a time from 5km: PadGlow is 40% of the finished
+     station's light and NameAmberGlow another 25%. Two materials own two thirds
+     of it, and SIX of the thirteen contribute a flat ZERO from outside (the
+     hangar mouth, the screens and both sign panels face inward or are authored
+     near-black). That is a property of the MODEL, not of the ladder — so rung 5
+     could not be fixed by reordering which rung throws which switch. It was
+     4,700cr and 4,750 units for 7% more light.
+
+     So rung 5 gets a light of its own that no material owns: an approach strobe
+     over every berth, placed off the PAD TABLE rather than the mesh. Rung 4
+     lights the pad MARKINGS — paint on a deck, "this is a berth". Rung 5 lights
+     the strobes — "this berth is live". That is the real distinction on a
+     working field, and it is exactly what POWER & DOCKS should mean.
+
+     Green because nothing else on this station is: the palette runs amber, cyan,
+     magenta and hazard red, so a green marker reads as its own system at a
+     glance instead of as more of the pad lighting.
+
+     They ride in the SAME cloud (still one draw call) but are tracked apart from
+     `byMat`, which stays exactly the set of materials killGlow dimmed — the
+     ledger test that catches a Blender rename must not start matching a name
+     the game invented.
+
+     ⭐ A RING PER BERTH, NOT A DOT. One strobe per pad measured at ~3% of the
+     station — invisible next to the 40% PadGlow already owns. Six on a circle
+     at the pad's own radius reads as a LIT LANDING CIRCLE instead, which is
+     both the real airfield vocabulary and, not by accident, a preview of the
+     lamp posts: standing lights ringing a deck is exactly the shape those want.
+     The radius is the pad's own `ang` (its cone half-width) rather than a
+     number typed here, so a berth resized in Blender re-rings itself. */
+  const berths = [];
+  if (body.pads) {
+    const q = new THREE.Vector3();
+    for (const p of body.pads) {
+      if (p.fill) continue;                 // fill pads hold a ship up, they are not berths
+      const reach = body.cfg.radius * p.top;
+      const ring = (p.ang || 0.09) * reach;  // the pad's own footprint, in world units
+      for (let k = 0; k < BERTH_RING; k++) {
+        const a = (k / BERTH_RING) * Math.PI * 2;
+        q.set(p.dx, p.dy, p.dz).multiplyScalar(reach);
+        // FC's decks are planes facing +Y (cfg.deckN), so the circle lies in XZ
+        q.x += Math.cos(a) * ring;
+        q.z += Math.sin(a) * ring;
+        q.y += BERTH_LIFT;
+        q.applyMatrix4(inv);                // pad table is body-local; the cloud is model-local
+        berths.push(xyzList.length / 3);
+        xyzList.push(q.x, q.y, q.z);
+      }
+    }
+  }
+  const xyzAll = new Float32Array(xyzList);
+  const colAll = new Float32Array(xyzList.length);
+
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(xyz, 3));
-  const attr = new THREE.BufferAttribute(col, 3);
+  geo.setAttribute("position", new THREE.BufferAttribute(xyzAll, 3));
+  const attr = new THREE.BufferAttribute(colAll, 3);
   geo.setAttribute("color", attr);
   const cloud = new THREE.Points(geo, new THREE.PointsMaterial({
     map: getHaloTex(), size: HALO_SIZE, sizeAttenuation: true, vertexColors: true,
@@ -3571,8 +3624,8 @@ function buildGlowHalos(body, model) {
   }));
   cloud.name = "glowHalos";
   model.add(cloud);
-  body.halos = { cloud, byMat, col, attr };
-  return n;
+  body.halos = { cloud, byMat, berths, col: colAll, attr };
+  return xyzList.length / 3;
 }
 
 /* ---- THE CLAIM BEACON (v111) ----------------------------------------------
@@ -10791,8 +10844,16 @@ const STAGES = [
     lights: ["TrimCyanGlow", "TrimMagentaGlow"] },    // the rail strips run the arms
   { name: "THE DECKS",      cr: 4300, goods: { scrap: 2500, ore: 1400 },
     lights: ["PadGlow", "HangarGlow"] },              // the pads light — it can take traffic
+  /* v111.1: `berths` is not a material — it is the approach strobes over each
+     pad, placed off the pad table. MEASURED one material at a time from 5km:
+     the windows and screens this rung buys are worth 6% of the station's light
+     from outside, because they face INWARD. That made this the rung you paid
+     4,700cr and 4,750 units for and then could not see. The strobes are what
+     "DOCKS" was always supposed to mean, and no reordering could have supplied
+     them — PadGlow and NameAmberGlow own 65% of the light between them and
+     neither splits without Blender. */
   { name: "POWER & DOCKS",  cr: 4700, goods: { volatile: 3600, alloy: 1150 },
-    lights: ["WindowGlow", "ScreenGlow"] },           // it is crewed — every window in the hub
+    lights: ["WindowGlow", "ScreenGlow"], berths: true },   // crewed, and every berth goes live
   { name: "THE GATE",       cr: 5000, goods: { contra: 3000, volatile: 1400, alloy: 900,
                                                scrap: 700, ore: 280 },
     lights: ["NameAmberGlow", "NameCyanGlow", "NameMagentaGlow",
@@ -10906,6 +10967,14 @@ function applyBuildLights(body) {
         H.col[k*3 + 1] = c.g * HALO_GAIN;
         H.col[k*3 + 2] = c.b * HALO_GAIN;
       }
+    }
+  // the berth strobes are their own switch, not a material (see STAGES)
+  if (H && H.berths.length &&
+      STAGES.slice(0, buildStage).some(s => s.berths))
+    for (const k of H.berths) {
+      H.col[k*3]     = BERTH_RGB[0] * HALO_GAIN;
+      H.col[k*3 + 1] = BERTH_RGB[1] * HALO_GAIN;
+      H.col[k*3 + 2] = BERTH_RGB[2] * HALO_GAIN;
     }
   if (H) H.attr.needsUpdate = true;
   // rung 1 marks the wreck as yours; nothing retires it afterwards
