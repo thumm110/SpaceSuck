@@ -339,8 +339,23 @@
   .mcHead > span { font-size: 9px; letter-spacing: 1px; color: #6f9382;
                    text-align: center; padding-bottom: 1px; }
   .mcHead > span.on { color: #ffd34d; }
-  .mcGood { display: flex; align-items: center; padding-right: 8px;
+  /* the total sits over the HOLD column, left-aligned with the good names
+     rather than centred over a gauge it does not label */
+  .mcHead > span.mcCargo { text-align: left; color: #9fe8c0; }
+  .mcHead > span.mcCargo.full { color: #ffd34d; }
+  /* v113: the label column carries WHAT YOU ARE HOLDING under the good's name.
+     Stacked rather than inline on purpose — this column is `auto`-width, so one
+     long entry widens it for all five rows, and "CONTRABAND 1,240" would eat
+     the gauges on a phone to say something four characters wide. Vertical costs
+     zero width and the cells are tall enough to take it. */
+  .mcGood { display: flex; flex-direction: column; justify-content: center;
+            align-items: flex-start; padding-right: 8px;
             font-size: 11px; letter-spacing: 1px; white-space: nowrap; }
+  /* Dim by default and lit only when you're carrying — a row you hold none of
+     should read as an empty shelf, not as a zero you have to parse. */
+  .mcGood .hv { font-size: 9px; letter-spacing: 1px; color: #55705f;
+                text-shadow: none; }
+  .mcGood .hv.on { color: #cfe9d8; }
   /* a CELL is a small lit window, and the fill behind the number IS the gauge —
      scaled to the best rate in its own ROW, so a glance across a row says who
      wants this good without reading a single number. Keeping the gauge as a
@@ -405,6 +420,165 @@
     #mcRead { padding: 6px 10px; gap: 8px; }
     #mcRead .big { font-size: 18px; }
     #mcRead .lbl { font-size: 11px; }
+    .mcGood .hv { font-size: 8px; }
+  }
+
+  /* ---- THE YARD (v113): the construction readout you can carry ----------
+     His 15 Aug idea: "the pause menu should display the data for the players FC
+     build. How much is complete, what stage, what is needed." Same argument the
+     exchange won on — the manifest only exists standing on an FC deck, so the
+     one thing you carry into a routing decision is whatever you remember of a
+     bill five goods wide. This is that bill, readable anywhere.
+
+     ⛔ READ-ONLY, AND HARDER READ-ONLY THAN THE EXCHANGE. There is no POUR here
+     and there is no PAY. The manifest is where the hold leaves the ship, and
+     that has to stay a thing you did standing on the deck you flew to — a
+     station you could build from the pause menu is a station you never visit,
+     which deletes the flight the whole 20-hour layer is made of.
+
+     ⛔ AND NO PERCENTAGE. "37% complete" can only be computed by valuing goods
+     against credits, and the one law this panel inherits is that the bill is
+     stated in UNITS. Progress reads as RUNG n OF 6 plus per-line bars inside
+     the current rung, which is units over units and cannot leak a rate.
+
+     It wears the exchange's bezel in the manifest's amber: same instrument
+     family, visibly a different machine. Sits at z42, one above the exchange,
+     so whichever you opened last owns the arrows. */
+  #station {
+    position: fixed; inset: 0; z-index: 42; display: none;
+    align-items: center; justify-content: center;
+    font-family: "Lucida Console", Monaco, monospace; color: #e8d09f;
+    background: rgba(0,0,0,.66);
+  }
+  #stationPanel {
+    display: flex; flex-direction: column; gap: 9px;
+    padding: 15px; box-sizing: border-box;
+    width: min(760px, 96vw); max-height: 94vh; overflow-y: auto;
+    border: 3px solid #3a3324; border-radius: 10px;
+    background-image:
+      radial-gradient(circle at 11px 11px, #524730 0 2.5px, transparent 3px),
+      radial-gradient(circle at calc(100% - 11px) 11px, #524730 0 2.5px, transparent 3px),
+      radial-gradient(circle at 11px calc(100% - 11px), #524730 0 2.5px, transparent 3px),
+      radial-gradient(circle at calc(100% - 11px) calc(100% - 11px), #524730 0 2.5px, transparent 3px),
+      linear-gradient(#221d14, #12100a);
+    box-shadow: 0 0 0 1px rgba(255,211,77,.18) inset,
+                0 12px 44px rgba(0,0,0,.65), 0 0 34px rgba(255,211,77,.10);
+  }
+  #stationTitle {
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    padding: 7px 16px; font-size: 13px; letter-spacing: 5px; color: #ffd34d;
+    background: #120f09; border: 1px solid #3a3324; border-radius: 4px;
+    box-shadow: 0 1px 0 rgba(255,211,77,.10) inset;
+    text-shadow: 0 0 10px rgba(255,211,77,.45);
+  }
+  #stationTitle .lamp { width: 7px; height: 7px; border-radius: 50%;
+                        background: #ffd34d; box-shadow: 0 0 9px rgba(255,211,77,.8); }
+  #stationTitle .sub { font-size: 9px; letter-spacing: 2px; color: #7a6a46; }
+  /* the ladder as a rotary — one detent per rung, and it is the progress bar.
+     A lit lamp is a rung that is PAID FOR, which is the same reading the
+     station itself gives you from 5km out (§9). */
+  #stSel { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+  .stDent {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    padding: 6px 9px 5px; min-width: 60px; cursor: pointer;
+    font-size: 9px; letter-spacing: 1px; color: #7a6a46; white-space: nowrap;
+    background: linear-gradient(#1d1810, #14100a);
+    border: 1px solid #3a3324; border-radius: 4px;
+    box-shadow: 0 1px 0 rgba(255,255,255,.05) inset, 0 2px 0 #0b0906;
+  }
+  .stDent .lamp { width: 6px; height: 6px; border-radius: 50%;
+                  background: #2b2418; box-shadow: 0 0 0 1px #0b0906 inset; }
+  .stDent .rn { font-size: 12px; letter-spacing: 1px; color: #a2905f; }
+  /* THREE states, not two, and the third is what makes it a progress bar:
+     `done` is bought and lit, `now` is the rung the money is going into, and
+     bare is not started. Two states would put "building" and "untouched" in the
+     same costume, which is the one distinction this panel exists to draw. */
+  .stDent.done { color: #ffd34d; border-color: rgba(255,211,77,.5); }
+  .stDent.done .lamp { background: #ffd34d; box-shadow: 0 0 9px rgba(255,211,77,.9); }
+  .stDent.done .rn { color: #ffd34d; }
+  .stDent.now { border-color: rgba(255,211,77,.75);
+                background: linear-gradient(#31281a, #1d1710);
+                box-shadow: 0 0 14px rgba(255,211,77,.18) inset, 0 1px 0 #0b0906; }
+  .stDent.now .lamp { background: #8a6f22; box-shadow: 0 0 7px rgba(255,211,77,.45); }
+  .stDent.now .rn { color: #ffe9a8; }
+  .stDent.sel { box-shadow: 0 0 0 1px #ffd34d, 0 0 14px rgba(255,211,77,.35); }
+  /* the bill. Four columns: good · what the rung wants · the gauge · what you
+     are carrying. The gauge is IN FRAME over NEED — units over units. */
+  #stGrid { display: grid; grid-template-columns: auto auto 1fr auto; gap: 4px 10px;
+            align-items: center; }
+  .stRow { display: contents; }
+  .stRow .g  { font-size: 11px; letter-spacing: 1px; white-space: nowrap; }
+  .stRow .f  { font-size: 11px; color: #cbb98c; white-space: nowrap; }
+  .stRow .h  { font-size: 10px; letter-spacing: 1px; color: #7a6a46;
+               text-align: right; white-space: nowrap; }
+  .stRow .h.on { color: #cfe9d8; }
+  /* .stRow .g wins on specificity over a bare `.stHead > span`, so the header
+     has to out-weigh it or it renders at the bill's own size and stops reading
+     as a header at all. */
+  .stRow.stHead > span { font-size: 9px; letter-spacing: 1px; color: #7a6a46; }
+  .stRow.stHead > span.h { text-align: right; }
+  /* the bar. Two fills in one track: the SOLID part is what is already in the
+     frame, the ghost behind it is what the hold you are flying would add if you
+     poured it. That second number is the whole reason to read this in flight —
+     "does this load close the rung" is the question, and a bar that only showed
+     the frame could never answer it. */
+  .stBar { position: relative; height: 9px; overflow: hidden;
+           background: #0b0906; border: 1px solid #2b2418; border-radius: 3px; }
+  .stBar i { position: absolute; left: 0; top: 0; bottom: 0; display: block; }
+  .stBar .have { background: rgba(255,211,77,.68);
+                 box-shadow: 0 0 8px rgba(255,211,77,.35); }
+  .stBar .would { background: repeating-linear-gradient(115deg,
+                    rgba(255,211,77,.26) 0 3px, rgba(255,211,77,.07) 3px 6px); }
+  .stRow.met .f { color: #ffd34d; }
+  .stRow.met .stBar .have { background: #ffd34d; }
+  #stRead {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    padding: 9px 14px; background: #0c0a06;
+    border: 1px solid #3a3324; border-radius: 4px;
+    box-shadow: 0 0 20px rgba(255,211,77,.09) inset;
+  }
+  #stRead .lbl { font-size: 12px; letter-spacing: 2px; color: #e8d09f; }
+  #stRead .at  { font-size: 10px; color: #7a6a46; }
+  #stRead .cmp { font-size: 10px; letter-spacing: 1px; color: #a2905f; }
+  #stRead .cmp.top { color: #ffd34d; text-shadow: 0 0 8px rgba(255,211,77,.4); }
+  /* the one big number, pushed right the way the exchange's is. `of` is
+     deliberately small and dim: "3" is the reading, "/6" is the scale. */
+  #stRead .big { margin-left: auto; font-size: 23px; letter-spacing: 2px;
+                 color: #ffd34d; text-shadow: 0 0 15px rgba(255,211,77,.55); }
+  #stRead .big .of { font-size: 13px; letter-spacing: 1px; color: #7a6a46;
+                     text-shadow: none; }
+  #stRead .big.top { color: #ffe9a8; }
+  /* ⚠ WRAPS, and it has to — the same reason the manifest's footer does. Five
+     goods and a credit figure will not sit on one phone line, and `qty()` glues
+     each number to its noun with a non-breaking space so a wrap can never land
+     between "3,600" and "VOLATILES". */
+  #stShort { font-size: 10px; letter-spacing: 1px; line-height: 1.7;
+             color: #a2905f; white-space: normal; }
+  #stShort b { color: #ffd34d; font-weight: normal; }
+  #stShort.ready { color: #ffd34d; text-shadow: 0 0 9px rgba(255,211,77,.35); }
+  /* the rungs still ahead. §5's "the bill forces the route" only pays if you
+     can see the bill before you fly, and the pad version only shows the NEXT
+     one — from here you can see the whole campaign. */
+  #stAhead { display: flex; flex-direction: column; gap: 3px;
+             padding-top: 2px; border-top: 1px solid #2b2418; }
+  #stAhead .ln { font-size: 9px; letter-spacing: 1px; color: #7a6a46;
+                 line-height: 1.6; white-space: normal; }
+  #stAhead .ln b { color: #cbb98c; font-weight: normal; }
+  #stFoot { display: flex; align-items: center; gap: 12px; }
+  #stHint { font-size: 9px; letter-spacing: 1px; color: #7a6a46; line-height: 1.6; }
+  #stFoot .ss-btn { margin-left: auto; padding: 7px 18px;
+                    font-size: 12px; letter-spacing: 3px; }
+  @media (max-height: 560px), (max-width: 620px) {
+    #stationPanel { padding: 10px; gap: 6px; }
+    #stationTitle { font-size: 11px; letter-spacing: 3px; padding: 5px 10px; }
+    #stationTitle .sub { display: none; }
+    .stDent { min-width: 48px; padding: 4px 6px 4px; font-size: 8px; }
+    .stDent .rn { font-size: 11px; }
+    #stGrid { gap: 3px 7px; }
+    .stRow .g, .stRow .f { font-size: 10px; }
+    #stRead { padding: 6px 10px; gap: 8px; }
+    #stRead .lbl { font-size: 11px; }
+    #stRead .big { font-size: 18px; }
   }
 
   #hud {
@@ -1231,6 +1405,7 @@
     <button id="settingsCtrlsToggle" type="button">CONTROLS ▾</button>
     <div id="settingsCtrls"></div>
     <button id="btnMarketPause" type="button" class="ss-btn sub">MARKET</button>
+    <button id="btnStationPause" type="button" class="ss-btn sub">STATION</button>
     <button id="btnFleetPause" type="button" class="ss-btn sub">FLEET</button>
     <button id="btnResume" type="button" class="ss-btn sub">CLOSE</button>
   </div>
@@ -1266,6 +1441,26 @@
     </div>
   </div>
 </div>
+<!-- v113: THE YARD — the construction readout, carried. The manifest's bill for
+     every rung, what is already in the frame, and what the hold you are flying
+     would close, readable anywhere. Read-only twice over: no POUR, no PAY, and
+     no percentage (see the CSS note). Built by refreshStationConsole off STAGES
+     and GOOD_IDS, so a re-priced rung or a sixth good appears here for free.
+     Sits above the exchange (z42 > 41 > 40 > 30). -->
+<div id="station">
+  <div id="stationPanel">
+    <div id="stationTitle"><span class="lamp"></span>THE YARD<span class="sub">FLEET COMMAND</span><span class="lamp"></span></div>
+    <div id="stSel"></div>
+    <div id="stRead"></div>
+    <div id="stGrid"></div>
+    <div id="stShort"></div>
+    <div id="stAhead"></div>
+    <div id="stFoot">
+      <span id="stHint">◄ ► RUNG · ENTER/Ⓐ CURRENT RUNG<br>READ-ONLY — YOU POUR ON THE DECK AT FLEET COMMAND</span>
+      <button id="btnStationClose" type="button" class="ss-btn sub">CLOSE ✕</button>
+    </div>
+  </div>
+</div>
 <div id="atmo"></div>
 <canvas id="navhud"></canvas>
 <div id="damageflash"></div>
@@ -1284,7 +1479,8 @@
       <b>A / D</b> roll · <b>← / →</b> turn · <b>↑ / ↓</b> nose down / up<br>
       <b>SHIFT</b> boost · <b>SPACE</b> fire · <b>V</b> view (cockpit / chase / cinematic)<br>
       <b>E</b> answer a hail — hire a neutral raider as your wingman<br>
-      <b>R</b> market rates — every port's standing price, anywhere (freezes the world)
+      <b>R</b> market rates — every port's standing price, anywhere (freezes the world)<br>
+      <b>B</b> the yard — what FLEET COMMAND still wants, and what your hold closes
       <div class="grp">MOUSE</div>
       <b>Click</b> capture — steer · <b>ESC</b> release<br>
       <b>Right-drag</b> orbit camera · <b>Wheel</b> zoom
@@ -11459,6 +11655,11 @@ addEventListener("keydown", e => {
      opens a table, and it freezes the world on its way in rather than reading
      through a frozen one. [M] was the mnemonic and music already had it. */
   if (e.code === "KeyR" && !keys["KeyR"]) toggleMarketConsole();
+  /* v113 — [B] BUILD: the yard, from anywhere. Ungated for the same reason [R]
+     is: it opens a table and freezes the world on its way in rather than
+     reading through a frozen one — and unlike the manifest it cannot spend
+     anything, so there is no pad-side exploit for a frozen game to reach. */
+  if (e.code === "KeyB" && !keys["KeyB"]) toggleStationConsole();
   if (e.code === "Space") e.preventDefault();           // Space fires; don't scroll
   /* ---- the arrows drive whichever menu is up (v85) ----
      Front door: up/down walks the list, left/right changes ship, ENTER acts.
@@ -12869,6 +13070,7 @@ const settingsRowEls = [
   document.getElementById("volEngine"),
   document.getElementById("settingsCtrlsToggle"),
   document.getElementById("btnMarketPause"),
+  document.getElementById("btnStationPause"),   // v113: THE YARD
   document.getElementById("btnFleetPause"),
   btnResumeEl,
 ];
@@ -13003,7 +13205,12 @@ function refreshMarketConsole() {
          (ports[i].home ? " ⌂" : "") + "</div>";
   mcSelEl.innerHTML = s;
 
-  let h = '<div class="mcRow mcHead"><span></span>';
+  /* The head row's top-left cell used to be a spacer. It sits directly over the
+     HOLD figures, which makes it the only honest place for the total — and the
+     total is the one number the per-row breakdown can't give you, because
+     "full is full" is a rule about the SUM. */
+  let h = '<div class="mcRow mcHead"><span class="mcCargo' +
+          (cargo >= holdMax ? " full" : "") + '">CARGO ' + cm(cargo) + " / " + cm(holdMax) + "</span>";
   for (let i = 0; i < ports.length; i++)
     h += "<span" + (i === mcPort ? ' class="on"' : "") + ">" + portShort(ports[i]) + "</span>";
   h += "</div>";
@@ -13015,8 +13222,16 @@ function refreshMarketConsole() {
        across says who wants this good, which is the question the panel is for. */
     let max = 0;
     for (const p of ports) max = Math.max(max, mcCents(p, g));
+    /* v113, his 15 Aug idea: "The Market should also display the player's
+       current holdings so he can reference them against the chart." The panel
+       was already the map; without this you still had to hold your own cargo in
+       your head while reading it, which is the half of the routing decision the
+       table can't supply. Still read-only — `hold` is displayed, never touched,
+       and no rate in any dict moves. */
     h += '<div class="mcRow"><span class="mcGood" style="color:' +
-         GOODS[g].color + '">' + GOODS[g].name + "</span>";
+         GOODS[g].color + '"><span class="nm">' + GOODS[g].name + "</span>" +
+         '<span class="hv' + (hold[g] > 0 ? " on" : "") + '">' +
+         (hold[g] > 0 ? "HOLD " + cm(hold[g]) : "—") + "</span></span>";
     for (let i = 0; i < ports.length; i++) {
       const c = mcCents(ports[i], g);
       h += '<div class="mcCell' + (max && c === max ? " best" : "") +
@@ -13041,12 +13256,22 @@ function refreshMarketConsole() {
      as what the best pays over this one, because the number you are standing on
      is the one you're deciding about. "−73% vs RUSTHOLLOW" is a reason to fly. */
   const top = bestC > 0 && c >= bestC;
+  /* v113: what the load you are ACTUALLY CARRYING is worth at the port you have
+     dialled in — the reason to put holdings on the chart at all. Integer cents
+     throughout, same as every other figure here, so the multiply can't drift.
+     ⚠ It is an ESTIMATE and the footer already says why: this panel quotes the
+     static base, the pad quotes the struck price against your own saturation.
+     Shown only when you're carrying, because "0 × 1.50 = 0.00" is a line of
+     arithmetic that tells you nothing. */
+  const n = hold[g];
   mcReadEl.innerHTML =
     '<span class="lbl" style="color:' + GOODS[g].color + '">' + GOODS[g].name + "</span>" +
     '<span class="at">AT</span><span class="lbl">' + p.name + "</span>" +
     '<span class="cmp' + (top ? " top" : "") + '">' +
       (top ? "◆ BEST IN SYSTEM" : "−" + Math.round((1 - c / bestC) * 100) + "% vs " + portShort(bestP)) +
     "</span>" +
+    (n > 0 ? '<span class="at">HOLD ' + cm(n) + " ≈</span>" +
+             '<span class="cmp">' + cm(Math.round(n * c / 100)) + " CR</span>" : "") +
     '<span class="big">' + (c / 100).toFixed(2) + "</span>";
 }
 /* a dry detent click. Short and quiet on purpose — this panel is read in long
@@ -13135,7 +13360,10 @@ mcGridEl.addEventListener("click", e => {
    flag is never set, so a sweep across the table can't leave the hull turning
    when you close the panel. */
 addEventListener("keydown", e => {
-  if (!marketConsoleOpen()) return;
+  // v113: THE YARD sits one above this panel, and the arrows follow the z-order
+  // the same way the pad polls do. Without this line an ArrowLeft aimed at the
+  // rung ladder would also dial a port on the table underneath it.
+  if (!marketConsoleOpen() || stationConsoleOpen()) return;
   if (e.key === "Escape") { closeMarketConsole(); e.stopImmediatePropagation(); return; }
   // edge-detected like the v85 accordion: a held arrow doesn't repeat. Five
   // ports and five goods both wrap, so nothing is ever more than two presses away.
@@ -13146,6 +13374,221 @@ addEventListener("keydown", e => {
   else if (e.code === "ArrowUp") mcMove(0, -1);
   else if (e.code === "ArrowDown") mcMove(0, 1);
   else if (e.code === "Enter") mcSeek();
+  else hit = false;
+  if (hit) { e.preventDefault(); e.stopImmediatePropagation(); }
+}, true);
+
+/* ---- THE YARD (v113, his 15 Aug idea) ---------------------------------
+   "I think the pause menu should display the data for the players FC build.
+   How much is complete, what stage, what is needed."
+
+   The exchange's argument, one panel over. The manifest only exists standing on
+   an FC deck, so the bill — five goods wide on the last rung — was carried in
+   your head or not at all, and §5's whole claim is that THE BILL FORCES THE
+   ROUTE. A route you have to remember to plan is a route you plan wrong.
+
+   ⛔ IT MOVES NOTHING. No POUR, no PAY, no rate, no credit. `buildStage`,
+   `buildPaid`, `buildPour` and `hold` are all read and none are written, and
+   saveBuild() is never called from this file section. The manifest keeps the
+   only door the hold can leave by, and it is on a deck you flew to — a station
+   you could build from the pause menu is a station you would never visit.
+
+   ⛔ AND IT SHOWS NO PERCENTAGE, which is the trap this panel had to dodge.
+   "How much is complete" wants to be one number, and one number across six
+   rungs of mixed goods can only exist by valuing ORE against credits. That is
+   the exact thing the manifest is forbidden to do — the bill is stated in
+   UNITS. So completion reads as RUNG n OF 6 (the same reading the lit station
+   gives you from 5km out) plus bars INSIDE a rung, which are units over units.
+
+   ⭐ The bar carries TWO fills: solid is what is already in the frame, hatched
+   is what the hold you are flying right now would add on top. That second one
+   is the reason to open this in flight at all — "does this load close the rung"
+   is the question, and a bar showing only the frame could never answer it. */
+const stationConsoleEl = document.getElementById("station");
+const stSelEl   = document.getElementById("stSel");
+const stReadEl  = document.getElementById("stRead");
+const stGridEl  = document.getElementById("stGrid");
+const stShortEl = document.getElementById("stShort");
+const stAheadEl = document.getElementById("stAhead");
+const stationConsoleOpen = () => stationConsoleEl.style.display === "flex";
+let stRung = 0;                  // which rung the ladder is dialled to
+
+/* The bill lines for ANY rung, not just the current one — bldLines() only ever
+   speaks about `buildStage`, and this panel's whole job is letting you read
+   ahead. `got` is real progress on the rung being built and flat zero on one
+   that hasn't started, because buildPour is scoped to the current rung. */
+function stLines(i) {
+  const st = STAGES[i];
+  if (!st) return [];
+  return Object.keys(st.goods).map(g => ({
+    g, need: st.goods[g],
+    got: i === buildStage ? buildPour[g] : (i < buildStage ? st.goods[g] : 0),
+  }));
+}
+
+function refreshStationConsole() {
+  const done = buildStage >= STAGES.length;
+  // clamp rather than wrap. Six rungs are a LADDER, not a rotary — rolling off
+  // "THE GATE" back onto "SALVAGE RIGHTS" reads as an ordering that isn't one.
+  stRung = Math.max(0, Math.min(STAGES.length - 1, stRung));
+  const st = STAGES[stRung], lines = stLines(stRung);
+  const isNow = stRung === buildStage, isDone = stRung < buildStage;
+
+  // ---- the ladder: one detent per rung, lit = paid for
+  let s = "";
+  for (let i = 0; i < STAGES.length; i++)
+    s += '<div class="stDent' + (i < buildStage ? " done" : "") +
+         (i === buildStage ? " now" : "") + (i === stRung ? " sel" : "") +
+         '" data-rung="' + i + '">' +
+         '<span class="lamp"></span><span class="rn">' + (i + 1) + "</span></div>";
+  stSelEl.innerHTML = s;
+
+  // ---- the readout: where you are on the ladder, and where the cursor is
+  /* The left half is WHERE THE CURSOR IS, the right half is HOW FAR IN YOU ARE
+     — and the right half is the answer to his actual question, "how much is
+     complete". It is a COUNT OF RUNGS, which is the only honest single figure
+     this panel can carry: any finer measure would have to weigh ORE against
+     credits, and that is the line the manifest cannot cross. It also happens to
+     be the same reading the lit station gives you from 5km out. */
+  const crShort = isNow ? bldCrShort() : (isDone ? 0 : st.cr);
+  stReadEl.innerHTML =
+    '<span class="lbl">RUNG ' + (stRung + 1) + " · " + st.name + "</span>" +
+    '<span class="cmp' + (isDone ? " top" : "") + '">' +
+      (isDone ? "◆ BUILT" : isNow ? "◆ BUILDING NOW" : "NOT STARTED") + "</span>" +
+    '<span class="big' + (done ? " top" : "") + '">' + buildStage +
+      '<span class="of">/' + STAGES.length + "</span></span>" +
+    '<span class="at">' + (done ? "THE GATE IS LIT" : "RUNGS BUILT") + "</span>";
+
+  // ---- the bill
+  let h = '<div class="stRow stHead"><span class="g">BILL</span>' +
+          '<span class="f">IN FRAME</span><span></span><span class="h">HOLD</span></div>';
+  {
+    // CREDITS first here, where the manifest puts it last. On the pad the goods
+    // are what you press, so money sits at the bottom of the reach; reading
+    // ahead, the credit figure is the one that decides whether the rung is even
+    // worth flying for, so it leads.
+    const met = crShort <= 0, paid = isDone ? st.cr : (isNow ? buildPaid : 0);
+    h += '<div class="stRow' + (met ? " met" : "") + '">' +
+         '<span class="g" style="color:#ffd34d">CREDITS</span>' +
+         '<span class="f">' + cm(paid) + " / " + cm(st.cr) + "</span>" +
+         '<span class="stBar">' +
+           '<i class="would" style="width:' + stPct(paid + banked, st.cr) + '%"></i>' +
+           '<i class="have" style="width:' + stPct(paid, st.cr) + '%"></i>' +
+         "</span>" +
+         '<span class="h' + (banked > 0 ? " on" : "") + '">' + cm(banked) + "</span></div>";
+  }
+  for (const L of lines) {
+    const met = L.got >= L.need, n = hold[L.g];
+    h += '<div class="stRow' + (met ? " met" : "") + '">' +
+         '<span class="g" style="color:' + GOODS[L.g].color + '">' + GOODS[L.g].name + "</span>" +
+         '<span class="f">' + cm(L.got) + " / " + cm(L.need) + "</span>" +
+         '<span class="stBar">' +
+           '<i class="would" style="width:' + stPct(L.got + n, L.need) + '%"></i>' +
+           '<i class="have" style="width:' + stPct(L.got, L.need) + '%"></i>' +
+         "</span>" +
+         '<span class="h' + (n > 0 ? " on" : "") + '">' + (n > 0 ? cm(n) : "—") + "</span></div>";
+  }
+  stGridEl.innerHTML = h;
+
+  /* ---- the one-line answer, and it is the manifest's footer question asked
+     from the air instead of from the deck: WOULD THIS LOAD CLOSE IT. Only the
+     rung actually being built can be closed, so a rung you are reading ahead to
+     gets told what it will want, not what it is missing. */
+  if (done) {
+    stShortEl.className = "ready";
+    stShortEl.innerHTML = "THE GATE IS LIT · <b>SYSTEM 2</b> IS NOT OPEN";
+  } else if (isDone) {
+    stShortEl.className = "ready";
+    stShortEl.innerHTML = "RUNG <b>" + (stRung + 1) + "</b> IS PAID FOR AND LIT";
+  } else if (!isNow) {
+    stShortEl.className = "";
+    stShortEl.innerHTML = "WILL WANT <b>" + [
+      cm(st.cr) + " CREDITS",
+      ...lines.map(L => qty(L.need, L.g)),
+    ].join("</b> · <b>") + "</b>";
+  } else {
+    let canClose = crShort <= banked;
+    const missing = [];
+    for (const L of lines) {
+      const short = L.need - L.got - hold[L.g];
+      if (short > 0) { canClose = false; missing.push(qty(short, L.g)); }
+    }
+    if (crShort > banked) missing.unshift(cm(crShort - banked) + " CREDITS");
+    stShortEl.className = canClose ? "ready" : "";
+    stShortEl.innerHTML = canClose
+      ? "THIS LOAD CLOSES <b>RUNG " + (buildStage + 1) + "</b> · FLY IT TO FLEET COMMAND"
+      : "STILL SHORT <b>" + missing.join("</b> · <b>") + "</b>";
+  }
+
+  /* ---- the rungs still ahead, whole. The pad's manifest shows exactly ONE
+     rung forward, which is enough to load the next run and not enough to plan a
+     campaign — and the campaign is what 50,000 credits buys. */
+  let a = "";
+  for (let i = buildStage + (done ? 0 : 1); i < STAGES.length; i++) {
+    const g = Object.keys(STAGES[i].goods).map(k => qty(STAGES[i].goods[k], k)).join(" · ");
+    a += '<div class="ln">RUNG ' + (i + 1) + " · <b>" + STAGES[i].name + "</b> · " +
+         cm(STAGES[i].cr) + " CREDITS" + (g ? " · " + g : "") + "</div>";
+  }
+  stAheadEl.innerHTML = a;
+}
+// a width in percent, clamped — `hold` can overshoot a line by a long way and a
+// 340%-wide fill would paint straight out of its track.
+function stPct(n, of) { return of <= 0 ? 100 : Math.max(0, Math.min(100, (n / of) * 100)); }
+
+function stMove(d) {
+  stRung += d;
+  refreshStationConsole();
+  mcClickSound(false);      // the exchange's detent click — one instrument family
+}
+// ENTER / Ⓐ — snap back to the rung the money is actually going into. The one
+// press that undoes a read-ahead, and it is still read-only: it moves a cursor.
+function stHome() {
+  stRung = Math.min(buildStage, STAGES.length - 1);
+  refreshStationConsole();
+  mcClickSound(true);
+}
+function stPadNav(nav) {
+  if (nav.left)  stMove(-1);
+  if (nav.right) stMove(1);
+  if (nav.act)   stHome();
+}
+/* Same two-door open as the exchange, and the same flag for the same reason: it
+   goes through openSettings() so there is still exactly ONE pause path in the
+   file, and if the pause menu was ALREADY up then we froze nothing, so closing
+   must not thaw it. */
+let stPausedUs = false;
+function openStationConsole() {
+  if (gameStarted && !paused) { openSettings(); stPausedUs = true; }
+  stHome();                 // always opens on the rung you are building
+  stationConsoleEl.style.display = "flex";
+}
+function closeStationConsole() {
+  stationConsoleEl.style.display = "none";
+  if (stPausedUs) { closeSettings(); stPausedUs = false; }
+}
+function toggleStationConsole() {
+  stationConsoleOpen() ? closeStationConsole() : openStationConsole();
+}
+document.getElementById("btnStationPause").addEventListener("click", openStationConsole);
+document.getElementById("btnStationClose").addEventListener("click", closeStationConsole);
+// the detents are real controls, so a click or a tap dials them — same as the
+// exchange's ports, so pad, key and glass all move the one cursor
+stSelEl.addEventListener("click", e => {
+  const d = e.target.closest(".stDent");
+  if (!d) return;
+  stRung = +d.dataset.rung; refreshStationConsole(); mcClickSound(false);
+});
+// Capture-phase for the same two reasons the exchange's is: the main handler's
+// nav block is gated on `!paused`, and swallowing the arrows is what stops a
+// sweep across the ladder leaving the hull turning when you close the panel.
+addEventListener("keydown", e => {
+  if (!stationConsoleOpen()) return;
+  if (e.key === "Escape") { closeStationConsole(); e.stopImmediatePropagation(); return; }
+  if (e.repeat) return;
+  let hit = true;
+  if (e.code === "ArrowLeft") stMove(-1);
+  else if (e.code === "ArrowRight") stMove(1);
+  else if (e.code === "Enter") stHome();
   else hit = false;
   if (hit) { e.preventDefault(); e.stopImmediatePropagation(); }
 }, true);
@@ -13190,12 +13633,14 @@ function animate() {
       const mgp = navigator.getGamepads()[padIndex];
       if (mgp) {
         const nav = navEdges(mgp);
-        /* Whoever is on top owns the same five motions — market console 41,
-           fleet registry 40, settings 30, the front door itself 20. Without the
-           ordering a pad left/right still read as "change ship" through an open
-           panel: the hull swapping behind a table you're reading, which is the
-           same two-things-own-one-input tell v85 fixed for the dock. */
-        if (marketConsoleOpen()) { mcPadNav(nav); if (nav.back) closeMarketConsole(); }
+        /* Whoever is on top owns the same five motions — the yard 42, market
+           console 41, fleet registry 40, settings 30, the front door itself 20.
+           Without the ordering a pad left/right still read as "change ship"
+           through an open panel: the hull swapping behind a table you're
+           reading, which is the same two-things-own-one-input tell v85 fixed
+           for the dock. */
+        if (stationConsoleOpen()) { stPadNav(nav); if (nav.back) closeStationConsole(); }
+        else if (marketConsoleOpen()) { mcPadNav(nav); if (nav.back) closeMarketConsole(); }
         else if (fleetEl.style.display === "flex") { if (nav.back) closeFleet(); }
         else if (settingsOpen()) settingsPadNav(nav);
         else {
@@ -13332,12 +13777,13 @@ function animate() {
     if (cgp) {
       const nav = navEdges(cgp);
       /* v105 — WHOEVER IS ON TOP OWNS THE FIVE MOTIONS, and the branches run in
-         z-order: market console 41, fleet registry 40, settings 30. Opening the
-         console from flight opens THIS panel underneath it (see mcPausedUs), so
-         without the ordering a press meant for the table would also be walking
-         the mixer behind it — two things owning one input, the same tell v85
-         fixed for the dock. */
-      if (marketConsoleOpen()) { mcPadNav(nav); if (nav.back) closeMarketConsole(); }
+         z-order: the yard 42, market console 41, fleet registry 40, settings
+         30. Opening either console from flight opens THIS panel underneath it
+         (see mcPausedUs / stPausedUs), so without the ordering a press meant
+         for the table would also be walking the mixer behind it — two things
+         owning one input, the same tell v85 fixed for the dock. */
+      if (stationConsoleOpen()) { stPadNav(nav); if (nav.back) closeStationConsole(); }
+      else if (marketConsoleOpen()) { mcPadNav(nav); if (nav.back) closeMarketConsole(); }
       else if (fleetEl.style.display === "flex") {
         /* The registry is an iframe, so there is nothing in it this poll can
            drive. B still has to work: the pad can now OPEN this panel from the
