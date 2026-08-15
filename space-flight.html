@@ -3443,6 +3443,182 @@ function killGlow(model, mats) {
   return n;
 }
 
+/* ---- THE HALOS (v111) -----------------------------------------------------
+   Tanner, off the stage renders: "I can not tell a difference in the first 3
+   stages. The first change I notice is when the rail lights come on."
+
+   He was right, and the reason is that THIS GAME HAS NO BLOOM — there is no
+   post-processing pass anywhere in it. Every glow you have ever seen (thruster
+   burners, bandit strobes, the sun) is a hand-placed additive billboard. A
+   `*Glow` material only paints its OWN SURFACE bright, so a light reads at
+   range only if it covers enough pixels by itself. MEASURED: the trim rails
+   span 760u of a 1,479u station, so they read; the work lights are a 90u patch,
+   so at 5km they are a couple of dim pixels and rung 2 looked exactly like rung
+   0. The dead comm satellite already carries the fix in its own comment — a
+   blinking beacon "reads as satellite from any range" — and it is 5u across.
+   The 1,479u station had no billboards on it at all.
+
+   So: one billboard per light fixture, discovered off the model.
+
+   ⚠️ ONE POINTS CLOUD, NOT ~400 SPRITES. A sprite each is a draw call each, on
+   the heaviest asset in the game. THREE.Points draws the lot in one.
+
+   ⭐ ON/OFF IS THE COLOUR BUFFER, NOT VISIBILITY. Blending is additive, so a
+   BLACK point adds nothing and is exactly invisible. That is what makes a
+   per-point SIZE (i.e. a custom shader) unnecessary — writing colours is the
+   whole switching mechanism, and PointsMaterial does vertexColors for free.
+
+   Positions are grid-clustered out of the glow geometry itself. The join pass
+   welded every arm into one mesh per material but it did not MOVE the vertices,
+   so each fixture is still there as a clump of them — which is why this works
+   on the shipped .glb when per-arm trim lighting cannot. A cluster is a place;
+   a material is a handle. See draw-call-join-pass.
+
+   Colour is read off the material's own emissive, the same discovery rule as
+   the ships' burners: re-tint a light in Blender and its halo follows for free.
+   Two of the thirteen (`SignPanel*Glow`, authored #00050d and #090004) are
+   near-black on purpose, so they self-cancel to nothing and need no case. */
+const HALO_CELL = 4;      // model-local units (~40 world) — the grid a fixture clusters into
+const HALO_SIZE = 36;     // WORLD units across. PointsMaterial size ignores parent
+                          // scale, so this is not multiplied by the model's 10.007
+const HALO_GAIN = 0.8;    // how hot a lit halo burns, on top of its emissive colour
+/* ⚠️ MEASURED: a cluster centre sits ON the surface it was averaged from, and
+   depth test is still on (turning it off would shine the far side of the
+   station through the hull). A point is drawn at one depth, so a coplanar halo
+   loses the test outright and renders NOTHING — which is what made rung 2 come
+   out byte-identical to rung 1 on the first pass. Floating it off along the
+   averaged normal is also just what a real lamp's glow does. */
+const HALO_LIFT = 0.6;    // model-local units out along the fixture's own normal
+let haloTex = null;       // lazy: softBlobTexture exists by now, boltGlowTex does not yet
+function getHaloTex() {
+  return haloTex || (haloTex = softBlobTexture("rgba(255,255,255,0.95)"));
+}
+
+/* Walk one mesh's glow vertices, resolving WHICH material each belongs to.
+   Geometry groups index into the INDEX buffer when there is one, not into
+   position — get that backwards and a multi-material mesh silently attributes
+   its vertices to the wrong light. FC has none today; this is what keeps that
+   from being a landmine the day Blender emits one. */
+function eachGlowVertex(o, cb) {
+  const geo = o.geometry, pos = geo.attributes.position;
+  if (!pos) return;
+  const mats = Array.isArray(o.material) ? o.material : [o.material];
+  const idx = geo.index, total = idx ? idx.count : pos.count;
+  const groups = (geo.groups && geo.groups.length)
+    ? geo.groups : [{ start: 0, count: total, materialIndex: 0 }];
+  for (const g of groups) {
+    const m = mats[g.materialIndex || 0];
+    if (!m || !/Glow$/.test(m.name || "")) continue;
+    const end = Math.min(g.start + g.count, total);
+    for (let j = g.start; j < end; j++) cb(idx ? idx.getX(j) : j, m);
+  }
+}
+
+function buildGlowHalos(body, model) {
+  model.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(model.matrixWorld).invert();
+  const buckets = new Map();
+  const v = new THREE.Vector3(), nv = new THREE.Vector3();
+  const localM = new THREE.Matrix4(), nMat = new THREE.Matrix3();
+  model.traverse(o => {
+    if (!o.isMesh || !o.geometry) return;
+    const pos = o.geometry.attributes.position;
+    const nrm = o.geometry.attributes.normal;
+    // this mesh's vertices straight into MODEL-local, normals with the matching
+    // normal matrix (transpose of the inverse — a plain matrix skews normals)
+    localM.multiplyMatrices(inv, o.matrixWorld);
+    nMat.getNormalMatrix(localM);
+    eachGlowVertex(o, (i, m) => {
+      v.fromBufferAttribute(pos, i).applyMatrix4(localM);
+      const key = m.name + "|" + Math.round(v.x / HALO_CELL) + "," +
+                  Math.round(v.y / HALO_CELL) + "," + Math.round(v.z / HALO_CELL);
+      let b = buckets.get(key);
+      if (!b) buckets.set(key, b = { x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 0, n: 0, mat: m.name });
+      b.x += v.x; b.y += v.y; b.z += v.z; b.n++;
+      if (nrm) {
+        nv.fromBufferAttribute(nrm, i).applyMatrix3(nMat).normalize();
+        b.nx += nv.x; b.ny += nv.y; b.nz += nv.z;
+      }
+    });
+  });
+  const n = buckets.size;
+  if (!n) return 0;
+  const xyz = new Float32Array(n * 3);
+  const col = new Float32Array(n * 3);     // all zero — the derelict, and the honest default
+  const byMat = new Map();                 // material NAME -> [point index, ...]
+  let i = 0;
+  for (const b of buckets.values()) {
+    nv.set(b.nx, b.ny, b.nz);
+    // a fixture whose faces point every which way (a lamp head, a mast tip)
+    // averages to nothing — leave those where they are rather than shoving them
+    // off in an arbitrary direction
+    const lift = nv.lengthSq() > 1e-6 ? HALO_LIFT : 0;
+    if (lift) nv.normalize();
+    xyz[i*3]     = b.x / b.n + nv.x * lift;
+    xyz[i*3 + 1] = b.y / b.n + nv.y * lift;
+    xyz[i*3 + 2] = b.z / b.n + nv.z * lift;
+    if (!byMat.has(b.mat)) byMat.set(b.mat, []);
+    byMat.get(b.mat).push(i);
+    i++;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(xyz, 3));
+  const attr = new THREE.BufferAttribute(col, 3);
+  geo.setAttribute("color", attr);
+  const cloud = new THREE.Points(geo, new THREE.PointsMaterial({
+    map: getHaloTex(), size: HALO_SIZE, sizeAttenuation: true, vertexColors: true,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  cloud.name = "glowHalos";
+  model.add(cloud);
+  body.halos = { cloud, byMat, col, attr };
+  return n;
+}
+
+/* ---- THE CLAIM BEACON (v111) ----------------------------------------------
+   Rung 1 buys SALVAGE RIGHTS and lit nothing, because you bought a wreck and a
+   wreck looks like a wreck. Right fiction, broken readout: §9 says the station
+   IS the progress bar, and being 5,850cr and 1,100 ore in with the picture
+   unchanged is a bar that has not moved.
+
+   So rung 1 does not light the STATION — it MARKS it. One amber strobe over the
+   hub: amber is this HUD's ownership colour (money, pads, yours), it is distinct
+   from the red hazard beacons that arrive at rung 5, and a strobe is the one
+   object in this sky designed to be legible at 5km. Somebody holds the deed now.
+
+   Placed off the model's own bounding box rather than typed in, so an arm moving
+   in Blender cannot leave it hanging in space. */
+const CLAIM_AMBER = 0xffb020;
+const CLAIM_SIZE = 12;    // MODEL-LOCAL: a sprite DOES take parent scale, so ~120 world.
+                          // 5 was measured too small to read against a 1,479u hull
+function buildClaimBeacon(body, model) {
+  const box = new THREE.Box3().setFromObject(model);
+  const inv = new THREE.Matrix4().copy(model.matrixWorld).invert();
+  const top = new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y,
+                                (box.min.z + box.max.z) / 2).applyMatrix4(inv);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: getHaloTex(), color: CLAIM_AMBER, transparent: true,
+    depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  s.position.copy(top);
+  s.position.y += 1;                        // sits ON the tallest mast, not floating over it
+  s.scale.setScalar(CLAIM_SIZE);
+  s.visible = false;                        // applyBuildLights owns this
+  s.name = "claimBeacon";
+  model.add(s);
+  return s;
+}
+
+/* A slow, patient blink — the pace of a marker, not of an alarm. Fast strobes
+   in this game mean a hostile or a truck in trouble; this is neither. */
+function updateClaimBeacons() {
+  for (const b of liveBodies) {
+    if (!b.claimBeacon || !b.claimBeacon.visible) continue;
+    b.claimBeacon.material.opacity =
+      Math.sin(clock.elapsedTime * 1.1) > 0 ? 0.95 : 0.25;
+  }
+}
+
 /* PAD CRANES (v93) — Tanner: "the crane arms should remain stationary till the
    hauler either shows up to port or leaves port."
 
@@ -3707,6 +3883,12 @@ function buildBody(cfg) {
           if (cfg.derelict) {
             body.glowMats = new Map();
             body.glowsKilled = killGlow(model, body.glowMats);
+            /* v111: the halos and the claim beacon are built BEFORE the lights
+               are applied, because applyBuildLights() is what switches them on —
+               build them after and a reloaded career six rungs deep gets lit
+               surfaces with no halos around them until the next rung closes. */
+            body.haloCount = buildGlowHalos(body, model);
+            body.claimBeacon = buildClaimBeacon(body, model);
             applyBuildLights(body);
           }
           holder.add(model);
@@ -10595,14 +10777,22 @@ dispatchEl.addEventListener("click", e => {
 const STAGES = [
   { name: "SALVAGE RIGHTS", cr: 2500, goods: {},
     lights: [] },                                     // you bought a wreck. Nothing comes on
+  /* v111: the beacon array moved DOWN from rung 5, and that is a readability
+     fix rather than a taste one. MEASURED: WorkGlow is 696 verts inside a 90u
+     patch of a 1,479u station, so rung 2 rendered BYTE-IDENTICAL to rung 1 —
+     the same complaint Tanner made off the first gallery. BeaconGlow spans
+     147x37x90 local (the masts and tower tops, all eight arms), so it is the
+     one light in the set that changes the whole silhouette at once. It is also
+     what actually happens on a build site: the navigation lights go up first
+     because they have to, before anything else is worth doing. */
   { name: "THE FRAME",      cr: 3350, goods: { ore: 1100 },
-    lights: ["WorkGlow"] },                           // work lights — someone is up there
+    lights: ["WorkGlow", "BeaconGlow"] },             // work lights and the masts — crew on site
   { name: "THE SPINE",      cr: 3950, goods: { alloy: 2250 },
     lights: ["TrimCyanGlow", "TrimMagentaGlow"] },    // the rail strips run the arms
   { name: "THE DECKS",      cr: 4300, goods: { scrap: 2500, ore: 1400 },
     lights: ["PadGlow", "HangarGlow"] },              // the pads light — it can take traffic
   { name: "POWER & DOCKS",  cr: 4700, goods: { volatile: 3600, alloy: 1150 },
-    lights: ["WindowGlow", "ScreenGlow", "BeaconGlow"] },   // it is crewed, and it is on the charts
+    lights: ["WindowGlow", "ScreenGlow"] },           // it is crewed — every window in the hub
   { name: "THE GATE",       cr: 5000, goods: { contra: 3000, volatile: 1400, alloy: 900,
                                                scrap: 700, ore: 280 },
     lights: ["NameAmberGlow", "NameCyanGlow", "NameMagentaGlow",
@@ -10690,11 +10880,36 @@ function poursNow(g) { return !buildKeep[g] || pourAllNow; }
    otherwise load a fully-paid station that is still pitch dark. */
 function applyBuildLights(body) {
   if (!body || !body.glowMats) return;
+  const H = body.halos;
+  /* v111: AUTHORITATIVE, not additive. It zeroes everything and then lights
+     what is paid for, so buildStage alone decides how the station looks and
+     calling it twice cannot drift. The halos need that (something has to be
+     able to put the station back in the dark), and one function owning both
+     ends is what stops a surface and its halo ever disagreeing.
+
+     Safe to blank every glow material here ONLY because the ledger test asserts
+     the union of STAGES[].lights is exactly the set killGlow dimmed — a 14th
+     glow material out of Blender fails that suite before it can reach a player
+     as a light they bought that never comes on. */
+  for (const m of body.glowMats.values()) m.emissiveIntensity = 0;
+  if (H) H.col.fill(0);
   for (let i = 0; i < buildStage && i < STAGES.length; i++)
     for (const name of STAGES[i].lights) {
       const m = body.glowMats.get(name);
-      if (m) m.emissiveIntensity = m.userData.litIntensity;
+      if (!m) continue;
+      m.emissiveIntensity = m.userData.litIntensity;
+      const ids = H && H.byMat.get(name);
+      if (!ids) continue;
+      const c = m.emissive;
+      for (const k of ids) {
+        H.col[k*3]     = c.r * HALO_GAIN;
+        H.col[k*3 + 1] = c.g * HALO_GAIN;
+        H.col[k*3 + 2] = c.b * HALO_GAIN;
+      }
     }
+  if (H) H.attr.needsUpdate = true;
+  // rung 1 marks the wreck as yours; nothing retires it afterwards
+  if (body.claimBeacon) body.claimBeacon.visible = buildStage >= 1;
 }
 function fcBody() { return liveBodies.find(b => b.cfg.name === "FLEET COMMAND") || null; }
 
@@ -13895,6 +14110,7 @@ function animate() {
   updateBelts(dt);   // spins them AND collides them (v109.2) — one owner, one 0.02
   for (const c of cloudLayers) c.mesh.rotation.y += c.speed * dt;
   updateCranes(dt);
+  updateClaimBeacons();
   /* ...and carry the collision blocks with the booms that just moved. Here,
      immediately after, so the hull always describes the pose that is about to
      be RENDERED — collision agreeing with the picture on the screen, rather
