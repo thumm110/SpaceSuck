@@ -3489,9 +3489,6 @@ const HALO_GAIN = 0.8;    // how hot a lit halo burns, on top of its emissive co
    out byte-identical to rung 1 on the first pass. Floating it off along the
    averaged normal is also just what a real lamp's glow does. */
 const HALO_LIFT = 0.6;    // model-local units out along the fixture's own normal
-const BERTH_LIFT = 34;    // WORLD units a berth strobe floats above its deck
-const BERTH_RING = 6;     // strobes per berth, on a circle at the pad's own radius
-const BERTH_RGB = [0.16, 1.0, 0.52];   // clear-to-land green — the one hue FC does not already use
 let haloTex = null;       // lazy: softBlobTexture exists by now, boltGlowTex does not yet
 function getHaloTex() {
   return haloTex || (haloTex = softBlobTexture("rgba(255,255,255,0.95)"));
@@ -3560,57 +3557,14 @@ function buildGlowHalos(body, model) {
                  b.y / b.n + nv.y * lift,
                  b.z / b.n + nv.z * lift);
   }
-  /* ---- BERTH LIGHTS (v111.1) ------------------------------------------
-     MEASURED, one material at a time from 5km: PadGlow is 40% of the finished
-     station's light and NameAmberGlow another 25%. Two materials own two thirds
-     of it, and SIX of the thirteen contribute a flat ZERO from outside (the
-     hangar mouth, the screens and both sign panels face inward or are authored
-     near-black). That is a property of the MODEL, not of the ladder — so rung 5
-     could not be fixed by reordering which rung throws which switch. It was
-     4,700cr and 4,750 units for 7% more light.
-
-     So rung 5 gets a light of its own that no material owns: an approach strobe
-     over every berth, placed off the PAD TABLE rather than the mesh. Rung 4
-     lights the pad MARKINGS — paint on a deck, "this is a berth". Rung 5 lights
-     the strobes — "this berth is live". That is the real distinction on a
-     working field, and it is exactly what POWER & DOCKS should mean.
-
-     Green because nothing else on this station is: the palette runs amber, cyan,
-     magenta and hazard red, so a green marker reads as its own system at a
-     glance instead of as more of the pad lighting.
-
-     They ride in the SAME cloud (still one draw call) but are tracked apart from
-     `byMat`, which stays exactly the set of materials killGlow dimmed — the
-     ledger test that catches a Blender rename must not start matching a name
-     the game invented.
-
-     ⭐ A RING PER BERTH, NOT A DOT. One strobe per pad measured at ~3% of the
-     station — invisible next to the 40% PadGlow already owns. Six on a circle
-     at the pad's own radius reads as a LIT LANDING CIRCLE instead, which is
-     both the real airfield vocabulary and, not by accident, a preview of the
-     lamp posts: standing lights ringing a deck is exactly the shape those want.
-     The radius is the pad's own `ang` (its cone half-width) rather than a
-     number typed here, so a berth resized in Blender re-rings itself. */
+  /* The v111.1 code-placed berth rings USED TO LIVE HERE and are gone: the
+     shipyard now stands real lamp posts on those rims (LampPad00..07Glow), at
+     7.65 BU where the rings sat at 7.3 — the same circle. Two rings of lights a
+     few units apart reads as a mistake, and geometry beats sprites anyway: a
+     post is visible unlit, which is what makes the derelict look like a place
+     waiting for power rather than a place with no lights. `berths` stays on the
+     halo record as an empty list so nothing downstream has to special-case it. */
   const berths = [];
-  if (body.pads) {
-    const q = new THREE.Vector3();
-    for (const p of body.pads) {
-      if (p.fill) continue;                 // fill pads hold a ship up, they are not berths
-      const reach = body.cfg.radius * p.top;
-      const ring = (p.ang || 0.09) * reach;  // the pad's own footprint, in world units
-      for (let k = 0; k < BERTH_RING; k++) {
-        const a = (k / BERTH_RING) * Math.PI * 2;
-        q.set(p.dx, p.dy, p.dz).multiplyScalar(reach);
-        // FC's decks are planes facing +Y (cfg.deckN), so the circle lies in XZ
-        q.x += Math.cos(a) * ring;
-        q.z += Math.sin(a) * ring;
-        q.y += BERTH_LIFT;
-        q.applyMatrix4(inv);                // pad table is body-local; the cloud is model-local
-        berths.push(xyzList.length / 3);
-        xyzList.push(q.x, q.y, q.z);
-      }
-    }
-  }
   const xyzAll = new Float32Array(xyzList);
   const colAll = new Float32Array(xyzList.length);
 
@@ -10830,35 +10784,57 @@ dispatchEl.addEventListener("click", e => {
 const STAGES = [
   { name: "SALVAGE RIGHTS", cr: 2500, goods: {},
     lights: [] },                                     // you bought a wreck. Nothing comes on
-  /* v111: the beacon array moved DOWN from rung 5, and that is a readability
-     fix rather than a taste one. MEASURED: WorkGlow is 696 verts inside a 90u
-     patch of a 1,479u station, so rung 2 rendered BYTE-IDENTICAL to rung 1 —
-     the same complaint Tanner made off the first gallery. BeaconGlow spans
-     147x37x90 local (the masts and tower tops, all eight arms), so it is the
-     one light in the set that changes the whole silhouette at once. It is also
-     what actually happens on a build site: the navigation lights go up first
-     because they have to, before anything else is worth doing. */
+  /* v112: the lamp posts land here, and they change what each rung MEANS.
+     MEASURED per material from 5km, as a share of the finished station's light:
+     nothing is over 16% now. Before the shipyard pass PadGlow alone was 40% in
+     one indivisible material, which is what made rung 4 a +34 jump between
+     6-point rungs and could not be fixed from the game side at all. */
   { name: "THE FRAME",      cr: 3350, goods: { ore: 1100 },
-    lights: ["WorkGlow", "BeaconGlow"] },             // work lights and the masts — crew on site
+    lights: ["WorkGlow", "BeaconGlow", "LampWalkGlow"] },
+                          // work lights, the masts, and the catwalks — you light
+                          // the walkways FIRST because that is how a crew gets to work
   { name: "THE SPINE",      cr: 3950, goods: { alloy: 2250 },
-    lights: ["TrimCyanGlow", "TrimMagentaGlow"] },    // the rail strips run the arms
+    lights: ["TrimCyanGlow", "TrimMagentaGlow", "LampRimGlow"] },
+                          // the rails outline the station and the promenade lights up
   { name: "THE DECKS",      cr: 4300, goods: { scrap: 2500, ore: 1400 },
-    lights: ["PadGlow", "HangarGlow"] },              // the pads light — it can take traffic
-  /* v111.1: `berths` is not a material — it is the approach strobes over each
-     pad, placed off the pad table. MEASURED one material at a time from 5km:
-     the windows and screens this rung buys are worth 6% of the station's light
-     from outside, because they face INWARD. That made this the rung you paid
-     4,700cr and 4,750 units for and then could not see. The strobes are what
-     "DOCKS" was always supposed to mean, and no reordering could have supplied
-     them — PadGlow and NameAmberGlow own 65% of the light between them and
-     neither splits without Blender. */
+    lights: ["PadMark00Glow", "PadMark01Glow", "PadMark02Glow", "PadMark03Glow",
+             "PadMark04Glow", "PadMark05Glow", "PadMark06Glow", "PadMark07Glow",
+             "HangarGlow"] },
+                          // every berth gets its markings and its number. ⭐ These
+                          // are EIGHT materials where v111 had one: the shipyard
+                          // split them per arm so a rung could spend them one at a
+                          // time. Spent all at once here — see the note below.
   { name: "POWER & DOCKS",  cr: 4700, goods: { volatile: 3600, alloy: 1150 },
-    lights: ["WindowGlow", "ScreenGlow"], berths: true },   // crewed, and every berth goes live
+    lights: ["LampPad00Glow", "LampPad01Glow", "LampPad02Glow", "LampPad03Glow",
+             "LampPad04Glow", "LampPad05Glow", "LampPad06Glow", "LampPad07Glow",
+             "LampGarageGlow", "PadGlow", "WindowGlow", "ScreenGlow"] },
+                          // the berths go LIVE: standing lights round every pad,
+                          // the garage lit, and every window in the hub
   { name: "THE GATE",       cr: 5000, goods: { contra: 3000, volatile: 1400, alloy: 900,
                                                scrap: 700, ore: 280 },
     lights: ["NameAmberGlow", "NameCyanGlow", "NameMagentaGlow",
              "SignPanelCyanGlow", "SignPanelMagGlow"] },    // the name. Last thing to light
 ];
+
+/* ⭐ THE PER-ARM LADDER IS NOW ONE EDIT AWAY, and this is the note that says so.
+   §9 wants the station to be its own progress bar — count the lit arms from 5km
+   and you know how far in you are. v110 could not do it: the draw-call join had
+   welded all eight arms into one mesh per material, so there was no `Arm03` to
+   light. The v112 shipyard pass fixed that at the source by emitting
+   `PadMark00..07Glow` and `LampPad00..07Glow` — sixteen materials where there
+   used to be one — precisely so the choice lives HERE and not in Blender.
+
+   The ladder above spends them as SYSTEMS (all eight decks at rung 4, all eight
+   berth-lamp rings at rung 5) because that keeps the rung names honest. To read
+   as ARMS instead, give rungs 2-5 two arms each:
+
+     rung 2: PadMark00Glow, PadMark01Glow, LampPad00Glow, LampPad01Glow
+     rung 3: ...02, ...03      rung 4: ...04, ...05      rung 5: ...06, ...07
+
+   Nothing else changes and no asset is rebuilt. MEASURED caveat before anyone
+   tries it: one arm is worth about 5% of the station's light, so eight even
+   steps read as a very legible progress bar and a very undramatic one — no rung
+   would be a moment. That trade is Tanner's call (board question c-armlight). */
 
 /* FC's port. Attached to the pad table in code rather than typed into it,
    because that table is EMITTED by build_fc.py and re-pasted whole every time
@@ -10967,14 +10943,6 @@ function applyBuildLights(body) {
         H.col[k*3 + 1] = c.g * HALO_GAIN;
         H.col[k*3 + 2] = c.b * HALO_GAIN;
       }
-    }
-  // the berth strobes are their own switch, not a material (see STAGES)
-  if (H && H.berths.length &&
-      STAGES.slice(0, buildStage).some(s => s.berths))
-    for (const k of H.berths) {
-      H.col[k*3]     = BERTH_RGB[0] * HALO_GAIN;
-      H.col[k*3 + 1] = BERTH_RGB[1] * HALO_GAIN;
-      H.col[k*3 + 2] = BERTH_RGB[2] * HALO_GAIN;
     }
   if (H) H.attr.needsUpdate = true;
   // rung 1 marks the wreck as yours; nothing retires it afterwards
