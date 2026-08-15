@@ -388,6 +388,21 @@
   }
   /* the two cursors are DIFFERENT marks on purpose: the column is the port you
      have dialled in, the row is the good, and their crossing is the readout. */
+  /* v113.1 — a cell YOU saturated. Rust, the same colour the pad board's HERE
+     column goes when a rate is off its usual, so the two panels say "glutted"
+     in one visual language. The corner tick is what separates "you did this and
+     it recovers" from "this port just pays badly". */
+  .mcCell.glut { color: #d98a6a; border-color: rgba(217,138,106,.45); }
+  .mcCell.glut .fill {
+    background: linear-gradient(90deg, rgba(217,138,106,.22),
+                                rgba(217,138,106,.14) 65%, rgba(217,138,106,0));
+    box-shadow: inset 0 -2px 0 rgba(217,138,106,.5);
+  }
+  .mcCell.glut::after {
+    content: ""; position: absolute; top: 2px; right: 2px;
+    border-top: 5px solid #d98a6a; border-left: 5px solid transparent;
+  }
+  #mcRead .cmp.glut { color: #d98a6a; }
   .mcCell.col, .mcCell.row { border-color: rgba(125,232,168,.4); }
   .mcCell.cur { box-shadow: 0 0 0 1px #7dffa8, 0 0 14px rgba(125,255,168,.35); }
   /* the main readout window: the one big number on the panel */
@@ -1436,7 +1451,7 @@
     <div id="mcGrid"></div>
     <div id="mcRead"></div>
     <div id="mcFoot">
-      <span id="mcHint">◄ ► PORT · ▲ ▼ GOOD · ENTER/Ⓐ SEEK BEST<br>STANDING RATES — THE PAD QUOTES THE LIVE PRICE</span>
+      <span id="mcHint">◄ ► PORT · ▲ ▼ GOOD · ENTER/Ⓐ SEEK BEST<br>STANDING RATES, YOUR GLUT INCLUDED — THE PAD QUOTES THE LIVE PRICE</span>
       <button id="btnMarketClose" type="button" class="ss-btn sub">CLOSE ✕</button>
     </div>
   </div>
@@ -13166,12 +13181,33 @@ addEventListener("keydown", e => {
    -income rule. The test is: did a number in a table change, or did the player
    just learn something?
 
-   It quotes portBase, the STATIC table, deliberately. Drift is ±8% against
-   spreads of 2×–7×, so a live number here would be noise wearing the costume of
-   precision — and worse, it would delete the reason to land: the pad is where
-   you see the struck quote and your own saturation, and neither of those is
-   knowable from a menu. The footer says so out loud, because a panel of prices
-   that isn't the price you'll be paid has to admit it. */
+   ⭐ v113.1 — IT EXCLUDES DRIFT AND INCLUDES YOUR GLUT, and the original note
+   here got that wrong by treating them as one thing called "live". They are not
+   the same kind of fact and they do not deserve the same answer:
+
+   DRIFT is the WORLD'S. ±8%, mean-zero, unknowable anywhere but a pad. Against
+   port spreads of 2×–7× a drifted number here would be noise wearing the
+   costume of precision, and hiding it genuinely does preserve a reason to land.
+   It stays out.
+
+   GLUT IS YOURS. Up to −40%, and it is not market noise at all — it is the
+   direct consequence of a hold YOU dumped, decaying on a known clock. Hiding it
+   does not protect anything: you already know you saturated that port, and the
+   only party in the room who has forgotten is the map.
+
+   And the failure was not a number being slightly off — THE RECOMMENDATION
+   INVERTED. Tanner, 15 Aug, comparing a FOLLY pad board against this panel:
+   ANGEL's alloy read 1.19 on the pad and 1.45 here, a 17.9% gap that ±8% cannot
+   produce. MEASURED with ANGEL saturated on alloy: this panel marked ANGEL
+   ◆ BEST IN SYSTEM at 1.45 while ANGEL would actually pay 0.94 and FOLLY would
+   pay 1.25. SEEK BEST flew you to your own glutted port. A routing panel that
+   routes you wrong has no remaining argument for existing, and "it was only
+   showing the table" is not a defence when the table is what the mark is
+   computed from.
+
+   The footer still says the pad quotes the live price, because it still does —
+   drift is what is missing now, and that is the half that was always meant to
+   be. */
 const marketConsoleEl = document.getElementById("market");
 const mcSelEl = document.getElementById("mcSel");
 const mcGridEl = document.getElementById("mcGrid");
@@ -13188,8 +13224,19 @@ function mcPorts() {
 }
 /* Every rate on this panel in integer CENTS — the same units the change drawer
    settles in. Floats would make "is this the best" a comparison that can miss
-   by 1e-16, and the whole panel is built out of that one question. */
-function mcCents(port, good) { return Math.round(portBase(port, good) * 100); }
+   by 1e-16, and the whole panel is built out of that one question.
+
+   The table rate with YOUR OWN SATURATION applied and nothing else. One reader,
+   so the gauge, the ◆ BEST mark, the readout and SEEK BEST can never disagree
+   about which port to fly to — the inversion above happened because the mark
+   was computed from a number the player would never actually be paid. */
+function mcCents(port, good) {
+  return Math.round(portBase(port, good) *
+                    (1 - GLUT_DEPTH * portGlut(port, good)) * 100);
+}
+// past the same 0.12 the pad's GLUTTED note fires at, so one number means one
+// thing in both panels — below it the sag is under 5% and not worth a mark
+function mcGlutted(port, good) { return portGlut(port, good) > 0.12; }
 
 function refreshMarketConsole() {
   const ports = mcPorts();
@@ -13234,7 +13281,13 @@ function refreshMarketConsole() {
          (hold[g] > 0 ? "HOLD " + cm(hold[g]) : "—") + "</span></span>";
     for (let i = 0; i < ports.length; i++) {
       const c = mcCents(ports[i], g);
+      /* A glutted cell is marked, not just lowered. A number that quietly sagged
+         reads as "this port is poor" — which is wrong and unlearnable. The mark
+         says YOU DID THIS, and since glut decays it also says the cell will come
+         back, which a bare low number cannot. */
+      const gl = mcGlutted(ports[i], g);
       h += '<div class="mcCell' + (max && c === max ? " best" : "") +
+           (gl ? " glut" : "") +
            (i === mcPort ? " col" : "") + (r === mcGood ? " row" : "") +
            (i === mcPort && r === mcGood ? " cur" : "") +
            '" data-cell="' + i + "," + r + '">' +
@@ -13256,6 +13309,9 @@ function refreshMarketConsole() {
      as what the best pays over this one, because the number you are standing on
      is the one you're deciding about. "−73% vs RUSTHOLLOW" is a reason to fly. */
   const top = bestC > 0 && c >= bestC;
+  // the readout names the sag too, or the one cell you have dialled in is the
+  // one place the panel goes quiet about it
+  const glutHere = mcGlutted(p, g);
   /* v113: what the load you are ACTUALLY CARRYING is worth at the port you have
      dialled in — the reason to put holdings on the chart at all. Integer cents
      throughout, same as every other figure here, so the multiply can't drift.
@@ -13270,6 +13326,7 @@ function refreshMarketConsole() {
     '<span class="cmp' + (top ? " top" : "") + '">' +
       (top ? "◆ BEST IN SYSTEM" : "−" + Math.round((1 - c / bestC) * 100) + "% vs " + portShort(bestP)) +
     "</span>" +
+    (glutHere ? '<span class="cmp glut">GLUTTED BY YOU · RECOVERING</span>' : "") +
     (n > 0 ? '<span class="at">HOLD ' + cm(n) + " ≈</span>" +
              '<span class="cmp">' + cm(Math.round(n * c / 100)) + " CR</span>" : "") +
     '<span class="big">' + (c / 100).toFixed(2) + "</span>";
