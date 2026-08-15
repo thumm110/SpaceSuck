@@ -571,7 +571,7 @@
     display: flex; flex-direction: column; gap: 8px; align-items: stretch;
     pointer-events: none;
   }
-  #shop, #dispatchboard, #marketboard {
+  #shop, #dispatchboard, #marketboard, #manifest {
     display: none;                    /* JS writes block when this port has one */
     flex: 0 0 auto; pointer-events: auto;
     font-size: 12px; letter-spacing: 1px;
@@ -715,6 +715,78 @@
        already claimed. Docked, the sheet sets the width, so the cap comes off. */
     text-align: center; white-space: normal; max-width: 230px;
   }
+  /* THE MANIFEST (v110) — the construction bill at FLEET COMMAND.
+     Amber, because amber is money everywhere else in this game and this panel
+     is the only place money leaves without buying you a stat. It borrows the
+     market's grammar on purpose — a grid of rows with a toggle cell on the
+     right, a one-line footer, one big do-the-whole-thing control underneath —
+     because the two panels ask the same question about the same hold, and a
+     player who has learned one should not have to learn the other. */
+  #manifest {
+    background: rgba(24, 16, 4, .82);
+    border: 1px solid rgba(255,211,77,.45);
+    color: #f0dcae;
+  }
+  #manifest .dockbar { color: #ffd34d; background: rgba(30,20,5,.97); }
+  #manifest.open .dockbar { border-bottom: 1px solid rgba(255,211,77,.22); }
+  #manifest .title { color: #ffd34d; letter-spacing: 3px; font-size: 11px;
+                     text-align: center; margin-bottom: 7px; }
+  #manifest .title b { color: #fff3d0; font-weight: normal; }
+  #manifest .bldGrid { display: grid; gap: 3px 10px; align-items: baseline;
+                       grid-template-columns: 1fr auto auto auto; }
+  .bldRow { display: contents; }
+  .bldRow .n { text-align: right; }
+  .bldRow .f { text-align: right; color: #f0dcae; }     /* IN / NEED */
+  .bldRow.head > span { color: #a8905c; font-size: 10px; letter-spacing: 2px; }
+  .bldRow.met > span  { opacity: .5; }                  /* this line is paid — data, not a decision */
+  /* the toggle cell. `.bldRow` is display:contents so the row has no box of its
+     own to outline — same constraint the market's SELL/HOLD cell solved, same
+     solution: the cell carries the cursor. */
+  .bldRow .pour { text-align: center; font-size: 9px; letter-spacing: 1px;
+                  padding: 1px 6px; border: 1px solid rgba(255,211,77,.22);
+                  border-radius: 3px; cursor: pointer; color: #a8905c; }
+  .bldRow .pour.on { color: #ffd34d; border-color: rgba(255,211,77,.5); }
+  .bldRow.cursor .pour { background: rgba(255,211,77,.2); border-color: #ffd34d; }
+  .bldRow.cursor .g { color: #fff3d0 !important; }
+  .bldRow .pour.dead { opacity: .35; cursor: default; }  /* nothing left to give on this line */
+  #manifest .bldSep { grid-column: 1 / -1; height: 1px; margin: 1px 0 3px;
+                      background: rgba(255,211,77,.18); }
+  /* ⚠ WRAPS, and it has to. `#manifest` is white-space:nowrap like every panel
+     in this dock, and THE GATE's bill names five goods — so its shortfall line
+     is "SHORT 2,900 CREDITS · 1,960 CONTRABAND · 1,312 VOLATILES · 700 SCRAP ·
+     268 ORE", which ran 163px past the panel on a 380px phone and was CLIPPED
+     rather than scrolled, because #dockcols hides overflow-x. Silent truncation
+     of the line that tells you what to go and fetch. Same fix .mktNote already
+     carries next door, for the same reason. */
+  #manifest .bldFoot {
+    margin-top: 7px; padding-top: 6px; border-top: 1px solid rgba(255,211,77,.18);
+    font-size: 11px; letter-spacing: 1px; text-align: center; color: #d9c08a;
+    white-space: normal;
+  }
+  #manifest .bldFoot b { color: #ffd34d; font-weight: normal; }
+  /* POUR ALL — the market's SELL ALL, one panel over. Drawn even when there is
+     nothing to give, dimmed: the cursor has to have somewhere to land, and a
+     control that vanishes under your thumb is worse than one that is greyed. */
+  #manifest .bldAll {
+    margin-top: 6px; padding: 4px 0; text-align: center;
+    font-size: 10px; letter-spacing: 2px; color: #a8905c;
+    border: 1px solid rgba(255,211,77,.22); border-radius: 3px; cursor: pointer;
+  }
+  #manifest .bldAll.on     { color: #ffd34d; border-color: rgba(255,211,77,.5); }
+  #manifest .bldAll.cursor { background: rgba(255,211,77,.2); border-color: #ffd34d; }
+  #manifest .bldAll.idle   { opacity: .42; }
+  /* what the NEXT rung costs, so you leave with a route instead of coming back
+     to find out (§5 — the bill forces the route). Wraps, like .mktNote. */
+  #manifest .bldNext {
+    /* 340px, not the market note's 230: the widest line here names a rung, a
+       credit figure AND two goods with their tonnage, and at 250 it wrapped
+       mid-quantity — "4,700" on one line and "CREDITS" on the next, which is
+       the one thing a bill must never do. Still under the panel's own width,
+       so this line can no more decide how wide the dock is than .mktNote can. */
+    margin-top: 5px; font-size: 10px; letter-spacing: 1px; color: #a8905c;
+    text-align: center; white-space: normal; max-width: 340px;
+  }
+  #manifest .bldNext b { color: #d9c08a; font-weight: normal; }
   /* the dispatch board (v56) — Charleston's job faucet */
   #dispatchboard {
     background: rgba(10, 6, 20, .8);
@@ -1029,17 +1101,31 @@
      at 42 — two pixels under, which is exactly the kind of miss the rule exists
      to catch. */
   body.docked .dockbar { font-size: 12px; padding: 13px; min-height: 44px; }
-  body.docked #shop, body.docked #dispatchboard, body.docked #marketboard {
+  body.docked #shop, body.docked #dispatchboard, body.docked #marketboard,
+  body.docked #manifest {
     font-size: 13px;
   }
   body.docked .dockbody { padding: 0 14px 12px; }
   body.docked #shop .title, body.docked #dispatchboard .title,
-  body.docked #marketboard .title {
+  body.docked #marketboard .title, body.docked #manifest .title {
     font-size: 12px; margin-bottom: 10px;
   }
   /* the dock sheet decides the width here, so the note gets all of it */
   body.docked #marketboard .mktNote,
-  body.docked #marketboard .mktSold { max-width: none; }
+  body.docked #marketboard .mktSold,
+  body.docked #manifest .bldNext { max-width: none; }
+  /* 44px thumb targets. MIN-HEIGHT rather than padding alone, and for exactly
+     the reason written on the .dockbar rule above: the padding that gets you to
+     44 depends on the font's line box, and 12px of it measured 39 here — five
+     short, and invisible unless something measures it. */
+  body.docked .bldRow .pour {
+    font-size: 11px; padding: 4px 8px; min-height: 44px; box-sizing: border-box;
+    display: flex; align-items: center; justify-content: center;
+  }
+  body.docked #manifest .bldAll {
+    font-size: 11px; padding: 4px 0; min-height: 44px; box-sizing: border-box;
+    display: flex; align-items: center; justify-content: center;
+  }
   /* 44px targets — the flight-sized 20px rows were unhittable with a thumb */
   /* 44px targets — the flight-sized 20px rows were unhittable with a thumb.
      The price is a `float: right` in flight, which on a 390px-wide portrait
@@ -1300,6 +1386,13 @@
          adding a good can't desync a DOM snapshot here. -->
     <div id="marketboard">
       <button class="dockbar" type="button"><span class="bx">▸</span><span class="bt">MARKET</span><span class="bs"></span></button>
+      <div class="dockbody"></div>
+    </div>
+    <!-- the construction bill (v110). FLEET COMMAND only, and built entirely in
+         refreshManifest() — the row count is the CURRENT stage's bill, which is a
+         different length on every rung, so there is nothing here to snapshot. -->
+    <div id="manifest">
+      <button class="dockbar" type="button"><span class="bx">▸</span><span class="bt">MANIFEST</span><span class="bs"></span></button>
       <div class="dockbody"></div>
     </div>
   </div>
@@ -3325,8 +3418,14 @@ function makeProceduralSurface(cfg) {
    ⚠️ Only touches materials whose NAME ends in `Glow`, which is the same
    contract build_fc.py authors against ("`*Glow` suffix -> the game boosts it
    as a light"). A material renamed in Blender silently stops being dimmed —
-   station-derelict.js gates exactly that. */
-function killGlow(model) {
+   station-derelict.js gates exactly that.
+
+   v110: `mats` is an optional out-Map of name -> material, which is what turns
+   the stash from a promise into a mechanism — the manifest lights a stage by
+   NAME (see STAGES[].lights) and had no way to find the material otherwise.
+   Keyed by name rather than uuid because the name is the contract build_fc.py
+   authors against and the uuid is regenerated on every load. */
+function killGlow(model, mats) {
   const seen = new Set();
   let n = 0;
   model.traverse(o => {
@@ -3337,6 +3436,7 @@ function killGlow(model) {
       if (!/Glow$/.test(m.name || "")) continue;
       m.userData.litIntensity = m.emissiveIntensity;   // remember the ON value
       m.emissiveIntensity = 0;
+      if (mats) mats.set(m.name, m);
       n++;
     }
   });
@@ -3597,9 +3697,18 @@ function buildBody(cfg) {
             body.hudOff = new THREE.Box3().setFromObject(model)
                             .getCenter(new THREE.Vector3());
           }
-          // the derelict ships dark (§9). Before it's added, so there is never
-          // a frame where a dead station is lit up like a Christmas tree.
-          if (cfg.derelict) body.glowsKilled = killGlow(model);
+          /* the derelict ships dark (§9). Before it's added, so there is never
+             a frame where a dead station is lit up like a Christmas tree.
+             v110: then the rungs you have already PAID FOR come straight back
+             on. The .glb is a fetch and the save file isn't, so without this a
+             career four stages deep would load a station it had lit and find it
+             pitch dark — and the progress bar §9 promises is the one readout
+             that must never lie about what you own. */
+          if (cfg.derelict) {
+            body.glowMats = new Map();
+            body.glowsKilled = killGlow(model, body.glowMats);
+            applyBuildLights(body);
+          }
           holder.add(model);
           buildCranes(body, model);
           /* the collision hull's rig nodes live in here. Stored rather than
@@ -10438,6 +10547,426 @@ dispatchEl.addEventListener("click", e => {
   acceptJob(jobCursor);
 });
 
+/* ---- 10g. THE MANIFEST (v110, plan §8 Stage 3) ---------------------------
+   The sink lands here. Everything before this panel was a 20-minute loop with
+   a ~3,900 credit ceiling on it; this is the 20-hour layer, and the whole of
+   it is one table and one drain.
+
+   ⛔ THE LAW THIS PANEL EXISTS UNDER: raise sinks, never income. There is
+   exactly ONE direction of flow — your hold empties into the frame and
+   NOTHING comes back. No delivery pays. FC's port config carries `pay: 0` and
+   no `market`, so even the machinery that would pay you isn't wired up: this
+   is not a promise in a comment, it is an absent field. That has been
+   re-litigated twice in the design doc; if a future build has the station
+   paying you to deliver to it, that build is wrong.
+
+   ⛔ AND THE BILL IS STATED IN UNITS, NEVER IN CREDITS-EQUIVALENT. "2,250
+   ALLOY" drains exactly 2,250 alloy. The six bills happen to sum to 50,000
+   credits-equivalent, and that arithmetic exists only to prove the ladder adds
+   up — it must never reach the screen. The moment the game shows two ways to
+   value one unit, the manifest starts arguing with the drain, and "the board
+   is the bank" is the one property this panel cannot lose.
+
+   THE CURVE is a constant step (+~2,300 a rung), not a multiplier. A flat 1.5×
+   ramp put 37% of the whole station in stage 6 alone; Tanner's read was "the
+   back half seems a little stiff" and it was. Stage 6 is 28% now.
+
+   THE ORDER of the goods is set by what each one costs to GATHER, not by what
+   it sells for — measured, and the two disagree by a factor of ten. SCRAP and
+   ALLOY sell within 7% of each other and gather at 0.49 vs 12.00 units per
+   bolt, so SCRAP is the EXPENSIVE good and sits at stage 4 with a truck in the
+   driveway, not early. ORE opens the ladder because it pays 0.25-0.45 nearly
+   everywhere, so pouring it costs you almost nothing — right for the rung that
+   has to be payable off a run or two. VOLATILES and CONTRABAND both pay 1.50,
+   so they are the ones that genuinely hurt to give up, and they belong in the
+   back half that should feel like a campaign.
+
+   `lights` is §9 — the station is its own progress bar, and you read it from
+   5km out with no HUD. Each rung throws a different switch, and the SIGNAGE is
+   last, because the name coming on is the ending.
+
+   ⚠ NOT per-arm, and that is a shipyard problem rather than a decision. §9
+   asks for one arm at a time, and the .glb cannot do it: build_fc.py's join
+   pass merged every arm's trim into ONE mesh per material (Merged_TrimCyanGlow
+   and friends), so all eight arms share one dial. Splitting them means
+   emitting per-arm glow materials in Blender. Until then a stage lights a
+   SYSTEM rather than an arm — which is the same readout with a different
+   grammar, and all thirteen glow materials are spoken for exactly once. */
+const STAGES = [
+  { name: "SALVAGE RIGHTS", cr: 2500, goods: {},
+    lights: [] },                                     // you bought a wreck. Nothing comes on
+  { name: "THE FRAME",      cr: 3350, goods: { ore: 1100 },
+    lights: ["WorkGlow"] },                           // work lights — someone is up there
+  { name: "THE SPINE",      cr: 3950, goods: { alloy: 2250 },
+    lights: ["TrimCyanGlow", "TrimMagentaGlow"] },    // the rail strips run the arms
+  { name: "THE DECKS",      cr: 4300, goods: { scrap: 2500, ore: 1400 },
+    lights: ["PadGlow", "HangarGlow"] },              // the pads light — it can take traffic
+  { name: "POWER & DOCKS",  cr: 4700, goods: { volatile: 3600, alloy: 1150 },
+    lights: ["WindowGlow", "ScreenGlow", "BeaconGlow"] },   // it is crewed, and it is on the charts
+  { name: "THE GATE",       cr: 5000, goods: { contra: 3000, volatile: 1400, alloy: 900,
+                                               scrap: 700, ore: 280 },
+    lights: ["NameAmberGlow", "NameCyanGlow", "NameMagentaGlow",
+             "SignPanelCyanGlow", "SignPanelMagGlow"] },    // the name. Last thing to light
+];
+
+/* FC's port. Attached to the pad table in code rather than typed into it,
+   because that table is EMITTED by build_fc.py and re-pasted whole every time
+   an arm moves in Blender — a `port:` key living in a row would be silently
+   deleted by the next paste. Resolved by NAME, never by index: adding a world
+   re-orders BODIES and every index quietly means something else.
+
+   ONE object shared by all fourteen named pads, which is not a saving — the
+   panels redraw on `onPort !== curPort`, an identity test, so sharing it is
+   what stops walking from one garage pad to the next churning the panel. Fill
+   pads get nothing: they hold a ship up, they never offer a landing. */
+const FC_PORT = { name: "FLEET COMMAND", pay: 0, build: true };
+{
+  const fc = BODIES.find(b => b.name === "FLEET COMMAND");
+  if (fc && fc.pads) for (const p of fc.pads) if (!p.fill) p.port = FC_PORT;
+}
+
+let buildStage = 0;              // rungs COMPLETE. 6 = the gate is lit
+let buildPaid  = 0;              // credits into the CURRENT rung
+const buildPour = {};            // units of each good into the CURRENT rung
+for (const g of GOOD_IDS) buildPour[g] = 0;
+/* The pour marks, and they are NOT persisted — deliberately, and for the same
+   reason the market's SELL/HOLD marks aren't: the hold itself doesn't survive a
+   reload either, so a mark that outlived its cargo would be a setting about
+   nothing. Build PROGRESS persists; the intent to move it does not. */
+const buildKeep = {};
+for (const g of GOOD_IDS) buildKeep[g] = true;   // default HOLD — see pourAll()
+let pourAllNow = false;
+let pourFlow = 0;                // sub-unit carry, exactly like bankFlow
+
+try {
+  const b = JSON.parse(localStorage.getItem("spacesuck.build") || "null");
+  if (b) {
+    buildStage = Math.min(STAGES.length, Math.max(0, Math.floor(+b.stage) || 0));
+    buildPaid  = Math.max(0, Math.floor(+b.paid) || 0);
+    for (const g of GOOD_IDS) buildPour[g] = Math.max(0, Math.floor(+(b.pour || {})[g]) || 0);
+  }
+} catch (e) {}
+if (location.hash === "#reset") {
+  buildStage = 0; buildPaid = 0;
+  for (const g of GOOD_IDS) buildPour[g] = 0;
+  try { localStorage.removeItem("spacesuck.build"); } catch (e) {}
+}
+function saveBuild() {
+  try {
+    localStorage.setItem("spacesuck.build",
+      JSON.stringify({ stage: buildStage, paid: buildPaid, pour: buildPour }));
+  } catch (e) {}
+}
+
+// the goods lines of the rung you're on, in the bill's own order (biggest
+// tonnage first). Empty for stage 1, which is credits only.
+function bldLines() {
+  if (buildStage >= STAGES.length) return [];
+  const st = STAGES[buildStage];
+  return Object.keys(st.goods).map(g => ({
+    g, need: st.goods[g], got: buildPour[g], short: st.goods[g] - buildPour[g],
+  }));
+}
+function bldCrShort() {
+  return buildStage >= STAGES.length ? 0 : STAGES[buildStage].cr - buildPaid;
+}
+// thousands separators. The bills run to four figures and a wall of bare digits
+// is the one thing this panel can't afford to be.
+function cm(n) { return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+/* A quantity and its good, glued with a NON-BREAKING space. The footer and the
+   NEXT line both wrap (they have to — five goods will not fit a phone on one
+   line), and a plain space lets a wrap land between the number and the thing it
+   counts: "3,600" at the end of one line and "VOLATILES" at the start of the
+   next. On a bill, that is the one break that must never happen. */
+function qty(n, g) { return cm(n) + " " + GOODS[g].name; }
+// does this good move on the next pour tick? Same shape as sellsHere(), and the
+// same rule: ONE reader, so a running POUR ALL can never disagree with a mark.
+function poursNow(g) { return !buildKeep[g] || pourAllNow; }
+
+/* ---- turning the lights on (§9) ----
+   killGlow() stashed each glow material's lit value in userData at load, so
+   this is a lookup and an assignment. Runs on completion AND on model arrival —
+   the .glb is a fetch and the save file isn't, so a career six rungs deep would
+   otherwise load a fully-paid station that is still pitch dark. */
+function applyBuildLights(body) {
+  if (!body || !body.glowMats) return;
+  for (let i = 0; i < buildStage && i < STAGES.length; i++)
+    for (const name of STAGES[i].lights) {
+      const m = body.glowMats.get(name);
+      if (m) m.emissiveIntensity = m.userData.litIntensity;
+    }
+}
+function fcBody() { return liveBodies.find(b => b.cfg.name === "FLEET COMMAND") || null; }
+
+const manifestEl = document.getElementById("manifest");
+const manifestBodyEl = manifestEl.querySelector(".dockbody");
+let buildDirty = true;
+let buildCursor = 0;
+let buildCargoShown = -1;        // the hold the rows were drawn against (see marketCargoShown)
+let buildBankShown = -1;         // and the bank, which the CREDITS row quotes
+
+function refreshManifest() {
+  const done = buildStage >= STAGES.length;
+  const lines = bldLines(), crShort = bldCrShort();
+  let html = '<div class="title">◆ <b>' +
+             (done ? "STATION COMPLETE" : "STAGE " + (buildStage + 1) + " · " + STAGES[buildStage].name) +
+             "</b> ◆</div>";
+
+  if (done) {
+    /* The ending. Six rungs, the name lit, the gate built — and shut. Nothing
+       to press, so nothing is drawn that could be pressed. */
+    html += '<div class="bldFoot">THE GATE IS LIT · <b>SYSTEM 2</b> IS NOT OPEN</div>';
+    manifestBodyEl.innerHTML = html;
+    return;
+  }
+
+  html += '<div class="bldGrid">' +
+          /* HAVE, not HOLD — the same column carries units for the goods rows
+             and CREDITS for the money row, and "HOLD" over a bank balance is a
+             category error you read four times a session. HAVE is true of both
+             and one character shorter. */
+          '<div class="bldRow head"><span class="g">BILL</span>' +
+          '<span class="n">HAVE</span><span class="f">IN FRAME</span>' +
+          '<span class="n"></span></div><div class="bldSep"></div>';
+
+  for (let i = 0; i < lines.length; i++) {
+    const L = lines[i], met = L.short <= 0;
+    const cur = dockBox === "build" && i === buildCursor;
+    // "dead" is not the same as "off": a met line has nothing left to give, and
+    // a line you are carrying none of has nothing to give RIGHT NOW. Both are
+    // uncoloured; only the first is permanent, and only it stops being a button.
+    const dead = met || hold[L.g] === 0;
+    html += '<div class="bldRow' + (met ? " met" : "") + (cur ? " cursor" : "") + '">' +
+            '<span class="g" style="color:' + GOODS[L.g].color + '">' + GOODS[L.g].name + "</span>" +
+            '<span class="n">' + (hold[L.g] || "·") + "</span>" +
+            '<span class="f">' + cm(L.got) + " / " + cm(L.need) + "</span>" +
+            '<span class="pour' + (poursNow(L.g) && !met ? " on" : "") + (dead ? " dead" : "") +
+              '" data-pour="' + i + '">' + (met ? "IN" : poursNow(L.g) ? "POUR" : "HOLD") + "</span>" +
+            "</div>";
+  }
+
+  /* The credits line. It is a PRESS, not a drain, and that asymmetry is honest:
+     cargo is a physical thing that takes time to move off a ship, and money is
+     a number. It also keeps the one irreversible half of this panel behind a
+     deliberate act — there is no un-pay, and a bank that emptied itself the
+     moment you touched down would be v98's bug wearing a different hat. */
+  {
+    const met = crShort <= 0, cur = dockBox === "build" && buildCursor === lines.length;
+    const canPay = !met && banked > 0;
+    html += '<div class="bldRow' + (met ? " met" : "") + (cur ? " cursor" : "") + '">' +
+            '<span class="g" style="color:#ffd34d">CREDITS</span>' +
+            '<span class="n">' + (banked || "·") + "</span>" +
+            '<span class="f">' + cm(buildPaid) + " / " + cm(STAGES[buildStage].cr) + "</span>" +
+            '<span class="pour' + (canPay ? " on" : "") + (met || !canPay ? " dead" : "") +
+              '" data-pay="1">' + (met ? "IN" : "PAY") + "</span>" +
+            "</div>";
+  }
+  html += "</div>";                    // close .bldGrid
+
+  /* The footer is the one-line answer, and the question it answers is "was this
+     flight worth making". SHORT is what the rung still wants after everything
+     you're standing on it with — so a reading of zero means one press closes
+     it, and that is the number worth the glass. */
+  let shortGoods = 0, canClose = crShort <= banked;
+  for (const L of lines) {
+    if (L.short > 0) shortGoods++;
+    if (L.short > hold[L.g]) canClose = false;
+  }
+  html += '<div class="bldFoot">' +
+          (canClose ? "READY TO CLOSE · <b>STAGE " + (buildStage + 1) + "</b>"
+            : "SHORT <b>" + [
+                crShort > 0 ? cm(crShort) + " CREDITS" : null,
+                ...lines.filter(L => L.short > hold[L.g])
+                        .map(L => qty(L.short - hold[L.g], L.g)),
+              ].filter(Boolean).join("</b> · <b>") + "</b>") +
+          "</div>";
+
+  /* POUR ALL — the market's SELL ALL one panel over, and one-shot for the same
+     reason: at 26 units a second a drain you can't stop isn't a control. It
+     overrides every mark for THIS visit and is forgotten when you leave, so it
+     can never quietly set five goods pouring for good. */
+  if (lines.length) {
+    const allCur = dockBox === "build" && buildCursor === lines.length + 1;
+    const nothing = !shortGoods || !lines.some(L => L.short > 0 && hold[L.g] > 0);
+    html += '<div class="bldAll' + (pourAllNow ? " on" : "") + (allCur ? " cursor" : "") +
+            (nothing ? " idle" : "") + '" data-pourall="1">' +
+            (pourAllNow ? "■ STOP POURING" : "POUR ALL") + "</div>";
+  }
+
+  /* What the NEXT rung wants. §5's "the bill forces the route" only works if
+     you know the bill before you leave — otherwise every rung is one wasted
+     round trip, out to find the answer and back with the wrong hold. */
+  const nx = STAGES[buildStage + 1];
+  if (nx) {
+    const g = Object.keys(nx.goods).map(k => qty(nx.goods[k], k)).join(" · ");
+    html += '<div class="bldNext">NEXT · <b>' + nx.name + "</b> · " + cm(nx.cr) +
+            " CREDITS" + (g ? " · " + g : "") + "</div>";
+  }
+  manifestBodyEl.innerHTML = html;
+}
+
+// flip one line between POUR and HOLD. Takes effect on the very next frame —
+// the drain reads the marks live, so there is no commit step and nothing to undo.
+function togglePour(i) {
+  const L = bldLines()[i];
+  if (!L || L.short <= 0) return;
+  /* Same cash-in as the market's: while POUR ALL is running every row READS
+     POUR, so pressing one has to do what it looks like it does — stop that one
+     and leave the rest going. Dropping the override alone would instead restore
+     marks the player cannot see. */
+  if (pourAllNow) {
+    pourAllNow = false;
+    for (const k of GOOD_IDS) buildKeep[k] = false;
+  }
+  buildKeep[L.g] = !buildKeep[L.g];
+  buildCursor = i;
+  buildDirty = true; dockBarSig = "";
+  holdMarkSound(buildKeep[L.g]);
+}
+function pourAll() {
+  pourAllNow = !pourAllNow;
+  buildCursor = bldLines().length + 1;
+  buildDirty = true; dockBarSig = "";
+  holdMarkSound(!pourAllNow);
+}
+/* Pay what you can, up to what the rung still wants. A partial payment is the
+   point rather than an edge case: the bills are bigger than a session's bank,
+   so paying 900 against 3,350 and coming back is the normal way up the ladder. */
+function payStage(dontSpend) {
+  const short = bldCrShort();
+  if (short <= 0 || banked <= 0) { shopDenySound(); return 0; }
+  const pay = Math.min(banked, short);
+  if (dontSpend) return pay;
+  banked -= pay; buildPaid += pay;
+  bankEl.textContent = banked;
+  saveBank(); saveBuild();
+  shopBuySound();
+  shopDirty = true;                 // the outfitter quotes the same bank
+  buildDirty = true; dockBarSig = "";
+  checkStageDone();
+  return pay;
+}
+function buildAct() {
+  const n = bldLines().length;
+  if (buildCursor < n) togglePour(buildCursor);
+  else if (buildCursor === n) payStage();
+  else if (n) pourAll();
+}
+/* The rung closes ITSELF, the frame after the last unit lands. There is no
+   COMMIT button and there should not be — the moment a stage completes is a
+   light coming on outside the window, and putting a menu press in front of that
+   would make the payoff something you administered. */
+function checkStageDone() {
+  if (buildStage >= STAGES.length) return false;
+  if (bldCrShort() > 0) return false;
+  for (const L of bldLines()) if (L.short > 0) return false;
+  buildStage++;
+  buildPaid = 0;
+  for (const g of GOOD_IDS) buildPour[g] = 0;
+  for (const g of GOOD_IDS) buildKeep[g] = true;   // the next bill is a fresh decision
+  pourAllNow = false;
+  buildCursor = 0;
+  saveBuild();
+  applyBuildLights(fcBody());
+  stageDoneSound();
+  buildDirty = true; dockBarSig = "";
+  return true;
+}
+
+/* Weight moving, not money arriving. The bank's tick is a 990Hz sine because
+   that is what a credit sounds like; a hold going into a frame is low and it
+   lands. Same 0.11s rate-limit — the drain moves ~26 units a second. */
+let pourTickAt = 0;
+function pourTickSound() {
+  if (!audio) return;
+  const { ctx } = audio, t = ctx.currentTime;
+  if (t - pourTickAt < 0.11) return;
+  pourTickAt = t;
+  const o = ctx.createOscillator(); o.type = "triangle";
+  o.frequency.setValueAtTime(220, t);
+  o.frequency.exponentialRampToValueAtTime(130, t + 0.09);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.035, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+  o.connect(g); g.connect(audio.sfx);
+  o.start(t); o.stop(t + 0.11);
+}
+// a rung closing. The bank's done-chime an octave down and half again as slow —
+// same shape, more mass, so it reads as related and bigger.
+function stageDoneSound() {
+  if (!audio) return;
+  const { ctx } = audio, t = ctx.currentTime;
+  [165, 208, 247, 330].forEach((f, i) => {
+    const o = ctx.createOscillator(); o.type = "triangle";
+    o.frequency.value = f;
+    const g = ctx.createGain(), at = t + i * 0.14;
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(0.085, at + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.55);
+    o.connect(g); g.connect(audio.sfx);
+    o.start(at); o.stop(at + 0.58);
+  });
+}
+
+/* The pour. Same rate as the bank's drain, because it is the same motion — a
+   hold emptying while you stand on a pad — and drain speed is friction, not a
+   decision. Returns whether anything moved, which is what tells the caller to
+   redraw. */
+function pourTick(dt) {
+  /* CLOSEST LINE FIRST. The bank drains best-paying-first so that a takeoff
+     mid-drain leaves you holding the right stuff; the same argument points a
+     different way here — a pour cut short should have CLOSED a line rather than
+     dented three, because a closed line is progress you never have to think
+     about again and three part-filled ones are three trips you still owe. */
+  const order = buildStage >= STAGES.length ? [] : bldLines()
+    .filter(L => L.short > 0 && hold[L.g] > 0 && poursNow(L.g))
+    .sort((a, b) => a.short - b.short);
+  /* ⚠ THE CARRY IS ZEROED WHENEVER NOTHING IS POURING, and that is not tidiness.
+     Everything here defaults to HOLD, so the resting state of this panel is a
+     ship parked on the pad moving nothing — and a carry that kept accumulating
+     through it would buy 26 units of credit a second. Two minutes of reading the
+     bill, one press of POUR ALL, and 3,000 units teleport into the frame in a
+     single frame. Same shape as `if (!banking) bankFlow = 0` next door. */
+  if (!order.length) { pourFlow = 0; return false; }
+  pourFlow += BANK_RATE * dt;
+  const move0 = Math.floor(pourFlow);
+  let move = move0;
+  if (move <= 0) return false;
+  pourFlow -= move0;
+  let moved = 0;
+  for (const L of order) {
+    if (move <= 0) break;
+    const n = Math.min(move, L.short, hold[L.g]);
+    hold[L.g] -= n; cargo -= n; buildPour[L.g] += n;
+    move -= n; moved += n;
+  }
+  if (!moved) return false;
+  refreshCargoHud();
+  pourTickSound();
+  saveBuild();
+  checkStageDone();
+  return true;
+}
+
+// the toggle cells are rebuilt by innerHTML several times a second, so ONE
+// delegated listener on the body — per-row listeners would be re-bound
+// constantly and every old one would leak. Same reason the market has one.
+manifestBodyEl.addEventListener("click", e => {
+  if (e.target.closest(".bldAll")) { setDockBox("build"); pourAll(); return; }
+  const pay = e.target.closest("[data-pay]");
+  if (pay) {
+    setDockBox("build");
+    buildCursor = bldLines().length; buildDirty = true;
+    payStage();
+    return;
+  }
+  const cell = e.target.closest("[data-pour]");
+  if (!cell) return;
+  setDockBox("build");                  // acting inside a box is also opening it
+  togglePour(+cell.dataset.pour);
+});
+
 /* ---- THE DOCK ACCORDION (v85) -----------------------------------------
    Three panels, one open at a time, one column. See the CSS block for why the
    layout changed; this is the state and the three motions that drive it.
@@ -10451,13 +10980,23 @@ dispatchEl.addEventListener("click", e => {
 
    `dockBox` is null in flight. That single flag is what tells the pad poll and
    the keydown handler whether the arrows belong to the dock or to the ship. */
-let dockBox = null;                                   // "shop" | "jobs" | "market" | null
-let portShop = false, portJobs = false, portMarket = false;   // what THIS pad offers
+let dockBox = null;                            // "shop" | "jobs" | "market" | "build" | null
+let portShop = false, portJobs = false, portMarket = false, portBuild = false;   // what THIS pad offers
 let dockBarSig = "";                                  // last summary the bars were drawn against
 
-function dockBoxEl(k) { return k === "shop" ? shopEl : k === "jobs" ? dispatchEl : marketEl; }
-function dockHas(k) { return k === "shop" ? portShop : k === "jobs" ? portJobs : portMarket; }
-function dockList() { return ["shop", "jobs", "market"].filter(dockHas); }
+// v110: the manifest is a fourth box and rides every one of these unchanged.
+// It is last in the list on purpose — at FLEET COMMAND it is the ONLY box, so
+// its position never costs a press, and anywhere else it simply isn't there.
+const DOCK_BOXES = ["shop", "jobs", "market", "build"];
+function dockBoxEl(k) {
+  return k === "shop" ? shopEl : k === "jobs" ? dispatchEl
+       : k === "market" ? marketEl : manifestEl;
+}
+function dockHas(k) {
+  return k === "shop" ? portShop : k === "jobs" ? portJobs
+       : k === "market" ? portMarket : portBuild;
+}
+function dockList() { return DOCK_BOXES.filter(dockHas); }
 // how many ACTIONABLE rows the open box has. The market is a readout — there is
 // nothing in it to press, so Up/Down there is honestly nothing rather than a
 // cursor that moves over numbers you can't act on.
@@ -10470,6 +11009,15 @@ function dockRowCount(k) {
   // +1 and not a second list — ↓ off the bottom good lands on it, and ↓ again
   // wraps to the top, so a D-pad reaches everything with no new rule to learn.
   if (k === "market") return GOOD_IDS.length + 1;
+  /* v110 — the bill's own length, which is different on every rung: one row per
+     good the CURRENT stage names, then CREDITS, then POUR ALL. Stage 1 has no
+     goods at all, so it is a one-row box, and a finished station is a zero-row
+     one — there is genuinely nothing left to press. */
+  if (k === "build") {
+    if (buildStage >= STAGES.length) return 0;
+    const n = bldLines().length;
+    return n ? n + 2 : 1;
+  }
   return 0;
 }
 /* the collapsed bar's one line. It has to be worth the glass it costs: a bar
@@ -10487,6 +11035,22 @@ function dockSummary(k) {
     return afford ? afford + " AFFORDABLE" : open + " LOCKED";
   }
   if (k === "jobs") return activeJob ? "1 ACTIVE" : offeredJobs.length + " OFFERS";
+  /* v110 — the one thing worth knowing before you open it: whether the flight
+     you just made pays off. "READY TO CLOSE" says one press finishes the rung,
+     which is the whole reason you flew 55,000 units to get here. Anything else
+     and the bar names the rung and how many lines are still owed. */
+  if (k === "build") {
+    if (buildStage >= STAGES.length) return "COMPLETE";
+    const lines = bldLines();
+    let left = bldCrShort() > 0 ? 1 : 0, can = bldCrShort() <= banked;
+    for (const L of lines) {
+      if (L.short > 0) left++;
+      if (L.short > hold[L.g]) can = false;
+    }
+    if (!left) return "READY TO CLOSE";      // unreachable in practice; a closed rung self-completes
+    if (can) return "READY TO CLOSE";
+    return "STAGE " + (buildStage + 1) + " · " + left + (left === 1 ? " LINE" : " LINES");
+  }
   if (!cargo) return "HOLD EMPTY";
   if (!curPort) return "HOLD " + cargo;
   /* what the hold is worth HERE, in the same exact cents the drain settles in —
@@ -10513,11 +11077,12 @@ function dockSummary(k) {
 // cheap enough to call every docked frame; the signature is what stops it
 // rewriting three bars 60 times a second for nothing
 function refreshDockBars() {
-  const sig = dockBox + "|" + portShop + portJobs + portMarket + "|" + banked + "|" +
-              cargo + "|" + (activeJob ? "J" : offeredJobs.length) + "|" + upLvl.join("");
+  const sig = dockBox + "|" + portShop + portJobs + portMarket + portBuild + "|" + banked + "|" +
+              cargo + "|" + (activeJob ? "J" : offeredJobs.length) + "|" + upLvl.join("") +
+              "|" + buildStage + "." + buildPaid;
   if (sig === dockBarSig) return;
   dockBarSig = sig;
-  for (const k of ["shop", "jobs", "market"]) {
+  for (const k of DOCK_BOXES) {
     const el = dockBoxEl(k), open = k === dockBox;
     el.classList.toggle("open", open);
     el.querySelector(".bx").textContent = open ? "▾" : "▸";
@@ -10529,7 +11094,7 @@ function setDockBox(k) {
   dockBox = k;
   // the cursor highlight lives INSIDE the rows, so opening a box has to redraw
   // the one that lost it as well as the one that gained it
-  shopDirty = jobDirty = marketDirty = true;
+  shopDirty = jobDirty = marketDirty = buildDirty = true;
   dockBarSig = "";
   refreshDockBars();
 }
@@ -10545,6 +11110,7 @@ function dockMove(dy) {
   if (dockBox === "shop") { shopCursor = (shopCursor + dy + n) % n; shopDirty = true; }
   else if (dockBox === "jobs") { jobCursor = (jobCursor + dy + n) % n; jobDirty = true; }
   else if (dockBox === "market") { marketCursor = (marketCursor + dy + n) % n; marketDirty = true; }
+  else if (dockBox === "build") { buildCursor = (buildCursor + dy + n) % n; buildDirty = true; }
 }
 function dockAct() {
   if (dockBox === "shop") buyUpgrade(shopCursor);
@@ -10552,6 +11118,7 @@ function dockAct() {
   // v99: the last row is SELL ALL, not a good
   else if (dockBox === "market")
     marketCursor === GOOD_IDS.length ? sellAll() : toggleKeep(marketCursor);
+  else if (dockBox === "build") buildAct();
 }
 /* v98 — flip one good between SELL and HOLD. The drain reads the marks every
    frame, so this takes effect on the very next one: mark a good mid-drain and it
@@ -10592,7 +11159,7 @@ function sellAll() {
   holdMarkSound(!sellAllNow);       // up-notes for "this sells", down for "it stays"
 }
 // the bars are real buttons, so a click/tap opens a box with no extra plumbing
-for (const k of ["shop", "jobs", "market"])
+for (const k of DOCK_BOXES)
   dockBoxEl(k).querySelector(".dockbar").addEventListener("click", () => setDockBox(k));
 
 /* v98 — ONE delegated listener for every SELL/HOLD cell, on the body that
@@ -13573,16 +14140,31 @@ function animate() {
        isn't the bounds fix the other two are — it's that the sixth row is SELL
        ALL, and a cursor parked on it would carry to the next port, where one
        press empties a hold you flew there to protect. Arrive on row one. */
-    shopCursor = jobCursor = marketCursor = 0;
+    shopCursor = jobCursor = marketCursor = buildCursor = 0;
+    /* v110 — POUR ALL expires with the visit, exactly as SELL ALL does (that one
+       in strikeQuote, beside the receipt). A one-shot override that survived a
+       takeoff would put every good back to POUR permanently, and the next
+       landing would empty the hold into the frame before you had read the bill. */
+    buildDirty = true;
+    pourAllNow = false;
   }
+
+  /* v110 — THE POUR. Deliberately its own block below the bank's drain rather
+     than a branch inside it: the two never both run (FC pays nothing, and no
+     port that pays takes a delivery), and folding them together would put the
+     one law this panel exists under — hold into frame, nothing back — inside
+     the same `if` as the code that pays you. They stay apart. */
+  if (onPort && onPort.build) { if (pourTick(dt)) buildDirty = true; }
+  else pourFlow = 0;                 // airborne, or standing somewhere that isn't a build site
 
   const canShop = !!(onPort && onPort.shop);
   const canJobs = !!(onPort && onPort.dispatch);
   const canMarket = !!(onPort && onPort.pay > 0);
+  const canBuild = !!(onPort && onPort.build);
   /* v85 — what this pad offers, hoisted into globals so the keydown handler and
      the pad poll can ask without re-deriving it. `dockBox` non-null is then the
      single "the dock owns the arrows" test, in flight and on the deck alike. */
-  portShop = canShop; portJobs = canJobs; portMarket = canMarket;
+  portShop = canShop; portJobs = canJobs; portMarket = canMarket; portBuild = canBuild;
   /* Which box opens when you touch down: MARKET if you're carrying, OUTFITTER if
      you're not. The drain runs either way, but the board is the only thing that
      says what the haul was worth — and after v84 it's where a glutted price
@@ -13633,6 +14215,16 @@ function animate() {
     // first poll after the hold empties fires instantly instead of 250ms later
     if (redraw) { refreshMarket(onPort); marketCargoShown = cargo; marketDirty = false; marketSigAt = 0; }
   }
+  /* the manifest (v110). Redrawn on the same two triggers the market answers to
+     — the port changed, or the hold moved — plus the bank, because the CREDITS
+     row quotes it and a bank that moved while you stood here (a job completing)
+     would leave the row promising a payment you can no longer make. No drift
+     poll: nothing about a construction bill moves on its own. */
+  manifestEl.style.display = canBuild ? "block" : "none";
+  if (canBuild && (buildDirty || cargo !== buildCargoShown || banked !== buildBankShown)) {
+    refreshManifest();
+    buildCargoShown = cargo; buildBankShown = banked; buildDirty = false;
+  }
   // and the collapsed bars, which are the only thing a closed box says (v85)
   refreshDockBars();
 
@@ -13643,7 +14235,7 @@ function animate() {
      v83: a market counts. RustHollow has neither gear nor work, so before the
      price board it never raised the sheet at all — the one port on glass whose
      panel was left floating over the flight HUD. */
-  const wantDock = !!(landedOn && (canShop || canJobs || canMarket) &&
+  const wantDock = !!(landedOn && (canShop || canJobs || canMarket || canBuild) &&
                       document.body.classList.contains("touch"));
   if (wantDock !== docked) {
     docked = wantDock;
@@ -13994,7 +14586,11 @@ setTimeout(() => {
   // dev shortcut: open space-flight.html#earth (or #rubicon, or any body's
   // name) to spawn on that world's doorstep instead of cruising there. The
   // #reset hash names no body, so it falls through harmlessly.
-  const doorstep = BODIES.find(b => b.position && b.name.toLowerCase() === location.hash.slice(1));
+  // v110: spaces are squeezed out of the name so a two-word body has a hash at
+  // all — #fleetcommand. Every single-word name is unchanged by the replace, so
+  // no existing shortcut moves.
+  const doorstep = BODIES.find(b => b.position &&
+    b.name.toLowerCase().replace(/\s+/g, "") === location.hash.slice(1));
   /* v90.1: #reset is consumed ONCE. Its three wipes (bank, upgrades, job) ran
      at parse time above; leaving the hash in the URL meant every F5 or crash
      reload mid-career silently wiped the save AGAIN — fatal to judging a
@@ -14020,9 +14616,19 @@ setTimeout(() => {
                            doorstep.position[1] + 300,
                            doorstep.position[2]);
     } else {
-      shipObj.position.set(doorstep.position[0] - doorstep.radius * 0.3,
-                           doorstep.position[1] + doorstep.radius * 0.5,
-                           doorstep.position[2] - doorstep.radius * 2.0);
+      /* v110: a STATION's decks stand far outside its collision radius — FLEET
+         COMMAND's arm berths are at top 2.98, so 268 × 2.0 puts the doorstep
+         531u out, which is 268u INSIDE the arm it was meant to park you beside.
+         Scale off the outermost pad instead of the hub, and every planet (whose
+         pads sit just above 1.0) lands within a few percent of where it always
+         did. MEASURED off the pad table rather than a hand-typed number for a
+         station, which is the same rule the table itself is under. */
+      let reach = doorstep.radius;
+      if (doorstep.pads)
+        for (const p of doorstep.pads) reach = Math.max(reach, doorstep.radius * p.top);
+      shipObj.position.set(doorstep.position[0] - reach * 0.3,
+                           doorstep.position[1] + reach * 0.5,
+                           doorstep.position[2] - reach * 2.0);
     }
     const c = new THREE.Vector3(...doorstep.position);
     shipObj.lookAt(shipObj.position.clone().multiplyScalar(2).sub(c));
