@@ -3679,19 +3679,35 @@ function buildBody(cfg) {
         cfg.belt.count
       );
       const dummy = new THREE.Object3D();
+      /* v109.2: the placements are KEPT now, not thrown away with the loop.
+         They were write-only until Tanner flew the quarry and said the obvious
+         thing — that skimming a boulder and passing straight through it feels
+         wrong. Same verdict he gave the station hull ("I am not creating a
+         cartoon"), so the same answer. Local coordinates, because the group
+         they live in spins: one inverse transform of the SHIP is cheaper every
+         frame than a thousand forward transforms of the rocks. */
+      const solids = [];
       for (let i = 0; i < cfg.belt.count; i++) {
         const ang = Math.random() * Math.PI * 2;
         const dist = cfg.belt.inner + Math.random() * (cfg.belt.outer - cfg.belt.inner);
+        const scale = 16 + Math.random() * 44;
         dummy.position.set(Math.cos(ang) * dist, (Math.random() - 0.5) * 300, Math.sin(ang) * dist);
         dummy.rotation.set(Math.random()*6.28, Math.random()*6.28, Math.random()*6.28);
-        dummy.scale.setScalar(16 + Math.random() * 44);
+        dummy.scale.setScalar(scale);
         dummy.updateMatrix();
         rocks.setMatrixAt(i, dummy.matrix);
+        // a dodecahedron of "radius" 1 has its faces closer in than its points;
+        // 0.8 hits the face distance, so you touch rock rather than stopping in
+        // the gap where a vertex would have been
+        solids.push({ p: dummy.position.clone(), r: scale * 0.8 });
       }
       const beltGroup = new THREE.Group();
       beltGroup.rotation.x = BELT_TILT;
       beltGroup.add(rocks);
       group.add(beltGroup);
+      // the widest thing in the belt, so the cheap early-out below can be exact
+      beltGroup.userData.solids = solids;
+      beltGroup.userData.reach = cfg.belt.outer + 60 + SHIP_HIT_R;
       belts.push(beltGroup);
     }
 
@@ -6923,6 +6939,97 @@ function updateJunk(dt) {
 }
 
 for (const j of junk) junkRespawn(j, true);
+
+/* ---- 10f-b. THE BELT IS SOLID (v109.2) ----------------------------------
+   Tanner flew the quarry and said the honest thing: it feels funny to skim a
+   boulder that close and pass straight through it. The belt has been decor
+   since v64 and nobody minded, because until v109 there was no reason to be
+   IN it. Now the ore is in there, so the rocks are furniture you live with.
+   Same call he made on the station hull — "I am not creating a cartoon".
+
+   ⚠ It is cheaper than it looks, and it has to be, because it is 1,000 rocks
+   in a frame budget that already draws a solar system:
+     - the whole pass early-outs on ONE distance check when you are not at
+       KRONOS, which is almost always;
+     - the rocks are tested in the belt's OWN rotating frame, so the spin
+       costs nothing. One inverse transform of the ship beats a thousand
+       forward transforms of the rocks;
+     - it stops at the first overlap. They average ~264u apart against a ~50u
+       hit radius, so two at once is not a case worth carrying code for.
+
+   ⛔ EVERY BELT ROCK IS A WALL, which breaks the junk field's size rule on
+   purpose. There, a rock under RAM_WALL_R shatters on the hull — fair, because
+   you could also have shot it. These you cannot shoot, cannot clear, and would
+   be back next orbit anyway, so "shattering" one would mean permanently eating
+   a hole in the scenery to reward a collision. Bedrock, not loose junk.
+
+   The rock's own motion COUNTS. At 5,400u the belt sweeps past at ~108 u/s, so
+   a ship holding station in world space is genuinely being run into, and the
+   picture out of the windscreen says so. Drift with the belt and the closing
+   speed falls to nothing — which is the rule the rest of the ram system
+   already teaches with RAM_FREE_SPD, just stated in a place where the "still"
+   thing is moving. */
+const BELT_SPIN = 0.02;               // rad/s, and the ONLY copy of it
+const beltShipL = new THREE.Vector3(), beltRockW = new THREE.Vector3();
+const beltAxis  = new THREE.Vector3(), beltRockV = new THREE.Vector3();
+const beltNrm   = new THREE.Vector3(), beltRel   = new THREE.Vector3();
+const beltCtr   = new THREE.Vector3(), beltInv   = new THREE.Matrix4();
+let beltRamCool = 0;                  // seconds until the belt can hurt us again
+
+function updateBelts(dt) {
+  if (beltRamCool > 0) beltRamCool -= dt;
+  for (const belt of belts) {
+    belt.rotation.y += BELT_SPIN * dt;
+    if (landedOn) continue;
+    belt.updateMatrixWorld(true);
+    beltCtr.setFromMatrixPosition(belt.matrixWorld);
+    const reach = belt.userData.reach;
+    if (beltCtr.distanceToSquared(shipObj.position) > reach * reach) continue;
+
+    beltInv.copy(belt.matrixWorld).invert();
+    beltShipL.copy(shipObj.position).applyMatrix4(beltInv);
+    const solids = belt.userData.solids;
+    for (let i = 0; i < solids.length; i++) {
+      const rock = solids[i];
+      const rr = rock.r + SHIP_HIT_R;
+      if (beltShipL.distanceToSquared(rock.p) >= rr * rr) continue;
+
+      beltRockW.copy(rock.p).applyMatrix4(belt.matrixWorld);
+      beltNrm.subVectors(shipObj.position, beltRockW);
+      // dead centre normalises to a zero vector, and a zero normal shoves us
+      // nowhere — which pins the ship inside the rock. Same guard as the junk ram.
+      if (beltNrm.lengthSq() < 1e-6) beltNrm.set(0, 0, 1);
+      beltNrm.normalize();
+
+      // the rock's world velocity: omega (the belt's own spin axis) crossed
+      // with its offset from the planet's centre
+      beltAxis.setFromMatrixColumn(belt.matrixWorld, 1).normalize().multiplyScalar(BELT_SPIN);
+      beltRockV.subVectors(beltRockW, beltCtr).cross(beltAxis).multiplyScalar(-1);
+      beltRel.subVectors(ship.velocity, beltRockV);
+      const relSpd = beltRel.length();
+
+      const hurt = beltRamCool <= 0;
+      const dmg = hurt ? Math.min(RAM_DMG_CAP,
+        (Math.max(0, relSpd - RAM_FREE_SPD) / 100) * (2 + rock.r * RAM_DMG_SIZE)) : 0;
+      if (hurt) beltRamCool = 0.4;
+
+      // shove clear and bounce off it. The bounce reads CLOSING speed, not the
+      // ship's alone: a rock arriving at 108 u/s has to be able to knock a
+      // parked ship aside, and ship.velocity dot n is zero in exactly that case.
+      shipObj.position.copy(beltRockW).addScaledVector(beltNrm, rr + 1);
+      const into = beltRel.dot(beltNrm);
+      if (into < 0) ship.velocity.addScaledVector(beltNrm, -into * 1.6);
+
+      /* Damage LAST, for the reason the junk ram spells out: a lethal hit
+         breaches and teleports the ship, which invalidates everything above. */
+      if (hurt) {
+        thump(Math.min(360, 90 + relSpd * 0.5 + rock.r * 3));
+        if (dmg > 0) { spillCargo(dmg); shipDamage(dmg); }
+      }
+      break;   // one rock per frame; see the note above
+    }
+  }
+}
 
 /* ============ 10g. PIRATES (v40) ============
    The junk field gets competition. A scavenger pirate spawns on a far shell
@@ -13195,7 +13302,7 @@ function animate() {
                          Math.sin(o.angle) * o.distance * ci);
     }
   }
-  for (const belt of belts) belt.rotation.y += 0.02 * dt;
+  updateBelts(dt);   // spins them AND collides them (v109.2) — one owner, one 0.02
   for (const c of cloudLayers) c.mesh.rotation.y += c.speed * dt;
   updateCranes(dt);
   /* ...and carry the collision blocks with the booms that just moved. Here,
