@@ -7697,10 +7697,24 @@ const HAULER_DEFS = [
                                                                                    // (mean period 570s) — it earns a shout
                                                                                    // most shifts it hires security (v57, 10i)
   { file: "collector/ss-packrat.glb",      name: "SS PACKRAT",         hp: 6, bits: 14, val: 7,   // ~100 — the salvage collector,
-    first: 150, firstRnd: 90,  rMin: 200, rMax: 420, len: 22, thruster: "ThrusterL",       // mid-size (2x a fighter), its own class
+    /* v109.3 — THE TWO COLLECTORS TRADED PERIODS. Tanner's v108 verdict was
+       "TOO RARE — MORE OFTEN": "if it is not going to pay out as much it should
+       be more frequent than the packrat that pays more." He is right, and the
+       ordering WAS backwards — the worse trade was the rarer sighting.
+       ⛔ But shortening the TAXMAN alone is an income raise, and its bad pay is
+       the entire reason a fifth traffic slot was legal (see its block below).
+       70/580s + 98/310s = 1,572/hr; making the TAXMAN 310s too would be
+       1,951/hr, +24% on the collector lane. So they SWAP rather than one moving:
+       same number of collectors in the sky, the ordering he asked for, and the
+       total comes DOWN to 1,421/hr because the frequency moved off the truck
+       that pays 98 onto the one that pays 70.
+       The banner goes with the rarity, not with the hull — that is the v81 rule
+       ("the rare trucks announce themselves"), and the rare one is now this. */
+    first: 260, firstRnd: 140, rMin: 400, rMax: 760, len: 22, thruster: "ThrusterL",       // mid-size (2x a fighter), its own class
     // v82: the collector's hold is full of what it just picked up — SCRAP. Shooting
     // the salvager for its salvage is the most on-theme drop in the game.
-    role: "salvage", good: "scrap" },                                                      // and it WORKS the field (v57)
+    role: "salvage", good: "scrap",                                                        // and it WORKS the field (v57)
+    banner: "◆ SALVAGE SWEEP — SS PACKRAT ◆" },   // ~580s mean period earns a shout (v81 rule)
   /* SS TAXMAN (v108) — the institutional collector, finished in the shipyard
      2026-07-26 and parked ever since because §7b wants it berthing at the FC
      arms. It doesn't need the station to have a job: it's a collector, and the
@@ -7716,10 +7730,19 @@ const HAULER_DEFS = [
      29.9 raw), so the capsule clamps to a 17u sphere by design — see the
      chunky-hull note in the loader. No `thruster` override: its seats are
      exactly ThrusterL/C/R, so burner discovery finds all three itself. */
+  /* ⛔ v109.3 — HE IS THE COMMON ONE NOW, and no other number moved. 400-760
+     became 200-420, a mean of 310s, traded with the PACKRAT above rather than
+     taken for free. He is still the worst trade in the sky and that is still
+     load-bearing: 14 hits for 70 credits is 5.0 credits per hit against the
+     PACKRAT's 16.3, so meeting him three times as often is three times as much
+     BAD trade, not a payday. That is the whole reason this swap is legal where
+     shortening him alone would not have been.
+     The banner went with the rarity. At 310s a shout every five minutes is on
+     the wallpaper side of the v81 rule — and being common is its own
+     announcement, which is what he was asking for. */
   { file: "collector/ss-taxman.glb",       name: "SS TAXMAN",          hp: 14, bits: 10, val: 7,   // 70 — the worst payday flying
-    first: 260, firstRnd: 140, rMin: 400, rMax: 760, len: 34,
-    role: "salvage", good: "scrap",
-    banner: "◆ REVENUE SWEEP — SS TAXMAN ◆" },   // ~580s mean period earns a shout (v81 rule)
+    first: 150, firstRnd: 90,  rMin: 200, rMax: 420, len: 34,
+    role: "salvage", good: "scrap" },
   // SS CANARY (v69) — the container run. Biggest hull in the fleet, and the only
   // hauler carrying its cargo on the OUTSIDE: 12 separately-named Cargo00..Cargo11
   // crates in an open ribbed spine, so a future "shoot it and it sheds one" is a
