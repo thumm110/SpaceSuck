@@ -3271,6 +3271,12 @@ function surfaceUnder(body) {
 /* ============ 7. BODY BUILDER ============ */
 const liveBodies = [];
 const belts = [];
+/* How far a belt's plane is tipped off its world's XZ. Hoisted out of the
+   builder in v109 because it is no longer only a look: FIELD_ZONE tests whether
+   the ship is standing IN the belt, and that test needs the plane's normal. Two
+   copies of this angle would drift the day someone re-tilts a ring for the
+   render and the quarry quietly moves out from under the rocks. */
+const BELT_TILT = Math.PI / 2.4 - Math.PI / 2;
 const cloudLayers = [];
 
 function makeProceduralSurface(cfg) {
@@ -3683,7 +3689,7 @@ function buildBody(cfg) {
         rocks.setMatrixAt(i, dummy.matrix);
       }
       const beltGroup = new THREE.Group();
-      beltGroup.rotation.x = Math.PI / 2.4 - Math.PI / 2;
+      beltGroup.rotation.x = BELT_TILT;
       beltGroup.add(rocks);
       group.add(beltGroup);
       belts.push(beltGroup);
@@ -5548,18 +5554,120 @@ const FIELD_MIX = {
   // units, enough that the trip reads as a different job, small enough that
   // the alloy still decides the total and the ceiling above stays put.
   RUBICON: { debris: "contra" },
+  /* KRONOS — THE QUARRY (v109). The one entry here that exists for the
+     CONSTRUCTION ladder rather than for the price board, and the first one
+     whose world has no port on it at all.
+
+     Why it had to be built before the manifest panel: the field makes ZERO ore
+     anywhere in the game. That is measured, not assumed — 750 kills across all
+     three flavours, `harness/tests/measure-goods.js`. Every unit of ore in the
+     system today falls off a hauler, and freight is hard-capped by spawn timers
+     you cannot rush at ~2,320 units/hr. Stage 2's bill is 1,100 ORE. Against a
+     freight-only supply that bill is not a job, it is a waiting room — so the
+     first construction stage that asks for material would have shipped broken.
+
+     ⚠ ROCKS AND HOPPERS, not one or the other, and the split is the design:
+       - the ASTEROID carries ore because a rock in an ore belt that yields no
+         ore reads as a bug. It is also the worst yield in the game — 1 unit for
+         2 hp, 0.49 units per bolt — so on its own the 2,780-unit ladder would
+         be ~5,600 rocks, which is a chore wearing a quarry's clothes.
+       - the SATELLITE carries the tonnage. 24 units for 2 hp is 12.00 units per
+         bolt, 24x the asteroid, and it is the only piece in the field that can
+         move a total (six of them are 73% of its value). Out here it is not a
+         dead comsat, it is a loaded hopper. Six of them among a thousand rocks
+         makes the belt a HUNT rather than a field to hose down.
+       - DEBRIS STAYS SCRAP, on purpose. Stage 4 wants scrap and ore in the same
+         load, so the belt has to fill both halves of one manifest or "come back
+         to the belt" is a lie. It also keeps the field from going monotone.
+
+     ⛔ NO CEILING MOVE, and this one needs checking rather than asserting,
+     because KRONOS has no port to price against. Same 32 slots, same bits, same
+     values: a clear here is still 197 units, now 161 ore + 36 scrap. The only
+     port worth carrying that hold to is BULLS BAY (ore 1.30, the one buyer that
+     wants it), which prices it at 230.90 against FOLLY's untouched 244.35 — and
+     BULLS is 23,500u away at conjunction and 122,500u at opposition, on a world
+     whose OTHER pad is FOLLY. So the player who wants credits still parks at
+     FOLLY and never comes here. You fly to KRONOS for MATERIAL, not for money,
+     which is the only shape that survives "raise sinks, never income". */
+  KRONOS: { asteroid: "ore", satellite: "ore" },
 };
+/* ---- AND FOR ONE WORLD, WHERE YOU STAND INSIDE IT MATTERS (v109) ---------
+   VERDANT and RUBICON flavour a whole neighbourhood, and that is right for
+   them: the good is the WORLD's (a derelict's tanks, a smuggler's jettisoned
+   load) and the port that buys it is on the ground under you, so "near the
+   planet" is the whole idea.
+
+   KRONOS is the opposite case. Nothing there is landable, the ore is not the
+   planet's, and the planet already carries the thing the ore is supposed to
+   come out of — a visible belt, 1,000 rocks, 4,500 to 6,300 out. Flavour that
+   as a sphere and you can hover over the north pole with nothing on screen and
+   pull the same ore, which leaves the belt exactly what it has been since v64:
+   wallpaper. This is the same mistake v107 caught in the safe sky and fixed the
+   same way — a sphere says "near", and near is not where the thing IS.
+
+   So a zoned world adds an annulus test on top of its reach. Numbers, and every
+   one of them is a slack decision rather than a fit to the art:
+
+     rIn  3400  the ring's outer edge is 4200 and the belt starts at 4500, so
+                this reaches 1100u inside the rocks. It is also comfortably
+                clear of the sky — radius 1950 + atmoAlt 1000 = 2950 — so you
+                can never sit in the cloud tops and mine.
+     rOut 7400  1100u past the last rock, symmetric with rIn.
+     half 3000  the belt is only ~300u thick and gating on THAT would be
+                unplayable: the junk bubble is 3000u, so the field you are
+                shooting would routinely straddle a line your ship keeps
+                crossing. 3000 is exactly JUNK_FAR — the pocket is never
+                tighter than the bubble it is flavouring.
+
+   What it actually excludes is the two readings that would have made the belt
+   pointless: the poles at any altitude (r ~ 0 fails rIn), and the planet
+   itself. The reach test above stays in front of this as a cheap reject and as
+   a guaranteed outer bound; for KRONOS it can never be the binding one.
+
+   ⚠ This is the FIRST overlapping pair in the table, and the old "the two can
+   never overlap" note below is now about VERDANT and RUBICON only. KRONOS and
+   RUBICON close to 14,470u at conjunction against 10,800 + 7,400 of combined
+   reach, so a point CAN satisfy both. Nearest-wins resolves it, and resolves it
+   correctly rather than by luck: the annulus tops out 7,400u from KRONOS, so
+   anywhere inside it RUBICON is at least 7,070u away and KRONOS always wins.
+   Do not "simplify" fieldMixAt into first-match. */
+const FIELD_ZONE = {
+  KRONOS: { rIn: 3400, rOut: 7400, half: 3000 },
+};
+/* The belt plane's normal, in world space. It is a CONSTANT and that is worth
+   writing down: a beltGroup is tilted on X and then spun on its own Y forever,
+   and under Euler XYZ (Rx . Ry) the Y axis falls straight out of the spin — so
+   the plane the rocks ride never moves, only the rocks in it. The planet group
+   itself is never rotated either; its spin is applied to the "surface" mesh
+   alone (see the body animation loop). If either of those ever changes, this
+   has to be read off beltGroup.matrixWorld instead — `field-mix.js` asserts the
+   two agree, so it will say so rather than silently mining the wrong sky. */
+const BELT_NORMAL = new THREE.Vector3(0, Math.cos(BELT_TILT), Math.sin(BELT_TILT));
+const zoneTmp = new THREE.Vector3();   // dedicated: fieldGood runs inside junkDropScrap
+/* Is `p` standing in `b`'s belt? Splits the offset into height along the belt
+   normal and radius within the plane, so it is one dot and one subtraction. */
+function inFieldZone(p, b, z) {
+  zoneTmp.subVectors(p, b.group.position);
+  const h = zoneTmp.dot(BELT_NORMAL);
+  if (Math.abs(h) > z.half) return false;
+  const r2 = zoneTmp.lengthSq() - h * h;          // Pythagoras, no sqrt
+  return r2 >= z.rIn * z.rIn && r2 <= z.rOut * z.rOut;
+}
 /* How far out a world still flavours the field. Generous on purpose: the junk
    bubble itself reaches 3,000u, so a tight neighbourhood would have you
    crossing the line mid-fight and watching the drops change under you. 1.5R +
    6,000 gives VERDANT ~7,000u and RUBICON ~10,800u — both comfortably wider
-   than the bubble, and the two can never overlap (their orbits hold them at
+   than the bubble, and THOSE TWO can never overlap (their orbits hold them at
    least 20,500u apart even when they line up, against 17,800u of combined
-   reach). */
+   reach). ⚠️ v109 added a third, and KRONOS and RUBICON CAN overlap — see the
+   FIELD_ZONE block for why nearest-wins is still the right answer there. */
 const FIELD_MIX_MUL = 1.5, FIELD_MIX_PAD = 6000;
 /* The nearest flavoured world to `p`, or null out in the deep. Walks
-   liveBodies the way junkBlockingBody does; nearest wins, so an overlap could
-   never be ambiguous even if the orbits changed to allow one. */
+   liveBodies the way junkBlockingBody does; NEAREST WINS, which is load-bearing
+   now that an overlap is reachable rather than hypothetical. A zoned world
+   (KRONOS) has to pass its annulus as well as its reach, and failing it means
+   it is not a candidate at all — not that it loses a tie — so standing over
+   KRONOS's pole gives you the deep-space default and not the belt's ore. */
 function fieldMixAt(p) {
   let best = null, bestD2 = Infinity;
   for (const b of liveBodies) {
@@ -5567,7 +5675,10 @@ function fieldMixAt(p) {
     if (!mix) continue;
     const reach = b.cfg.radius * FIELD_MIX_MUL + FIELD_MIX_PAD;
     const d2 = p.distanceToSquared(b.group.position);
-    if (d2 < reach * reach && d2 < bestD2) { best = mix; bestD2 = d2; }
+    if (d2 >= reach * reach || d2 >= bestD2) continue;
+    const zone = FIELD_ZONE[b.cfg.name];
+    if (zone && !inFieldZone(p, b, zone)) continue;
+    best = mix; bestD2 = d2;
   }
   return best;
 }
