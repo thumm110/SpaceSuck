@@ -4343,6 +4343,26 @@ function initAudio() {
   sfxDuck.connect(ctx.destination);
   radioBus.connect(ctx.destination);
   engineBus.connect(bedDuck); sfxBus.connect(sfxDuck);
+
+  /* ---- v117: THE VOICE CHAIN — the radio character lives HERE, not in the files.
+     A clean clip goes in and a transmission comes out: telephone band, a little
+     saturation, then a compressor to shove it forward so it sits ON TOP of the
+     mix rather than in it. Doing it at runtime rather than baking it into each
+     export means retuning the whole cast is four constants instead of
+     regenerating forty files — and it means the source files stay clean if the
+     voice behind them ever changes (TTS today, could be anything later).
+     It feeds radioBus, so it inherits the squelch's bypass of both ducks: the
+     one thing on the channel must never duck itself. */
+  const voiceIn = ctx.createGain(); voiceIn.gain.value = 1;
+  const vHi = ctx.createBiquadFilter(); vHi.type = "highpass"; vHi.frequency.value = VOICE_HP;
+  const vLo = ctx.createBiquadFilter(); vLo.type = "lowpass";  vLo.frequency.value = VOICE_LP;
+  const vGrit = ctx.createWaveShaper(); vGrit.curve = gritCurve(VOICE_GRIT);
+  const vComp = ctx.createDynamicsCompressor();
+  vComp.threshold.value = -22; vComp.ratio.value = 6;
+  vComp.attack.value = 0.004; vComp.release.value = 0.18;
+  const voiceOut = ctx.createGain(); voiceOut.gain.value = VOICE_LEVEL;
+  voiceIn.connect(vHi); vHi.connect(vLo); vLo.connect(vGrit);
+  vGrit.connect(vComp); vComp.connect(voiceOut); voiceOut.connect(radioBus);
   const gain = ctx.createGain(); gain.gain.value = 0;
   const filter = ctx.createBiquadFilter();
   filter.type = "lowpass"; filter.frequency.value = 220;
@@ -4370,7 +4390,8 @@ function initAudio() {
   for (let i = 0; i < rd.length; i++) rd[i] = Math.random() * 2 - 1;
 
   audio = { ctx, gain, filter, osc1, osc2, rumble: ngain, engineBus, sfx: sfxBus,
-            bedDuck, sfxDuck, radio: radioBus, noise: rbuf };
+            bedDuck, sfxDuck, radio: radioBus, noise: rbuf, voice: voiceIn };
+  preloadVoices();          // v117 — background, best-effort, never blocks flight
 
   /* v48: the score. Shares THIS ctx (one context, one hardware stream) and
      starts here because this is already the game's audio-unlock gesture.
@@ -4481,6 +4502,93 @@ function radioTransmit(hold) {
   g.gain.exponentialRampToValueAtTime(0.0001, end);
   src.connect(bp); bp.connect(g); g.connect(audio.radio);
   src.start(t); src.stop(end + 0.02);
+}
+
+/* ================= THE VOICE (v117) =================
+   The first audio FILES this game has ever loaded. Everything else in here is
+   seventeen hand-synthesised oscillator sounds; a spoken line cannot be, so
+   this is a new path rather than a new constant — the .glb fetch is its
+   closest relative, and it borrows that shape: fetch, decode, cache, and
+   degrade to what we had if it doesn't arrive.
+
+   ⭐ THE RADIO CHARACTER IS APPLIED AT RUNTIME (see the voice chain in
+   initAudio), so the files on disk are CLEAN speech. Retuning how the radio
+   sounds is four constants here; baking it into the exports would make it
+   forty regenerations and would lock the character to whatever made them.
+
+   ⛔ A LINE IS ADDRESSED BY ID, NEVER BY ITS TEXT. Ids are what survive a
+   rewrite — change a word of dialogue and the clip must still be found, or
+   the day the script gets edited the voice silently disappears line by line
+   and every test still passes. */
+const VOICE_DIR   = "sounds/voice/";
+const VOICE_EXT   = ".mp3";
+const VOICE_HP    = 320;    // telephone band. Together with VOICE_LP this is
+const VOICE_LP    = 3200;   // most of "it sounds like a radio" — before any grit.
+const VOICE_GRIT  = 1.9;    // tanh drive. Under ~1.2 it is clean, over ~3 it is a robot.
+const VOICE_LEVEL = 1.15;   // the chain's output trim; the compressor does the work
+const VOICE_TAIL  = 0.28;   // s of duck held past the last word, so the squelch
+                            // close does not clip the end of a sentence
+
+/* Voiced lines that are NOT rows in RUNG_SAY or READY_ROOM. Today that is the
+   berth fee, and only its full-price case: the partial and bank-empty variants
+   quote a number that changes, and a clip cannot say a number it does not know.
+   Those two stay text — the receipt is legible either way, and a wrong spoken
+   figure is worse than a silent correct one. */
+const VOICE_EXTRA = ["fee-full"];
+
+/* A soft-clip curve. Normalised so the loudest input still maps to 1.0 —
+   without the divide, more grit is just more volume and the two knobs fight. */
+function gritCurve(amount) {
+  const n = 1024, c = new Float32Array(n), k = Math.tanh(amount);
+  for (let i = 0; i < n; i++) c[i] = Math.tanh((i * 2 / n - 1) * amount) / k;
+  return c;
+}
+
+/* id -> AudioBuffer, or null for "asked, not there". Both outcomes are cached:
+   a missing clip must cost one 404 for the session, not one per line. */
+const voiceClips = new Map();
+let voicePreloaded = false;
+
+function voiceIds() {
+  const out = [];
+  for (const r of RUNG_SAY) if (r && r[2]) out.push(r[2]);
+  for (const r of READY_ROOM) if (r && r[2]) out.push(r[2]);
+  for (const id of VOICE_EXTRA) out.push(id);
+  return out;
+}
+
+/* Best-effort and deliberately un-awaited. A clip that has not arrived yet
+   simply does not play — the line still shows, the squelch still fires, and
+   the game never waits on the network to deliver a sentence. */
+function preloadVoices() {
+  if (voicePreloaded || !audio) return;
+  voicePreloaded = true;
+  for (const id of voiceIds()) loadVoice(id);
+}
+
+function loadVoice(id) {
+  if (!audio || voiceClips.has(id)) return;
+  voiceClips.set(id, null);            // claim the slot first — two lines in the
+                                       // same frame must not both start a fetch
+  fetch(VOICE_DIR + id + VOICE_EXT)
+    .then(r => r.ok ? r.arrayBuffer() : Promise.reject(r.status))
+    .then(b => audio.ctx.decodeAudioData(b))
+    .then(buf => { voiceClips.set(id, buf); })
+    .catch(() => { /* stays null: text and a squelch, exactly as v116 */ });
+}
+
+/* Play a decoded line and report how long the channel should stay open for it.
+   Returns 0 when there is nothing to play, which is the caller's signal to use
+   the plain RADIO_HOLD — so one code path covers voiced and unvoiced lines. */
+function playVoice(id) {
+  if (!audio || !id) return 0;
+  const buf = voiceClips.get(id);
+  if (!buf) { loadVoice(id); return 0; }   // not here yet — ask, and stay quiet
+  const src = audio.ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(audio.voice);
+  src.start(audio.ctx.currentTime + RADIO_DUCK_IN);   // start under the open squelch
+  return buf.duration + VOICE_TAIL;
 }
 ["keydown", "mousedown", "touchstart"].forEach(ev => addEventListener(ev, initAudio));
 
@@ -7931,7 +8039,10 @@ let msgFrom = "", msgText = "";
    the negative tail IS the gap between two lines. Starts at the floor so the
    very first message delivers on the frame it is queued. */
 let msgT = -MSG_GAP;
-function say(from, text, dur) { msgQ.push([from, text, dur || MSG_DUR]); }
+/* v117: the 4th slot is a VOICE ID, not a filename and not the text. It rides
+   the queue rather than being resolved at say() time, because a line queued on
+   the deck may not play for minutes and the clip may not have landed yet. */
+function say(from, text, dur, voice) { msgQ.push([from, text, dur || MSG_DUR, voice || null]); }
 /* Split on "|" — the second half lands on the hail's own second row rather
    than inventing a layout. A long line is the norm here, not the exception. */
 function msgRows() { return msgText.split("|"); }
@@ -11208,21 +11319,43 @@ const STAGES = [
 
    The writing obeys the same rules the rest of the game does: no beat pays
    (income is frozen), nothing pauses, and nothing here implies a system the
-   build cannot back up. */
+   build cannot back up.
+
+   ⭐ v117 — THE THIRD SLOT IS THE VOICE ID, and it is deliberately not derived
+   from the text or the sender. Ids are what survive a rewrite: change a word of
+   dialogue and the clip must still be found. Derive the filename from the line
+   and the day this table gets edited the voice disappears one line at a time,
+   silently, with every test still green. {P} is the one thing a clip CANNOT
+   carry — a recording cannot know the callsign — so a voiced line reads the
+   name on the glass and does not speak it. That is why rungs 1 and 4 are the
+   two worth listening to hardest. */
 const RUNG_SAY = [
   // 1 · SALVAGE RIGHTS — the company signs it off and does not congratulate you
-  ["DISPATCH",    "FILING'S CLEAR. THE WRECK'S YOURS, {P}.|SO'S ANYTHING STILL ON IT."],
+  ["DISPATCH",    "FILING'S CLEAR. THE WRECK'S YOURS, {P}.|SO'S ANYTHING STILL ON IT.", "rung1-dispatch"],
   // 2 · THE FRAME — somebody saw the lights. First contact, and it is nobody important
-  ["HAULER",      "THAT YOU LIGHTING UP THE DEAD ONE?|RAN THAT LANE SIX YEARS. THOUGHT IT WAS A GHOST."],
+  ["HAULER",      "THAT YOU LIGHTING UP THE DEAD ONE?|RAN THAT LANE SIX YEARS. THOUGHT IT WAS A GHOST.", "rung2-hauler"],
   // 3 · THE SPINE — the man who was there when it went dark has seen the picture
-  ["DUTCH",       "THEY PULLED US OFF THAT STATION IN A WEEK.|YOU'RE ALREADY PAST WHERE WE GOT."],
+  ["DUTCH",       "THEY PULLED US OFF THAT STATION IN A WEEK.|YOU'RE ALREADY PAST WHERE WE GOT.", "rung3-dutch"],
   // 4 · THE DECKS — eight berths painted for traffic you don't have, and the Ark notices
-  ["RAIDERS ARK", "CUTE PAINT ON THEM BERTHS, {P}.|WHO EXACTLY IS COMING?"],
+  ["RAIDERS ARK", "CUTE PAINT ON THEM BERTHS, {P}.|WHO EXACTLY IS COMING?", "rung4-ark"],
   // 5 · POWER & DOCKS — the first customer, and it answers the Ark
-  ["INDEPENDENT", "BERTH THREE'S LIT AND I'M RUNNING ON FUMES.|YOU OPEN, OR YOU JUST SHOWING OFF?"],
+  ["INDEPENDENT", "BERTH THREE'S LIT AND I'M RUNNING ON FUMES.|YOU OPEN, OR YOU JUST SHOWING OFF?", "rung5-independent"],
   // 6 · THE GATE — no hail, no banner. The signage lights, and that IS the beat
   null,
 ];
+
+/* ⭐ v117 — THIS TABLE IS DELIBERATELY NOT VOICED YET, and the reason is an
+   argument rather than a budget. Voice belongs where TEXT FAILS. Text fails in
+   combat, where you are watching a bandit and not the message line; it works
+   perfectly here, on a calm launch, with nothing else competing. These are also
+   the longest lines in the game — 4 to 6 seconds each — and the channel ducks
+   the room for as long as a clip runs, so voicing 26 of them would mute the
+   flight for half a minute a session in exchange for jokes that already land in
+   print. And they have never been heard in play, so two or three are expected
+   to die on contact; recording them now buys 26 files to maintain around a
+   table that is still moving.
+   Adding one later is ONE edit: append an id as a third element, drop the file
+   in sounds/voice/, done. voiceIds() already skips rows that have none. */
 
 /* ============ THE READY ROOM (v115) — the world's only lore channel ============
    The beat sheet calls these "the only free beats in the game" — overheard,
@@ -12449,10 +12582,14 @@ function chargeLaunchFee(b) {
     bankEl.textContent = banked;
     saveBank();
   }
+  /* v117: only the FULL-price case is voiced. The other two quote a figure that
+     changes with your bank, and a recording cannot say a number it does not
+     know — a clip confidently reading "twenty-five" over a line that says
+     "7 CR OF 25" is worse than the silence. Those two stay text. */
   say("SPACESUCK", fee >= LAUNCH_FEE ? "BERTH FEE — " + fee + " CR"
                 : fee > 0            ? "BERTH FEE — " + fee + " CR OF " + LAUNCH_FEE
                                      : "BERTH FEE — " + LAUNCH_FEE + " CR · BANK EMPTY",
-      MSG_SHORT);
+      MSG_SHORT, fee >= LAUNCH_FEE ? "fee-full" : null);
   return fee;
 }
 /* ONE call per departure, from both paths. The two halves are deliberately not
@@ -13231,8 +13368,14 @@ function drawNavHud(dt) {
     /* v116: the radio fires HERE, not in say(). say() only queues, and a line
        queued while you are parked waits — sometimes minutes — for you to get
        airborne. Sounding the squelch at the queue would put a transmission on
-       the channel with nothing on the glass. */
-    radioTransmit();
+       the channel with nothing on the glass.
+       v117: the VOICE decides how long the channel stays open. playVoice
+       returns the clip's length (0 if there is nothing to play), and
+       radioTransmit falls back to RADIO_HOLD on 0 — so a voiced line and a
+       silent one run the same code and the duck always matches what you hear.
+       ⛔ The text hold (msgT) is NOT touched: a line you can hear still has to
+       stay readable, and a 1.4s clip must not yank its own subtitle. */
+    radioTransmit(playVoice(m[3]));
   }
   if (msgT > 0 && !hailTarget && !landedOn) {
     const rows = msgRows();
