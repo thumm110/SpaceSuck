@@ -1359,6 +1359,31 @@
     body.docked #marketboard .mktAll { padding: 10px 8px; }
   }
 
+  /* ON FOOT (v118) — everything the FLIGHT hud says is about a ship you are no
+     longer sitting in. The crosshair aims cannons you can't fire, the throttle
+     reads a shut-down engine, the reticle and radar are drawn off the hull's
+     position while the camera is over your shoulder, and the readout is hull /
+     speed / heading for a vehicle parked behind you. One class hides the lot.
+     The message line, the bank and the cargo readout deliberately STAY: those
+     are yours, not the ship's, and the dispatch channel has to be able to talk
+     to you out here — which is most of the point of getting out.
+
+     ⛔ #navhud is NOT in this list and must not be. The message line lives on
+     that canvas and its timer ticks inside the draw — hide the canvas and a
+     queued story line freezes rather than playing out. drawNavHud skips its own
+     instruments on foot instead (see drawFootHud). */
+     The DOCK COLUMN goes too. The outfitter, the dispatch board, the market and
+     the yard are all counters you work from the cockpit, and leaving them
+     stacked down the glass while you walk around outside would cover the thing
+     you got out to look at. Hidden, not closed: `dockBox` keeps its value, so
+     boarding puts you back on the panel you were reading. (The drain keeps
+     running — the ship is still parked at the port, and its hold emptying is
+     not something that should wait on where the pilot is standing.) */
+  body.onfoot #crosshair, body.onfoot #gunsight, body.onfoot #throttlewrap,
+  body.onfoot #stick, body.onfoot #nearest, body.onfoot #dockcols,
+  body.onfoot #landtag, body.onfoot #assisttag, body.onfoot #viewtag,
+  body.onfoot .bracket { display: none !important; }
+
   /* the readout used to sit exactly where the stick now lives — lift and
      tighten it so the two never share pixels. (#hud is pointer-events:none,
      so this was always cosmetic, but the hull bar makes the block taller
@@ -1496,6 +1521,11 @@
       <b>E</b> answer a hail — hire a neutral raider as your wingman<br>
       <b>R</b> market rates — every port's standing price, anywhere (freezes the world)<br>
       <b>B</b> the yard — what FLEET COMMAND still wants, and what your hold closes
+      <div class="grp">ON FOOT</div>
+      <b>F</b> get out of the ship — parked on any deck. <b>F</b> again, beside
+      the ship, to climb back in.<br>
+      <b>W A S D</b> walk (relative to the camera) · <b>SHIFT</b> run ·
+      <b>mouse</b> look around
       <div class="grp">MOUSE</div>
       <b>Click</b> capture — steer · <b>ESC</b> release<br>
       <b>Right-drag</b> orbit camera · <b>Wheel</b> zoom
@@ -12119,6 +12149,9 @@ addEventListener("keydown", e => {
      launch button live is a hole whatever prices are doing. */
   if (e.code === "KeyE" && !keys["KeyE"] && !paused) tryRecruit(); // answer a hail (v47)
   if (e.code === "KeyG" && !keys["KeyG"] && !paused) tryAssist();  // landing assist / leave pad (v68)
+  /* v118 — [F] FOOT: get out of the ship, and get back in. Gated on `paused`
+     with [E] and [G] for the same reason they are: it moves you. */
+  if (e.code === "KeyF" && !keys["KeyF"] && !paused) toggleFoot();
   if (e.code === "KeyM" && !keys["KeyM"]) toggleMusic(); // music on/off (v48) — effects stay up
   /* v101 — [R] RATES: the market console, from anywhere. Deliberately NOT gated
      on `paused` like [E] and [G] above: those two move the world, this one only
@@ -13101,6 +13134,7 @@ function manualKT() {
    Called from a keypress / touch, never mid-frame, so it may use the loop's
    scratch freely. */
 function tryAssist() {
+  if (onFoot) return;                                   // v118 — nobody launches a ship they're standing beside
   if (landing) { landing = null; return; }              // press again to bail out
   if (liftoff) return;                                  // mid-launch — let it finish
   if (landedOn) {                                       // leave the pad: same rise as throttle-up
@@ -13145,6 +13179,342 @@ function tryAssist() {
   // caught from the next frame on, once the guard has the real prev-state.
   assistManualPrev = true;
 }
+
+/* ==================== ON FOOT (v118) — THE WALK ==========================
+
+   Park at any deck and press [F]: you get out. The 21-bone character that has
+   been banked in the shipyard since 8 Aug finally stands on a pad, and the
+   endgame plan's on-foot pillar has a floor to stand on.
+
+   ⛔ THIS IS THE FIRST HALF OF A TWO-HALF FEATURE, and the halves are in this
+   order ON PURPOSE. The design call (16 Aug) is that the GAME OPENS on foot —
+   locker room, walk to the dispatcher, he hands you a hull. That puts an
+   unfinished mode in front of the front door, so the walk gets built and flown
+   as an OPT-IN first: you fly there, you park, you choose to step out. Nothing
+   about a new career changes, and there is no way to reach this on glass
+   (there is no [F] on a phone), which is the dev gate — no flag needed, and no
+   flag to forget to remove later.
+
+   THE SHIP IS FURNITURE WHILE YOU ARE OUT OF IT. Steering, throttle and the
+   trigger are all gated on `onFoot` at their own blocks rather than by an early
+   return out of animate(), because the world must keep running — a frozen
+   planet, frozen traffic and a frozen market while you walk around would read
+   as a hang, not a mode.
+
+   ⭐ EVERY POSITION HERE IS STORED IN THE BODY'S BAKED (UNSPUN) FRAME, exactly
+   the way a pad is. Store a world point instead and two things go wrong the
+   moment you stand still: the planet spins out from under you (Earth's is slow
+   enough that you would call it "drifting off the pad" and never guess why),
+   and its orbit around HELIOS takes the whole deck with it at 68,500u of radius.
+   Spun forward on read, spun back on write, and neither can accumulate error
+   because the stored value is never integrated — same trick the parked ship's
+   pad pin uses at :14755.
+
+   ⭐ THE CLIP RATE IS DRIVEN BY GROUND SPEED, NOT THE OTHER WAY AROUND. The
+   walk and run cycles were MEASURED off the accepted v4 blend rather than
+   guessed at: the foot travels 0.680u per step over a 1.000s two-step cycle
+   (1.36 u/s) and 0.905u over 0.667s (2.71 u/s). Those two numbers are the whole
+   defence against moonwalking, and the measurement proved itself on the way in
+   — the same sampler reports exactly 0.000u of stride for the idle, which is
+   the animation that must not move. See the shipyard's export script.
+
+   WHAT IS DELIBERATELY NOT HERE YET: no collision with buildings (Charleston's
+   towers are not solid for the ship either, so this is not a regression, it is
+   the same hole one scale down), no ladders, no doors, no interacting with
+   anything, and no mobile control. Those all belong to the counter, not to the
+   walk. */
+const FOOT_GLB    = "player/player.glb";
+const FOOT_WALK   = 1.36;      // u/s the WALK cycle is authored for — measured, not chosen
+const FOOT_RUN    = 2.71;      // u/s the RUN cycle is authored for — measured, not chosen
+const FOOT_GAIT   = (FOOT_WALK + FOOT_RUN) * 0.5;   // where walk hands over to run
+const FOOT_EASE   = 9;         // how fast the gait spins up/down (1/s)
+const FOOT_TURN   = 7.5;       // rad/s the body swings toward the way it's going
+const FOOT_FALL   = 18;        // u/s you drop off a lip — a pad edge is ~14u
+const FOOT_EPS    = 0.02;      // sole clearance; the model is authored soles-at-zero
+const FOOT_MOUSE  = 0.0022;    // same sensitivity the ship flies at
+const FOOT_CAM_D  = 6.2;       // chase boom length
+const FOOT_EYE    = 1.35;      // what the camera aims at — chest height on a 1.80u body
+/* Pitch: bigger = the camera climbs and looks down on him.
+   ⚠️ THE FLOOR IS 0, NOT A NEGATIVE, AND THAT IS MEASURED. Below about +0.18
+   the lens is already sitting on the game's own camera floor (CAM_GROUND_MARGIN,
+   2.5u, v55) — swept -0.35 / -0.20 / 0.00 and the camera came back at an
+   identical 2.50u over the deck every time, so every bit of travel down there
+   is dead: the mouse moves and nothing happens. A third of the range doing
+   nothing reads as a broken control, so the range stops where the clamp starts.
+   ⛔ LOOKING UP ON FOOT IS NOT AVAILABLE, and the reason is that 2.5u floor —
+   tuned for a ship with 4u of landing gear, and about a head and a half above
+   a 1.80u man. Lowering it is a one-constant change that affects EVERY camera
+   in the game, so it is Tanner's call and not a side effect of the walk. */
+const FOOT_PIT_LO = 0.0;
+const FOOT_PIT_HI = 1.05;      // look down (camera climbs)
+const FOOT_OUT    = 7.5;       // how far to the ship's left you step out
+const FOOT_BOARD  = 16;        // how close you must be to climb back in
+const FOOT_FLOOR  = 0.45;      // self-lit floor — the sun is 1/r² and this is not a hull
+
+let onFoot     = null;         // null = in the seat. See disembark() for the shape.
+let footModel  = null;         // the character, added to the scene once and reused
+let footMixer  = null, footClips = null, footNow = null, footNowKey = "";
+let footLoading = false;
+
+/* own scratch — the ONE rule this file has about vectors. The walk runs inside
+   the same frame as the collision loop and borrowing its vectors is exactly how
+   the junk-ram bug happened. */
+const _ftDir = new THREE.Vector3(), _ftUp  = new THREE.Vector3();
+const _ftFwd = new THREE.Vector3(), _ftCam = new THREE.Vector3();
+const _ftRgt = new THREE.Vector3(), _ftMov = new THREE.Vector3();
+const _ftPos = new THREE.Vector3(), _ftV   = new THREE.Vector3();
+const _ftBX  = new THREE.Vector3(), _ftBY  = new THREE.Vector3();
+const _ftBZ  = new THREE.Vector3(), _ftTgt = new THREE.Vector3();
+const _ftBasis = new THREE.Matrix4();
+
+function bodySpin(b) { return b.surface ? b.surface.rotation.y : (b.cfg.yaw || 0); }
+
+/* Lazy, because most sessions never leave the seat and this is 2.1 MB. The
+   first [F] loads and then steps out; the second one is instant. */
+function loadFootModel(then) {
+  if (footLoading || !THREE.GLTFLoader) return;
+  footLoading = true;
+  say("SPACESUCK", "SUITING UP…", MSG_SHORT);
+  new THREE.GLTFLoader().load(FOOT_GLB + ASSET_V, gltf => {
+    footModel = gltf.scene;
+    footModel.visible = false;
+    /* The same self-lit floor every hull gets, and for the same reason: the
+       only real light out here is a PointLight at HELIOS with 1/r² falloff, so
+       a plain standard material at Earth's orbit renders black. NO weathering
+       though — that pass cuts plating grooves and rivets, which is a language
+       for hulls and would read as damage on a person. */
+    dressHullMats(footModel, { floor: FOOT_FLOOR, weather: false });
+    /* A skinned mesh's bounds are the REST pose, and this one walks 2,500u from
+       the origin. An incorrectly culled player is invisible, which reads exactly
+       like a failed wire-in — 27 meshes is not worth that risk. */
+    footModel.traverse(o => { if (o.isSkinnedMesh || o.isMesh) o.frustumCulled = false; });
+    scene.add(footModel);
+    footMixer = new THREE.AnimationMixer(footModel);
+    footClips = {};
+    /* ⛔ KEYED OFF THE CLIP NAME, and the names are a contract the exporter
+       guards (Player_Idle_Loop / Player_Walk_Loop / Player_Run_Loop). Index the
+       array instead and a re-export in a different order silently swaps your
+       walk for your idle with every test still green. */
+    for (const c of gltf.animations) {
+      const key = /Run/i.test(c.name) ? "run" : /Walk/i.test(c.name) ? "walk"
+                : /Idle/i.test(c.name) ? "idle" : null;
+      if (key) footClips[key] = footMixer.clipAction(c);
+    }
+    footLoading = false;
+    if (!footClips.idle || !footClips.walk || !footClips.run) {
+      say("SPACESUCK", "SUIT TELEMETRY INCOMPLETE", MSG_SHORT);   // loud, not silent
+      return;
+    }
+    if (then) then();
+  }, undefined, () => {
+    footLoading = false;
+    say("SPACESUCK", "SUIT LOCKER JAMMED", MSG_SHORT);
+  });
+}
+
+/* Crossfade, never cut. `current` is tracked by KEY rather than by action so a
+   re-entry after boarding cannot fade an action into itself. */
+function footPlay(key) {
+  if (footNowKey === key || !footClips || !footClips[key]) return;
+  const next = footClips[key];
+  next.reset().setEffectiveWeight(1).setEffectiveTimeScale(1).fadeIn(0.16).play();
+  if (footNow) footNow.fadeOut(0.16);
+  footNow = next; footNowKey = key;
+}
+
+/* [F] — out of the seat, or back into it.
+
+   ⭐ THE DECK GATE LIVES HERE AND NOWHERE ELSE. The load is async, so the first
+   press has to come back through a callback — and the obvious way to write that
+   (hand `disembark` to the loader, and have `disembark` re-check the deck) puts
+   two copies of one rule in two functions. That is not just duplication: it made
+   the rule untestable, because each copy covered for the other and removing
+   either one changed no observable behaviour. Re-entering THIS function is the
+   fix — the callback re-runs the same gate, so launching during the 2 MB load
+   still refuses correctly, and there is exactly one place the rule is written. */
+function toggleFoot() {
+  if (paused) return;
+  if (onFoot) { boardShip(); return; }
+  if (!landedOn || landing || liftoff) return;    // only from a dead stop on a deck
+  if (!footModel) { loadFootModel(toggleFoot); return; }   // re-enter, re-check
+  disembark();
+}
+
+function disembark() {
+  /* A PRECONDITION ON THIS FUNCTION'S INPUT, not a second copy of the deck rule
+     — the rule is toggleFoot's and stays there. This just refuses to run without
+     a body to stand on, because everything below dereferences one and a
+     TypeError thrown inside a keydown handler is a far worse failure than a
+     press that does nothing. Found by deleting the gate to test it: the code
+     did not let anyone out, it threw. */
+  if (onFoot || !footModel || !landedOn) return;
+  const b = landedOn, yaw = bodySpin(b);
+  _ftDir.subVectors(shipObj.position, b.group.position).normalize();
+  surfaceUp(b, _ftDir, _ftUp);
+  /* Step out the ship's LEFT side. Born at the ship's own origin the camera
+     boom starts inside the hull, and a first frame spent looking at the inside
+     of your own fuselage is the worst possible introduction to a mode. */
+  _ftV.set(-1, 0, 0).applyQuaternion(shipObj.quaternion);
+  _ftV.addScaledVector(_ftUp, -_ftV.dot(_ftUp));                 // flatten onto the deck
+  if (_ftV.lengthSq() < 1e-6) _ftV.crossVectors(_ftUp, _ftDir);  // ship nose-down: any tangent
+  _ftV.normalize();
+  _ftPos.copy(shipObj.position).addScaledVector(_ftV, FOOT_OUT);
+  _ftDir.subVectors(_ftPos, b.group.position).normalize();
+  _ftFwd.copy(_ftV).negate();                                    // turn and look back at the ship
+
+  onFoot = {
+    b,
+    dir:   _ftDir.clone().applyAxisAngle(SPIN_AXIS, -yaw),
+    fwd:   _ftFwd.clone().applyAxisAngle(SPIN_AXIS, -yaw),
+    camF:  _ftFwd.clone().applyAxisAngle(SPIN_AXIS, -yaw),       // camera starts over your shoulder
+    camPitch: 0.20,
+    speed: 0,
+    r: groundRadius(b, _ftDir) + FOOT_EPS,
+  };
+  footModel.visible = true;
+  footNow = null; footNowKey = "";                               // fresh crossfade state
+  footPlay("idle");
+  document.body.classList.add("onfoot");
+  mouseDX = 0; mouseDY = 0;                                      // don't inherit a flick from flight
+  say("SPACESUCK", "ON FOOT — [F] TO BOARD", MSG_SHORT);
+}
+
+function boardShip() {
+  if (!onFoot) return;
+  if (footModel.position.distanceTo(shipObj.position) > FOOT_BOARD) {
+    say("SPACESUCK", "TOO FAR FROM THE SHIP", MSG_SHORT);
+    return;
+  }
+  leaveFoot();
+}
+/* The unconditional half — also the safety net. Board from anywhere, no range
+   check, no message. */
+function leaveFoot() {
+  if (!onFoot) return;
+  onFoot = null;
+  if (footModel) footModel.visible = false;
+  footNow = null; footNowKey = "";
+  document.body.classList.remove("onfoot");
+  mouseDX = 0; mouseDY = 0;
+}
+
+function updateOnFoot(dt) {
+  const f = onFoot, b = f.b;
+  /* If the ship stopped being parked under us — a hazard un-latch, a tow, a
+     breach — there is no deck to be standing on. Get back in rather than leave
+     a character standing on a world the ship has left. */
+  if (landedOn !== b) { leaveFoot(); return; }
+
+  const yaw = bodySpin(b);
+  // --- thaw this frame's world vectors out of the stored baked ones ---
+  _ftDir.copy(f.dir).applyAxisAngle(SPIN_AXIS, yaw).normalize();
+  _ftFwd.copy(f.fwd).applyAxisAngle(SPIN_AXIS, yaw);
+  _ftCam.copy(f.camF).applyAxisAngle(SPIN_AXIS, yaw);
+  surfaceUp(b, _ftDir, _ftUp);
+
+  // --- mouse look. Drains the SAME deltas the ship steers on, and it runs
+  //     before the steering block, so the hull can never read them too. ---
+  _ftCam.applyAxisAngle(_ftUp, -mouseDX * FOOT_MOUSE);
+  f.camPitch = Math.max(FOOT_PIT_LO, Math.min(FOOT_PIT_HI, f.camPitch + mouseDY * FOOT_MOUSE));
+  mouseDX = 0; mouseDY = 0;
+  // re-flatten into the tangent plane — walking any distance curves the ground
+  // out from under a vector that was tangent a hundred frames ago
+  _ftCam.addScaledVector(_ftUp, -_ftCam.dot(_ftUp));
+  if (_ftCam.lengthSq() < 1e-6) _ftCam.copy(_ftFwd);      // degenerate: keep the last good one
+  _ftCam.normalize();
+  _ftRgt.crossVectors(_ftCam, _ftUp).normalize();
+
+  // --- WASD, relative to where the CAMERA looks ---
+  let mz = 0, mx = 0;
+  if (keys["KeyW"]) mz += 1;
+  if (keys["KeyS"]) mz -= 1;
+  if (keys["KeyD"]) mx += 1;
+  if (keys["KeyA"]) mx -= 1;
+  const moving = (mz !== 0 || mx !== 0);
+  const want = moving ? ((keys["ShiftLeft"] || keys["ShiftRight"]) ? FOOT_RUN : FOOT_WALK) : 0;
+  f.speed += (want - f.speed) * (1 - Math.exp(-FOOT_EASE * dt));
+  if (f.speed < 0.02) f.speed = 0;
+
+  if (moving) {
+    _ftMov.copy(_ftCam).multiplyScalar(mz).addScaledVector(_ftRgt, mx).normalize();
+    /* Swing the body toward the way it is going instead of snapping. The travel
+       then follows the FACING, not the input — press A from a standstill and he
+       turns and walks off, which is what a person does. A snap-to-input would
+       let him moonwalk sideways with a forward stride playing. */
+    _ftV.crossVectors(_ftFwd, _ftUp);                     // right of the current facing
+    const ang = Math.atan2(_ftMov.dot(_ftV), _ftMov.dot(_ftFwd));
+    const lim = FOOT_TURN * dt;
+    _ftFwd.applyAxisAngle(_ftUp, -Math.max(-lim, Math.min(lim, ang)));
+  }
+
+  if (f.speed > 0) {
+    _ftPos.copy(b.group.position).addScaledVector(_ftDir, f.r)
+          .addScaledVector(_ftFwd, f.speed * dt);
+    _ftDir.subVectors(_ftPos, b.group.position).normalize();
+  }
+
+  /* Height. Up is a snap because terrain and decks are smooth; DOWN is a fall,
+     so walking off a pad edge (Charleston's deck stands ~14u over its plateau)
+     drops you instead of teleporting you. */
+  const gr = groundRadius(b, _ftDir) + FOOT_EPS;
+  f.r = gr >= f.r ? gr : Math.max(gr, f.r - FOOT_FALL * dt);
+
+  // the radial moved, so up and the facing both need re-squaring to it
+  surfaceUp(b, _ftDir, _ftUp);
+  _ftFwd.addScaledVector(_ftUp, -_ftFwd.dot(_ftUp));
+  if (_ftFwd.lengthSq() < 1e-6) _ftFwd.crossVectors(_ftUp, _ftRgt);
+  _ftFwd.normalize();
+
+  footModel.position.copy(b.group.position).addScaledVector(_ftDir, f.r);
+  /* glTF forward is -Z (Blender's +Y), so the model's LOCAL +Z is its back.
+     Built as a basis rather than lookAt(): lookAt aims +Z at the target for a
+     plain Object3D and -Z for a camera, and that asymmetry is a coin-flip
+     nobody should have to remember at a call site. */
+  _ftBZ.copy(_ftFwd).negate();
+  _ftBX.crossVectors(_ftUp, _ftBZ).normalize();
+  _ftBY.crossVectors(_ftBZ, _ftBX);
+  footModel.quaternion.setFromRotationMatrix(_ftBasis.makeBasis(_ftBX, _ftBY, _ftBZ));
+
+  // --- the gait ---
+  const key = f.speed < 0.05 ? "idle" : (f.speed > FOOT_GAIT ? "run" : "walk");
+  footPlay(key);
+  if (footNow && key !== "idle") {
+    // the clip's authored speed against the real one: feet stick to the ground
+    footNow.setEffectiveTimeScale(f.speed / (key === "run" ? FOOT_RUN : FOOT_WALK));
+  }
+  if (footMixer) footMixer.update(dt);
+
+  // --- freeze back into the baked frame ---
+  f.dir.copy(_ftDir).applyAxisAngle(SPIN_AXIS, -yaw);
+  f.fwd.copy(_ftFwd).applyAxisAngle(SPIN_AXIS, -yaw);
+  f.camF.copy(_ftCam).applyAxisAngle(SPIN_AXIS, -yaw);
+}
+
+/* The chase camera. Outranks every view mode — on foot there is no cockpit. */
+function footCamera() {
+  const f = onFoot, b = f.b, yaw = bodySpin(b);
+  _ftDir.copy(f.dir).applyAxisAngle(SPIN_AXIS, yaw).normalize();
+  surfaceUp(b, _ftDir, _ftUp);
+  _ftCam.copy(f.camF).applyAxisAngle(SPIN_AXIS, yaw);
+  _ftCam.addScaledVector(_ftUp, -_ftCam.dot(_ftUp)).normalize();
+  _ftRgt.crossVectors(_ftCam, _ftUp).normalize();
+
+  _ftTgt.copy(footModel.position).addScaledVector(_ftUp, FOOT_EYE);
+  _ftV.copy(_ftCam).applyAxisAngle(_ftRgt, -f.camPitch);      // pitch the boom
+  camera.position.copy(_ftTgt).addScaledVector(_ftV, -FOOT_CAM_D);
+
+  /* ⛔ NO DECK CLAMP HERE, AND THAT IS DELIBERATE. The first cut of this carried
+     its own "never sink the boom through the deck" push-out — and deleting it
+     changed nothing, because the game has clamped every camera against the
+     nearest world's terrain since v55 (CAM_GROUND_MARGIN, at the bottom of the
+     frame, after every rig has had its say) and that clamp runs on foot too.
+     Two guards on one invariant means the redundant one can never be tested:
+     the assertion written for it passed with it removed. One owner. */
+
+  camera.up.copy(_ftUp);
+  camera.lookAt(_ftTgt);
+}
+
 function drawPadMarker(c, W, H, dt) {
   if (landedOn || !padTarget) { prevPadDist = -1; return; }   // parked, or nothing in range
   const b = padTarget.b, pad = padTarget.pad;
@@ -13256,9 +13626,20 @@ function drawPadField(c, W, H) {
   }
   c.restore();
 }
+/* ON FOOT (v118): the whole overlay except the one line that is talking to YOU.
+   Kept as its own entry point rather than a class on the canvas, because the
+   message timer has to keep ticking — hide the canvas in CSS and a queued line
+   freezes instead of playing out, which is the exact latched-state bug the
+   comment on drawMsgLine warns about. */
+function drawFootHud(dt, c, W, H) {
+  const r = navRadarR, cx = navRadarCx < 0 ? W / 2 : navRadarCx, cy = H - navRadarUp;
+  drawMsgLine(dt, c, W, cx, cy, r);
+}
+
 function drawNavHud(dt) {
   const W = innerWidth, H = innerHeight, c = navCtx;
   c.clearRect(0, 0, W, H);
+  if (onFoot) { drawFootHud(dt, c, W, H); return; }
   // resolve the reticle's target FIRST: the planet-label pass below suppresses
   // the label for whichever world the reticle is about to claim, and the two
   // used to disagree — every padded world lost its label on close approach
@@ -13385,21 +13766,47 @@ function drawNavHud(dt) {
     c.restore();
   }
 
-  /* --- C3: the message line (v114) — the story channel, in the hail's own
-     two rows. Violet, because that is already this game's DISPATCH colour and
-     a story is something a dispatcher hands you.
+  // --- C3: the message line (v114). Split into its own function at v118 —
+  // see drawMsgLine, which is the one thing on this overlay that survives
+  // getting out of the ship.
+  drawMsgLine(dt, c, W, cx, cy, r);
 
-     TICKED AND PUMPED UNCONDITIONALLY, drawn conditionally. If the timer only
-     ran while the line was visible, one outranked by a proximity hail would
-     freeze and then surface minutes later attached to nothing — the same class
-     of bug as a latched state that never clears.
+  // --- D: the way home, whenever the hold is worth banking ---
+  drawHomeChevron(c, W, H);
+  drawThreatChevron(c, W, H);
+  drawJobChevron(c, W, H);              // violet: the dispatch bounty mark (v56)
+  // --- E: the landing reticle, on close approach to the pad ---
+  drawPadField(c, W, H);                // v88: the OTHER decks, market-coloured
+  drawPadMarker(c, W, H, dt);
+  drawNavBanners(dt, c, W, H);
+}
 
-     DELIVERED ONLY WHILE FLYING. A rung closes while you are parked at Fleet
-     Command with a dock panel over the glass; holding the line until you are
-     airborne is both what makes it visible at all and what the beat sheet
-     asks for — "arrives while you fly, costs nothing to ignore". */
+/* THE MESSAGE LINE (v114) — the story channel, in the hail's own two rows.
+   Violet, because that is already this game's DISPATCH colour and a story is
+   something a dispatcher hands you.
+
+   TICKED AND PUMPED UNCONDITIONALLY, drawn conditionally. If the timer only
+   ran while the line was visible, one outranked by a proximity hail would
+   freeze and then surface minutes later attached to nothing — the same class of
+   bug as a latched state that never clears.
+
+   ⭐ NOT DELIVERED WHILE PARKED — *unless you got out* (v118). The original
+   rule was "delivered only while flying", and the reason was never flight: it
+   was that a rung closing while you sit at Fleet Command lands under a dock
+   panel covering the glass. On foot there is no dock panel, the glass is clear,
+   and this is the only channel the game has to talk to someone walking around a
+   yard — which is most of the point of getting out. Holding the line would have
+   made every on-foot line surface minutes later mid-flight attached to nothing,
+   which is the exact bug the paragraph above is about.
+
+   ⛔ SPLIT OUT OF drawNavHud SO IT CAN OUTLIVE IT. Everything else on that
+   overlay — reticle, scope, chevrons, banners — is an instrument reading off
+   the SHIP, and on foot the ship is parked behind you. This one is addressed to
+   the pilot, so it is the one thing that keeps drawing. */
+function drawMsgLine(dt, c, W, cx, cy, r) {
+  const reaches = !landedOn || !!onFoot;
   if (msgT > -MSG_GAP) msgT -= dt;
-  if (!landedOn && msgT <= -MSG_GAP && msgQ.length) {
+  if (reaches && msgT <= -MSG_GAP && msgQ.length) {
     const m = msgQ.shift();
     msgFrom = m[0];
     msgText = m[1].replace(/\{P\}/g, pilotName || "FLYER");   // same as the junker hail
@@ -13416,7 +13823,7 @@ function drawNavHud(dt) {
        stay readable, and a 1.4s clip must not yank its own subtitle. */
     radioTransmit(playVoice(m[3]));
   }
-  if (msgT > 0 && !hailTarget && !landedOn) {
+  if (msgT > 0 && !hailTarget && reaches) {
     const rows = msgRows();
     /* ⚠ THE BUDGET IS NOT THE SCREEN WIDTH. The line is CENTRED on the radar's
        column, and on a phone the scope sits in the bottom-LEFT corner — so the
@@ -13443,14 +13850,13 @@ function drawNavHud(dt) {
     }
     c.restore();
   }
+}
 
-  // --- D: the way home, whenever the hold is worth banking ---
-  drawHomeChevron(c, W, H);
-  drawThreatChevron(c, W, H);
-  drawJobChevron(c, W, H);              // violet: the dispatch bounty mark (v56)
-  // --- E: the landing reticle, on close approach to the pad ---
-  drawPadField(c, W, H);                // v88: the OTHER decks, market-coloured
-  drawPadMarker(c, W, H, dt);
+/* The flash banners (F–I), split out with the message line at v118 so the
+   overlay's tail has one owner. All four are FLIGHT events — a payout, a
+   capital contact, rare freight on the scope, a wingman dying — none of which
+   can happen while you are standing on a deck beside a parked ship. */
+function drawNavBanners(dt, c, W, H) {
   // --- F: contract-complete banner — a violet flash on payout (v56) ---
   if (jobFlash > 0) {
     jobFlash = Math.max(0, jobFlash - dt);
@@ -14552,36 +14958,47 @@ function animate() {
   lookQ.setFromEuler(lookEuler);
   const lookActive = Math.abs(lookYaw) + Math.abs(lookPitch) > 0.02;
 
+  /* ---- on foot (v118) ----
+     `flying` gates the three input blocks below — steering, throttle, trigger.
+     The WALK itself runs much later in the frame (just above the camera rig),
+     and that placement is load-bearing: see updateOnFoot's call site. The world
+     in between carries on exactly as it does when you are sitting in the seat
+     with the engines off, because a frozen planet and frozen traffic while you
+     walk around would read as a hang rather than as a mode. */
+  const flying = !onFoot;
+
   /* ---- steering ---- */
   // pointer-lock freelook: deltas are "pixels of mouse travel", already
   // frame-rate independent — we just drain whatever accumulated
   const MOUSE_SENS = 0.0022;
-  const mouseYaw = -mouseDX * MOUSE_SENS;
-  shipObj.rotateY(mouseYaw);
-  shipObj.rotateX(-mouseDY * MOUSE_SENS);
-  mouseDX = 0; mouseDY = 0;
+  const mouseYaw = flying ? -mouseDX * MOUSE_SENS : 0;
+  let sx = 0, sy = 0, keyYaw = 0, keyPitch = 0;
+  if (flying) {
+    shipObj.rotateY(mouseYaw);
+    shipObj.rotateX(-mouseDY * MOUSE_SENS);
+    mouseDX = 0; mouseDY = 0;
 
-  // touch drag steering (rate-based, unchanged from v5)
-  const dead = 0.08;
-  const sx = Math.abs(steer.x) > dead ? steer.x : 0;
-  const sy = Math.abs(steer.y) > dead ? steer.y : 0;
-  shipObj.rotateY(-sx * ship.turnSpeed * dt);
-  shipObj.rotateX(-sy * ship.turnSpeed * dt);
+    // touch drag steering (rate-based, unchanged from v5)
+    const dead = 0.08;
+    sx = Math.abs(steer.x) > dead ? steer.x : 0;
+    sy = Math.abs(steer.y) > dead ? steer.y : 0;
+    shipObj.rotateY(-sx * ship.turnSpeed * dt);
+    shipObj.rotateX(-sy * ship.turnSpeed * dt);
 
-  let keyYaw = 0, keyPitch = 0;
-  // v85: at a pad the arrows belong to the dock accordion, not the hull. Same
-  // call the pad stick makes above, for the same reason.
-  if (dockBox === null) {
-    if (keys["ArrowLeft"])  keyYaw += 1;                 // turn left
-    if (keys["ArrowRight"]) keyYaw -= 1;                 // turn right
-    // flight-stick convention: push forward = nose down, pull back = nose up
-    if (keys["ArrowUp"])   keyPitch -= 1;                // nose down
-    if (keys["ArrowDown"]) keyPitch += 1;                // nose up
+    // v85: at a pad the arrows belong to the dock accordion, not the hull. Same
+    // call the pad stick makes above, for the same reason.
+    if (dockBox === null) {
+      if (keys["ArrowLeft"])  keyYaw += 1;                 // turn left
+      if (keys["ArrowRight"]) keyYaw -= 1;                 // turn right
+      // flight-stick convention: push forward = nose down, pull back = nose up
+      if (keys["ArrowUp"])   keyPitch -= 1;                // nose down
+      if (keys["ArrowDown"]) keyPitch += 1;                // nose up
+    }
+    shipObj.rotateY(keyYaw   * ship.turnSpeed * dt);
+    shipObj.rotateX(keyPitch * ship.turnSpeed * dt);
+    if (keys["KeyA"]) shipObj.rotateZ( 1.5 * dt);          // roll left
+    if (keys["KeyD"]) shipObj.rotateZ(-1.5 * dt);          // roll right
   }
-  shipObj.rotateY(keyYaw   * ship.turnSpeed * dt);
-  shipObj.rotateX(keyPitch * ship.turnSpeed * dt);
-  if (keys["KeyA"]) shipObj.rotateZ( 1.5 * dt);          // roll left
-  if (keys["KeyD"]) shipObj.rotateZ(-1.5 * dt);          // roll right
 
   /* ---- auto-bank: the ship LEANS into turns, purely visual ----
      Physics (shipObj) never rolls; only the mesh / camera tilt, so the
@@ -14607,12 +15024,18 @@ function animate() {
   // W and S are mirror twins: W ramps the throttle up, S ramps it down
   // through zero into reverse. X is the full shutdown — throttle to zero
   // and scrub velocity until you're parked.
-  if (keys["KeyW"] || touchThrust) ship.throttle = Math.min(1, ship.throttle + dt * 1.2);
-  if (keys["KeyS"] || touchRev)    ship.throttle = Math.max(ship.minThrottle, ship.throttle - dt * 1.2);
+  /* v118 — W and S are the walk while you're out of the seat. Without this gate
+     the first step forward throttles up a ship you are standing next to, which
+     un-parks it and flies it away without you. */
+  if (flying && (keys["KeyW"] || touchThrust)) ship.throttle = Math.min(1, ship.throttle + dt * 1.2);
+  if (flying && (keys["KeyS"] || touchRev))    ship.throttle = Math.max(ship.minThrottle, ship.throttle - dt * 1.2);
   // triggers are DIRECT throttle — half a pull is half thrust, hold to
   // burn, feather for finesse. Keyboard cruise-control (tap W, coast)
   // still works whenever the triggers are idle.
-  if (padThrust > 0.02)       ship.throttle = padThrust;
+  // v118 — gated with the keys above: a rested trigger must not fly the ship
+  // out from under a pilot who is standing on the deck
+  if (!flying)                {}
+  else if (padThrust > 0.02)  ship.throttle = padThrust;
   else if (padReverse > 0.02) ship.throttle = ship.minThrottle * padReverse;
   if (keys["KeyX"] || touchBrake || padStop) {
     ship.throttle = 0;
@@ -15090,9 +15513,34 @@ function animate() {
     }
   }
 
+  /* ---- on foot: the walk, AFTER the world has finished moving (v118) ----
+
+     ⛔ THE PLACEMENT IS THE FEATURE. This has to run below the heliocentric
+     block and the collision loop, for the same reason the parked ship's pin
+     does: the character is anchored to a body that MOVES TWICE a frame — its
+     orbit around HELIOS (68,500u of radius) and its own spin. Place him before
+     those and he is drawn one frame stale, which measures as him standing a
+     couple of units UNDER the deck and reads on the glass as sliding.
+
+     Caught by a test that asserted "the soles are on the deck" and came back
+     with -1.24u, and the number is the giveaway: it is one frame of Earth's
+     orbital travel, not a rounding error.
+
+     Mouse deltas survive the gated steering block above untouched, so this
+     still gets them — that gate does not drain what it does not read. */
+  if (onFoot) updateOnFoot(dt);
+
   /* ---- camera rig ---- */
   const _shot = padShot();
-  if (_shot && !orbiting && !padLookBack) {
+  if (onFoot) {
+    /* v118 — on foot outranks every view mode, the landing shot and the orbit
+       alike. There is no cockpit to be in and no hull to circle: the camera
+       belongs to the person standing on the deck, full stop. The ship renders
+       because you are looking straight at it. */
+    shipMesh.visible = true;
+    shipMesh.rotation.z = 0;
+    footCamera();
+  } else if (_shot && !orbiting && !padLookBack) {
     // watching a landing or a launch — outranks the view modes, but not the
     // showcase orbit (that IS a camera) or a deliberate glance over your six
     shipMesh.visible = true;
@@ -15301,7 +15749,8 @@ function animate() {
   if (gunHeat > 0 && gunsColdT > HEAT_IDLE)
     gunHeat = Math.max(0, gunHeat - HEAT_COOL * dt);
   if (gunsOverheated && gunHeat < HEAT_RESET) gunsOverheated = false;
-  const triggerDown = keys["Space"] || padFire || touchFire;
+  // v118 — the ship's cannons are not yours to fire from the deck beside it
+  const triggerDown = !onFoot && (keys["Space"] || padFire || touchFire);
   /* v60: guns are cold while parked. Every INCOMING damage path already exempts
      a parked ship, so a live trigger on the deck was a free kill box — and it
      only got worse once a port's sky stopped being a safe harbor: hostiles now
