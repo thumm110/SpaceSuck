@@ -4307,6 +4307,7 @@ function saveSettings() {
 function applyAudioSettings() {
   if (audio) {
     audio.sfx.gain.value = settings.sfx;
+    audio.radio.gain.value = settings.sfx;   // the channel rides the SFX slider
     /* paused ⇒ engine ducks to 0: the drone's oscillators never stop, and a
        frozen game holding a frozen throttle would howl through the menu */
     audio.engineBus.gain.value = paused ? 0 : settings.engine;
@@ -4326,7 +4327,22 @@ function initAudio() {
      slider has exactly one knob to turn. */
   const engineBus = ctx.createGain(); engineBus.gain.value = settings.engine;
   const sfxBus = ctx.createGain(); sfxBus.gain.value = settings.sfx;
-  engineBus.connect(ctx.destination); sfxBus.connect(ctx.destination);
+  /* ---- v116: THE DUCKS SIT BELOW THE MIXER, AND THAT IS THE WHOLE TRICK ----
+     Two more gains between the buses and the speakers, both parked at 1 and
+     touched only by a transmission. They are SEPARATE NODES on purpose: the
+     mixer writes .gain.value directly (applyAudioSettings) and the score
+     ramps its own master, so a duck sharing either node would be stamped
+     flat mid-ramp by a slider — or would stamp the slider. One node, one
+     writer. bedDuck carries the continuous stuff (engine drone + score),
+     sfxDuck the one-shots, and the radio bus bypasses both so it can never
+     duck itself. */
+  const bedDuck = ctx.createGain(); bedDuck.gain.value = 1;
+  const sfxDuck = ctx.createGain(); sfxDuck.gain.value = 1;
+  const radioBus = ctx.createGain(); radioBus.gain.value = settings.sfx;
+  bedDuck.connect(ctx.destination);
+  sfxDuck.connect(ctx.destination);
+  radioBus.connect(ctx.destination);
+  engineBus.connect(bedDuck); sfxBus.connect(sfxDuck);
   const gain = ctx.createGain(); gain.gain.value = 0;
   const filter = ctx.createBiquadFilter();
   filter.type = "lowpass"; filter.frequency.value = 220;
@@ -4346,14 +4362,22 @@ function initAudio() {
   nsrc.connect(nfilter); nfilter.connect(ngain); ngain.connect(engineBus);
   nsrc.start();
 
-  audio = { ctx, gain, filter, osc1, osc2, rumble: ngain, engineBus, sfx: sfxBus };
+  /* One 2-second noise buffer, shared by every squelch and hiss for the rest
+     of the session. Buffers are reusable; only the BufferSource is one-shot.
+     The entry rumble above builds its own because it loops forever. */
+  const rbuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+  const rd = rbuf.getChannelData(0);
+  for (let i = 0; i < rd.length; i++) rd[i] = Math.random() * 2 - 1;
+
+  audio = { ctx, gain, filter, osc1, osc2, rumble: ngain, engineBus, sfx: sfxBus,
+            bedDuck, sfxDuck, radio: radioBus, noise: rbuf };
 
   /* v48: the score. Shares THIS ctx (one context, one hardware stream) and
      starts here because this is already the game's audio-unlock gesture.
      start() is async (it may await ctx.resume()); fire-and-forget is fine —
      the ambient bed fades itself up over 3s once it's running. */
   if (window.SpaceMusic) {
-    music = new window.SpaceMusic(ctx);
+    music = new window.SpaceMusic(ctx, bedDuck);   // v116: the score ducks with the drone
     music.start();
   }
   applyAudioSettings();   // the saved mixer applies from the first note
@@ -4371,6 +4395,92 @@ function thump(strength) {
   const g = ctx.createGain(); g.gain.value = Math.min(0.5, strength / 400);
   src.connect(f); f.connect(g); g.connect(audio.sfx);
   src.start();
+}
+
+/* ================= THE RADIO (v116) =================
+   v114 and v115 built a story channel — the berth fee, the rung beats, 26
+   ready-room lines — and gave it NO SOUND AT ALL. say() pushed text and the
+   text appeared. Meanwhile the drone, the score and every one-shot ran
+   straight into the speakers at full level forever, so the one hail that did
+   chirp (the junker's) competed with all of it and lost. The complaint was
+   "the game is too silent"; the cause was that nothing ever got out of
+   anything else's way.
+
+   A transmission here does three things: it OPENS (squelch click), it holds
+   an audible CARRIER so the channel sounds live rather than dead, and it
+   CLOSES. Under it, the bed ducks. All of it is oscillators and one shared
+   noise buffer — no assets, same as the other 17 sounds.
+
+   ⭐ hold IS A PARAMETER, and that is deliberate: a text line passes
+   RADIO_HOLD, and the day a recorded bark exists it passes the clip's
+   length instead. The bus voice plugs into is the one built here. */
+const RADIO_HOLD     = 1.15;  // s the channel stays open for a text-only line.
+                              // NOT the 7s the line is legible for — ducking the
+                              // bed for seven seconds mutes the flight, and the
+                              // job is to make you LOOK UP, not to hold the room.
+const RADIO_DUCK_IN  = 0.06;  // fast: the duck has to beat its own squelch down
+const RADIO_DUCK_OUT = 0.55;  // slow: a snap back is more noticeable than the dip
+const BED_DUCK       = 0.36;  // engine + score, about -9 dB
+const SFX_DUCK       = 0.68;  // one-shots duck LIGHTLY (~-3.3 dB). Your own gun
+                              // going quiet mid-fight reads as a bug — but blaster
+                              // spam is exactly what buries a wingman bark, which
+                              // is the case he actually complained about.
+
+/* Ramp one duck node down and back. Each call re-bases from wherever the gain
+   currently sits, so two transmissions close together deepen and extend the
+   same dip instead of the second one fighting the first's release. */
+function duckNode(node, depth, hold) {
+  const g = node.gain, t = audio.ctx.currentTime;
+  g.cancelScheduledValues(t);
+  g.setValueAtTime(g.value, t);                       // cancel-and-hold, by hand
+  g.linearRampToValueAtTime(depth, t + RADIO_DUCK_IN);
+  g.setValueAtTime(depth, t + RADIO_DUCK_IN + hold);
+  g.linearRampToValueAtTime(1, t + RADIO_DUCK_IN + hold + RADIO_DUCK_OUT);
+}
+
+/* One squelch edge. Opening is brighter and a touch longer than closing —
+   that asymmetry is most of what makes a radio sound like a radio. */
+function squelch(at, open) {
+  const { ctx } = audio;
+  const src = ctx.createBufferSource(); src.buffer = audio.noise;
+  const hp = ctx.createBiquadFilter();
+  hp.type = "highpass"; hp.frequency.value = open ? 1100 : 1500;
+  const g = ctx.createGain();
+  const dur = open ? 0.045 : 0.03;
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(open ? 0.16 : 0.11, at + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  src.connect(hp); hp.connect(g); g.connect(audio.radio);
+  src.start(at); src.stop(at + dur + 0.01);
+}
+
+/* Open the channel, hold a carrier, close it — and duck the room underneath.
+   Everything is scheduled up front off ctx.currentTime, so this survives a
+   frame hitch or the tab losing focus mid-transmission. */
+function radioTransmit(hold) {
+  if (!audio) return;
+  hold = hold || RADIO_HOLD;
+  const { ctx } = audio, t = ctx.currentTime;
+  duckNode(audio.bedDuck, BED_DUCK, hold);
+  duckNode(audio.sfxDuck, SFX_DUCK, hold);
+
+  squelch(t, true);
+  squelch(t + RADIO_DUCK_IN + hold, false);
+
+  /* The carrier: a narrow band of noise around the telephone band, sitting
+     just above nothing. It is meant to be felt, not heard — if you can name
+     it as "hiss" it is too loud. */
+  const src = ctx.createBufferSource(); src.buffer = audio.noise; src.loop = true;
+  const bp = ctx.createBiquadFilter();
+  bp.type = "bandpass"; bp.frequency.value = 1650; bp.Q.value = 1.1;
+  const g = ctx.createGain();
+  const end = t + RADIO_DUCK_IN + hold;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.022, t + 0.05);
+  g.gain.setValueAtTime(0.022, end - 0.06);
+  g.gain.exponentialRampToValueAtTime(0.0001, end);
+  src.connect(bp); bp.connect(g); g.connect(audio.radio);
+  src.start(t); src.stop(end + 0.02);
 }
 ["keydown", "mousedown", "touchstart"].forEach(ev => addEventListener(ev, initAudio));
 
@@ -9895,6 +10005,7 @@ function pirateWarnSound() {
 function pirateHailSound() {
   if (!audio) return;
   const { ctx } = audio, t = ctx.currentTime;
+  radioTransmit();          // v116: a hail is a transmission — it opens the channel too
   const notes = [587, 880];
   for (let i = 0; i < notes.length; i++) {
     const at = t + i * 0.16;
@@ -13117,6 +13228,11 @@ function drawNavHud(dt) {
     msgFrom = m[0];
     msgText = m[1].replace(/\{P\}/g, pilotName || "FLYER");   // same as the junker hail
     msgT = m[2];
+    /* v116: the radio fires HERE, not in say(). say() only queues, and a line
+       queued while you are parked waits — sometimes minutes — for you to get
+       airborne. Sounding the squelch at the queue would put a transmission on
+       the channel with nothing on the glass. */
+    radioTransmit();
   }
   if (msgT > 0 && !hailTarget && !landedOn) {
     const rows = msgRows();

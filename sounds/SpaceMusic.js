@@ -25,7 +25,12 @@
  * listener that calls start() on first pointerdown/keydown.
  */
 export default class SpaceMusic {
-  constructor(existingCtx = null){
+  /* destNode (v116): where the finished score is delivered. Defaults to the
+     speakers, which is what the demo page and every earlier caller get. The
+     game passes its DUCK bus instead, so a radio transmission can drop the
+     score for a second without touching setMasterVolume() — the two would
+     fight over the same gain if they shared a node. */
+  constructor(existingCtx = null, destNode = null){
     this.ctx = existingCtx || new (window.AudioContext || window.webkitAudioContext)();
     const ctx = this.ctx;
 
@@ -35,7 +40,7 @@ export default class SpaceMusic {
     const limiter = ctx.createDynamicsCompressor();  // safety net so stacked layers never clip
     limiter.threshold.value = -6; limiter.ratio.value = 12;
     limiter.attack.value = 0.003; limiter.release.value = 0.25;
-    this.master.connect(limiter).connect(ctx.destination);
+    this.master.connect(limiter).connect(destNode || ctx.destination);
 
     // ---- a shared reverb "send" gives everything that big-empty-space tail
     this.reverb = ctx.createConvolver();
