@@ -7813,14 +7813,15 @@ let hailTarget = null;           // nearest in-range neutral this frame — the 
    A proximity hail outranks this one: that one has a button attached and a
    fee behind it, this one never does. */
 const MSG_DUR  = 7;              // seconds a line holds — readable at cruise
+const MSG_SHORT = 4.5;           // a receipt is three words; it doesn't need seven
 const MSG_GAP  = 0.35;           // dead air between two queued lines
-const msgQ     = [];             // [from, text] waiting for you to be airborne
+const msgQ     = [];             // [from, text, dur] waiting for you to be airborne
 let msgFrom = "", msgText = "";
 /* Runs DOWN through zero into -MSG_GAP, which is why it isn't clamped at 0:
    the negative tail IS the gap between two lines. Starts at the floor so the
    very first message delivers on the frame it is queued. */
 let msgT = -MSG_GAP;
-function say(from, text) { msgQ.push([from, text]); }
+function say(from, text, dur) { msgQ.push([from, text, dur || MSG_DUR]); }
 /* Split on "|" — the second half lands on the hail's own second row rather
    than inventing a layout. A long line is the norm here, not the exception. */
 function msgRows() { return msgText.split("|"); }
@@ -11112,6 +11113,85 @@ const RUNG_SAY = [
   null,
 ];
 
+/* ============ THE READY ROOM (v115) — the world's only lore channel ============
+   The beat sheet calls these "the only free beats in the game" — overheard,
+   never addressed, zero cost to walk past — and then labels them as carrying
+   nothing load-bearing. That second half was wrong and this table is the
+   correction. The premise names RUSTHOLLOW's triple rates, the fence, VERDANT
+   being safe because THEY own it, RUBICON never being safe, and Fleet Command
+   being written off — all as things the game contains and NEVER SAYS. The price
+   board already teaches the mechanics of every one of them, which is precisely
+   what makes this room free to say them out loud.
+
+   ⛔ NOTHING HERE IS LOAD-BEARING, and that rule is what buys the register.
+   These are the only lines in the game nobody is required to hear, so they are
+   the only ones that can talk the way a break room full of people who hate
+   their jobs actually talks. A player who never hears one loses nothing.
+
+   THE CRAFT RULE: AN OVERHEARD LINE STARTS HALFWAY THROUGH. You walked in on
+   it. None of these open at the beginning of anything, and none of them are
+   addressed to you — the two that mention you talk ABOUT you, to each other.
+
+   WHERE THEY PLAY, FOR NOW: on launch from Charleston, behind the berth-fee
+   receipt. That is a STAND-IN and it is honest about the fiction — you just
+   walked out through the yard — but these are written for the walkable room
+   and they move there when the rig lands. Turn the whole thing off with
+   CHATTER_ODDS = 0 if it ever gets old.
+
+   ⛔ NOT rung-gated, unlike the berth fee. The rent stops when the station is
+   yours; the room does not. People keep working there. */
+const READY_ROOM = [
+  // --- the lanes, and what they cost ---
+  ["READY ROOM", "—AND NOBODY RUNS RUBICON AT NIGHT.|NOBODY RUNS IT IN THE DAYTIME EITHER."],
+  ["READY ROOM", "VERDANT'S SAFE. VERDANT'S REAL SAFE.|JUST REMEMBER WHOSE SKY YOU'RE SAFE IN."],
+  ["READY ROOM", "RUSTHOLLOW PAYS TRIPLE. DON'T ASK FOR WHAT.|DON'T ASK WHO'S ASKING."],
+  ["READY ROOM", "KID RAN A FULL LOAD OF ALLOY TO CHARLESTON.|FULL LOAD. CHARLESTON PAYS FLAT, DUMBASS."],
+  ["READY ROOM", "BELT'S GOT ORE ALL RIGHT.|ALSO GOT FOUR HUNDRED ROCKS COMING BACK."],
+  ["READY ROOM", "CINDER AIN'T A LANDING. CINDER'S A DARE."],
+  ["READY ROOM", "YOU EVER SEEN SHRINKAGE UP CLOSE?|NO. YOU'D KNOW."],
+  ["READY ROOM", "HALF THAT SCRAP WAS SOMEBODY'S SHIP ONCE.|AIN'T A GHOST STORY. IT'S JUST INVENTORY."],
+  // --- the company ---
+  ["READY ROOM", "THEY DIDN'T CLOSE FLEET COMMAND.|THEY JUST STOPPED GOING."],
+  ["READY ROOM", "TWENTY-FIVE TO LEAVE. I DID THE MATH ONCE,|ELEVEN YEARS IN, AND THEN I QUIT DOING MATH."],
+  ["READY ROOM", "TWENTY-FIVE A LAUNCH. I BREATHE THEIR AIR|AND THEY CHARGE ME FOR THE FUCKING DOOR."],
+  ["READY ROOM", "THEY GOT A BOAT CALLED TAXMAN AND ONE|CALLED SHRINKAGE. THAT'S A CRY FOR HELP."],
+  ["READY ROOM", "ASKED FOR A RAISE. GOT A LANYARD."],
+  ["READY ROOM", "THIS HULL'S HELD TOGETHER WITH ZIP TIES|AND THEY'RE ASKING WHY IT READS 80 PERCENT."],
+  ["READY ROOM", "SAFETY SAYS WEAR THE HARNESS.|SAFETY AIN'T NEVER BEEN IN A FUCKING AIRLOCK."],
+  ["READY ROOM", "THEY DOCKED ME FOR A CRACKED VISOR.|I CRACKED IT ON THEIR SHIT DOOR FRAME."],
+  ["READY ROOM", "GUY IN DISPATCH SAID WORK SMARTER.|GUY IN DISPATCH NEVER MOVED A CRATE."],
+  // --- the room itself. Nothing in these three. That is the point of them ---
+  ["READY ROOM", "MICROWAVE'S BUSTED. THIRD TIME THIS MONTH.|SOMEBODY KEEPS PUTTING METAL IN IT."],
+  ["READY ROOM", "WHOEVER'S LEAVING BOOTS IN MY LOCKER —|I KNOW WHOSE THEY ARE AND I AIN'T SAYING."],
+  ["READY ROOM", "HE CLOCKED IN, SAT DOWN, CLOCKED OUT.|EIGHT HOURS. BEST SHIFT HE EVER RAN."],
+  ["READY ROOM", "DON'T DRINK THE COFFEE.|I'M NOT EXPLAINING IT. JUST DON'T."],
+  // --- seeds. These two are doing structural work and still cost nothing ---
+  ["READY ROOM", "MY COUSIN BOUGHT HIS OWN TRUCK.|STILL PARKS HERE. STILL PAYS THE TWENTY-FIVE."],
+  ["READY ROOM", "{P}'S STILL FLYING THE COMPANY HULL.|WE'VE ALL BEEN THERE. MOST OF US STILL ARE."],
+  ["READY ROOM", "—YEAH, THAT'S {P}. NEW.|GIVE IT A WEEK."],
+  // --- pointers at the two people you can actually talk to ---
+  ["READY ROOM", "PEARL'S BEEN ON THAT DESK SINCE BEFORE I WAS.|ASK HER ABOUT IT. SHE WON'T TELL YOU."],
+  ["READY ROOM", "DUTCH WORKED THE DERELICT, YOU KNOW.|HE DON'T BRING IT UP AND YOU DON'T EITHER."],
+];
+/* Often enough that the yard feels staffed, rare enough that it never becomes
+   wallpaper you stop reading — which is the only way this room fails. One
+   number to tune, and 0 switches it off. */
+const CHATTER_ODDS = 0.35;
+let lastChatter = -1;            // never the same line twice running
+function readyRoomLine() {
+  const n = READY_ROOM.length;
+  if (Math.random() >= CHATTER_ODDS || n < 2) return false;
+  /* Pick from the OTHER n-1 lines and shift past the one just played, rather
+     than re-rolling until it differs. Same distribution, no loop — a retry
+     loop here is one degenerate Math.random away from hanging the frame. */
+  let i;
+  if (lastChatter < 0) i = (Math.random() * n) | 0;
+  else { i = (Math.random() * (n - 1)) | 0; if (i >= lastChatter) i++; }
+  lastChatter = i;
+  say(READY_ROOM[i][0], READY_ROOM[i][1]);
+  return true;
+}
+
 /* ⭐ THE PER-ARM LADDER IS NOW ONE EDIT AWAY, and this is the note that says so.
    §9 wants the station to be its own progress bar — count the lit arms from 5km
    and you know how far in you are. v110 could not do it: the draw-call join had
@@ -12237,12 +12317,13 @@ const FEE_ENDS_AT  = 5;        // rungs COMPLETE — your own berths are lit
 // own scratch: one caller is the [G] keypress, the other is INSIDE the collision
 // loop, and borrowing that loop's vectors is how the junk-ram bug happened
 const feeTmp = new THREE.Vector3();
-function launchFeeDue(b) {
-  if (!b || !b.pads || buildStage >= FEE_ENDS_AT) return false;
+function atHomePad(b) {
+  if (!b || !b.pads) return false;
   feeTmp.subVectors(shipObj.position, b.group.position).normalize();
   const port = onSpaceport(b, feeTmp);
   return !!(port && port.home);
 }
+function launchFeeDue(b) { return atHomePad(b) && buildStage < FEE_ENDS_AT; }
 /* Charged the moment the gear leaves the deck, from BOTH departure paths —
    the [G] assist and a throttle-up off the pad. Never blocks a launch and
    never drives the bank negative: a broke pilot leaves owing nothing, because
@@ -12259,8 +12340,19 @@ function chargeLaunchFee(b) {
   }
   say("SPACESUCK", fee >= LAUNCH_FEE ? "BERTH FEE — " + fee + " CR"
                 : fee > 0            ? "BERTH FEE — " + fee + " CR OF " + LAUNCH_FEE
-                                     : "BERTH FEE — " + LAUNCH_FEE + " CR · BANK EMPTY");
+                                     : "BERTH FEE — " + LAUNCH_FEE + " CR · BANK EMPTY",
+      MSG_SHORT);
   return fee;
+}
+/* ONE call per departure, from both paths. The two halves are deliberately not
+   gated together: the rent stops when the station is yours, the ready room does
+   not — people keep working there. The receipt is queued first because it is
+   the direct consequence of the button you just pressed; the chatter lands
+   behind it, which reads as something still rattling round on the way out. */
+function leavePad(b) {
+  if (!atHomePad(b)) return;      // Charleston is the only yard with a break room
+  chargeLaunchFee(b);             // rung-gated inside
+  readyRoomLine();                // never gated
 }
 const GEAR_HEIGHT = 4;         // the ship rests this far above the terrain
 const SURFACE_G = 26;          // gravity at surface level, u/s²
@@ -12731,7 +12823,7 @@ function tryAssist() {
        depart", which on a planet is a kindness and on a station is how you get
        flown through the superstructure — the nose is still flat to the deck when
        control lands in your hands. Straight up, then it is your ship. */
-    chargeLaunchFee(b);                    // v114 §7d — one of TWO departure paths
+    leavePad(b);                           // v114 §7d — one of TWO departure paths
     liftoff = { b, t: 0, rise: 0, pad: landedPad,
                 fromRel: shipObj.position.clone().sub(b.group.position) };
     return;
@@ -13024,7 +13116,7 @@ function drawNavHud(dt) {
     const m = msgQ.shift();
     msgFrom = m[0];
     msgText = m[1].replace(/\{P\}/g, pilotName || "FLYER");   // same as the junker hail
-    msgT = MSG_DUR;
+    msgT = m[2];
   }
   if (msgT > 0 && !hailTarget && !landedOn) {
     const rows = msgRows();
@@ -14393,7 +14485,7 @@ function animate() {
           /* v114 §7d — the OTHER departure path. Both are charged and the ditch
              branch above is not: falling off a hazard is not a launch, and the
              company does not bill you for crashing. */
-          chargeLaunchFee(b);
+          leavePad(b);
           // rise: last frame's climb, so the camera carry can subtract it out
           liftoff = { b, t: 0, rise: 0, pad: landedPad,
                       fromRel: shipObj.position.clone().sub(b.group.position) };
