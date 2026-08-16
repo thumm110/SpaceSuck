@@ -1522,10 +1522,12 @@
       <b>R</b> market rates — every port's standing price, anywhere (freezes the world)<br>
       <b>B</b> the yard — what FLEET COMMAND still wants, and what your hold closes
       <div class="grp">ON FOOT</div>
-      <b>F</b> get out of the ship — parked on any deck. <b>F</b> again, beside
-      the ship, to climb back in.<br>
+      <b>F</b> — or <b>L3</b> (click the left stick) — get out of the ship,
+      parked on any deck. Same button again, beside the ship, to climb back in.<br>
       <b>W A S D</b> walk (relative to the camera) · <b>SHIFT</b> run ·
-      <b>mouse</b> look around
+      <b>mouse</b> look around<br>
+      <b>L-stick</b> walk — it's analog, so half a stick strolls and a full one
+      runs · <b>R-stick</b> look around
       <div class="grp">MOUSE</div>
       <b>Click</b> capture — steer · <b>ESC</b> release<br>
       <b>Right-drag</b> orbit camera · <b>Wheel</b> zoom
@@ -12521,6 +12523,16 @@ let padStartHeld = false;     // edge-detect for pad-Start pause (v54)
 let padBackHeld = false;      // edge-detect for pad-Back → market console (v101)
 let padBHeld = false;         // edge-detect for B → landing assist / launch (v68)
 let padUpHeld = false;        // D-pad Up in FLIGHT = answer a hail (v47)
+/* v118 — L3 (button 10) is get out / get back in. It is the ONLY unused button
+   on the pad, and it is off the D-pad on purpose: the D-pad already drives the
+   dock accordion whenever you are parked, which is exactly when you want to
+   press this. */
+let padL3Held = false;
+/* The left and right sticks while on foot. Module-level because the walk runs
+   much later in the frame than the poll — and ZEROED at the top of the poll
+   every frame, so a pad that disconnects mid-stride cannot leave him walking
+   into the horizon forever. */
+let footPadX = 0, footPadY = 0, footPadCamX = 0, footPadCamY = 0;
 let padFireArmed = true;      // A must be RELEASED once after startGame (v85)
 /* ---- ONE MENU D-PAD (v85) --------------------------------------------
    The front door and the dock accordion take the same five motions, so they
@@ -13232,6 +13244,7 @@ const FOOT_TURN   = 7.5;       // rad/s the body swings toward the way it's goin
 const FOOT_FALL   = 18;        // u/s you drop off a lip — a pad edge is ~14u
 const FOOT_EPS    = 0.02;      // sole clearance; the model is authored soles-at-zero
 const FOOT_MOUSE  = 0.0022;    // same sensitivity the ship flies at
+const FOOT_PAD_LOOK = 2.2;     // rad/s at full stick — a RATE, not a delta
 const FOOT_CAM_D  = 6.2;       // chase boom length
 const FOOT_EYE    = 1.35;      // what the camera aims at — chest height on a 1.80u body
 /* Pitch: bigger = the camera climbs and looks down on him.
@@ -13412,10 +13425,15 @@ function updateOnFoot(dt) {
   _ftCam.copy(f.camF).applyAxisAngle(SPIN_AXIS, yaw);
   surfaceUp(b, _ftDir, _ftUp);
 
-  // --- mouse look. Drains the SAME deltas the ship steers on, and it runs
-  //     before the steering block, so the hull can never read them too. ---
-  _ftCam.applyAxisAngle(_ftUp, -mouseDX * FOOT_MOUSE);
-  f.camPitch = Math.max(FOOT_PIT_LO, Math.min(FOOT_PIT_HI, f.camPitch + mouseDY * FOOT_MOUSE));
+  /* --- look: mouse and the right stick, into the same two numbers ---
+     The mouse drains the SAME deltas the ship steers on (the gated steering
+     block does not touch them, so they are still here). The stick is a RATE and
+     the mouse is a DELTA, which is why one is multiplied by dt and the other is
+     not — a mouse has already moved by the time we read it; a stick is a held
+     position saying how fast to keep turning. */
+  _ftCam.applyAxisAngle(_ftUp, -mouseDX * FOOT_MOUSE - footPadCamX * FOOT_PAD_LOOK * dt);
+  f.camPitch = Math.max(FOOT_PIT_LO, Math.min(FOOT_PIT_HI,
+                 f.camPitch + mouseDY * FOOT_MOUSE + footPadCamY * FOOT_PAD_LOOK * dt));
   mouseDX = 0; mouseDY = 0;
   // re-flatten into the tangent plane — walking any distance curves the ground
   // out from under a vector that was tangent a hundred frames ago
@@ -13424,14 +13442,28 @@ function updateOnFoot(dt) {
   _ftCam.normalize();
   _ftRgt.crossVectors(_ftCam, _ftUp).normalize();
 
-  // --- WASD, relative to where the CAMERA looks ---
-  let mz = 0, mx = 0;
-  if (keys["KeyW"]) mz += 1;
-  if (keys["KeyS"]) mz -= 1;
-  if (keys["KeyD"]) mx += 1;
-  if (keys["KeyA"]) mx -= 1;
+  /* --- WASD or the left stick, both relative to where the CAMERA looks ---
+     ⭐ THE STICK IS ANALOG AND THE KEYBOARD IS NOT, so they set the target speed
+     differently and neither is converted into the other. Deflection maps
+     straight onto ground speed — half a stick is a walk, all of it is a run,
+     and every speed between is available. That needs nothing new in the gait
+     below: the clip rate is already driven by real speed, so an in-between
+     speed plays an in-between cycle with the feet still planted.
+     The stick wins when it is pushed, so a hand resting on the keyboard cannot
+     fight it, and it falls back the moment the stick is centred. */
+  let mz = 0, mx = 0, want = 0;
+  const padMag = Math.min(1, Math.hypot(footPadX, footPadY));
+  if (padMag > 0) {
+    mx = footPadX; mz = footPadY;
+    want = padMag * FOOT_RUN;
+  } else {
+    if (keys["KeyW"]) mz += 1;
+    if (keys["KeyS"]) mz -= 1;
+    if (keys["KeyD"]) mx += 1;
+    if (keys["KeyA"]) mx -= 1;
+    if (mz !== 0 || mx !== 0) want = (keys["ShiftLeft"] || keys["ShiftRight"]) ? FOOT_RUN : FOOT_WALK;
+  }
   const moving = (mz !== 0 || mx !== 0);
-  const want = moving ? ((keys["ShiftLeft"] || keys["ShiftRight"]) ? FOOT_RUN : FOOT_WALK) : 0;
   f.speed += (want - f.speed) * (1 - Math.exp(-FOOT_EASE * dt));
   if (f.speed < 0.02) f.speed = 0;
 
@@ -14866,12 +14898,43 @@ function animate() {
   /* ---- gamepad: polled every frame ---- */
   let padLX = 0, padYaw = 0, padThrust = 0, padReverse = 0, padStop = false, padBoost = false, padFire = false, padLookBack = false;
   let lookTargetYaw = 0, lookTargetPitch = 0;   // 0 unless the stick says otherwise
+  footPadX = footPadY = footPadCamX = footPadCamY = 0;   // v118 — see the decl
   if (padIndex !== null) {
     const gp = navigator.getGamepads()[padIndex];
     if (gp) {
       // sampled every frame so the held state is current the moment a menu
       // opens — see navEdges. Only the dock branch below acts on it in flight.
       const nav = navEdges(gp);
+
+      /* ---- L3: out of the ship, and back into it (v118) ----
+         Read ABOVE the on-foot branch, because it is the one button that has to
+         work from BOTH sides — and edge-fired, like every other one-act-per-press
+         button on this pad. `toggleFoot` owns whether it is allowed. */
+      const l3 = !!(gp.buttons[10] && gp.buttons[10].pressed);
+      if (l3 && !padL3Held && !paused) toggleFoot();
+      padL3Held = l3;
+
+      /* ---- ON FOOT: the sticks walk him, and nothing else on the pad does
+         anything at all (v118) ----
+         Everything below this branch flies the ship, and while you are standing
+         beside it none of it should run — so the whole flight block is skipped
+         rather than gated line by line. That is stronger than the `flying`
+         guards further down: those stop the ship acting on an input, this stops
+         the input being read. `nav` is still sampled above, because an edge
+         detector that goes unsampled swallows the first press after it comes
+         back — the v105 lesson.
+
+         ⭐ THE STICK IS ANALOG AND THAT IS BETTER THAN THE KEYBOARD. Deflection
+         maps straight onto ground speed, so a half-pushed stick is a walk and a
+         full one is a run, with everything in between available. It needs no new
+         code in the gait: the clip rate is already driven by real speed, so any
+         speed between 0 and RUN plays correctly and the feet stay planted. */
+      if (onFoot) {
+        footPadX = padAxis(gp.axes[0]);
+        footPadY = -padAxis(gp.axes[1]);            // stick up = forward
+        footPadCamX = padAxis(gp.axes[2]);
+        footPadCamY = padAxis(gp.axes[3]);
+      } else {
       padLX = padAxis(gp.axes[0]);
       const padLY = padAxis(gp.axes[1]);
       /* left stick = a real flight stick at ANY speed: X rolls, Y
@@ -14947,6 +15010,7 @@ function animate() {
         padUpHeld = up;
         shopCursor = jobCursor = 0;
       }
+      }   // ← end of the !onFoot (flight) branch, v118
     }
   }
 
