@@ -7790,6 +7790,53 @@ const HAIL_LINES = [             // junker chatter — the raider's name goes in
   "WORD'S OUT ON YOU, {P}. GOOD WORD, MOSTLY.",
 ];
 let hailTarget = null;           // nearest in-range neutral this frame — the [E] target
+
+/* ============ THE MESSAGE LINE (v114) — the story channel ============
+   v47's hail above draws one line over the radar when a neutral is inside
+   HAIL_R. That is a PROXIMITY PROMPT bound to a live NPC: no NPC, no channel.
+   So nothing at Charleston, and nothing on the station, could ever speak — the
+   beat sheet's "the hail channel is already built, the rung lines drop in"
+   was half true, and this is the missing half. Same slot, same two rows, no
+   NPC behind it: a sender, a line, and a timer.
+
+   ONE LINE IS THE WHOLE FORMAT, deliberately. It forces the writing to have a
+   point and it can never interrupt the thirty-second layer. Anything that
+   needs a paragraph belongs on foot, at a counter.
+
+   EVERYTHING QUEUES, including the launch fee's receipt. A message set
+   directly would clobber one already on screen, and the two do collide the
+   moment a rung line is waiting and you launch from a pad. The pump below
+   only serves a line while you are FLYING — which is also what delivers a
+   rung line at all, since a rung closes while you are parked at Fleet
+   Command with a dock panel over the glass.
+
+   A proximity hail outranks this one: that one has a button attached and a
+   fee behind it, this one never does. */
+const MSG_DUR  = 7;              // seconds a line holds — readable at cruise
+const MSG_GAP  = 0.35;           // dead air between two queued lines
+const msgQ     = [];             // [from, text] waiting for you to be airborne
+let msgFrom = "", msgText = "";
+/* Runs DOWN through zero into -MSG_GAP, which is why it isn't clamped at 0:
+   the negative tail IS the gap between two lines. Starts at the floor so the
+   very first message delivers on the frame it is queued. */
+let msgT = -MSG_GAP;
+function say(from, text) { msgQ.push([from, text]); }
+/* Split on "|" — the second half lands on the hail's own second row rather
+   than inventing a layout. A long line is the norm here, not the exception. */
+function msgRows() { return msgText.split("|"); }
+/* Shrink a canvas line until it fits the glass. The v78 radar bug and the
+   freight-name overflow were BOTH a fixed font size meeting a narrow phone,
+   and both got out because the layout code knows nothing about text metrics.
+   Measuring costs a few microseconds and cannot go stale when a line is
+   rewritten — which these lines will be, repeatedly, by hand. */
+function fitPx(c, text, maxW, px) {
+  while (px > 8) {
+    c.font = px + "px " + navFont;
+    if (c.measureText(text).width <= maxW) break;
+    px--;
+  }
+  return px;
+}
 // v103: the "WINGMAN DOWN" toast (the jobFlash/gunshipFlash pattern). He is a
 // named pilot you paid for, so losing him gets a line rather than a silent gap
 // on your wing that you notice two minutes later.
@@ -11027,6 +11074,44 @@ const STAGES = [
              "SignPanelCyanGlow", "SignPanelMagGlow"] },    // the name. Last thing to light
 ];
 
+/* ============ THE SIX RUNG LINES (v114) — beat sheet draft 01 ============
+   Six rungs, six beats, one line each: pay a bill, hear what it bought. The
+   story rides the ladder that is ALREADY the roadmap instead of running a
+   second progression beside it — which is the only reason it costs a table
+   and not a system.
+
+   Indexed by the rung that just CLOSED, so RUNG_SAY[i] pairs with STAGES[i].
+   "|" splits the two rows of the message line. {P} is the callsign, FLYER if
+   blank — same substitution the junker hail uses.
+
+   ⭐ RUNG 6 IS SILENT ON PURPOSE, and it is the boldest call in the sheet.
+   Five rungs of people talking at you, then the name lights and nobody says
+   anything. Silence is the payoff for five rungs of chatter — spend it there
+   or it is just a sixth transmission. Give it a line and you have thrown
+   away the only ending this shape can buy.
+
+   THE SENDER NAMES ARE PLACEHOLDERS. Every ship in this game is named after a
+   payroll line item, so there is very likely a better joke here. Tanner's
+   call — swapping them is this table and nothing else.
+
+   The writing obeys the same rules the rest of the game does: no beat pays
+   (income is frozen), nothing pauses, and nothing here implies a system the
+   build cannot back up. */
+const RUNG_SAY = [
+  // 1 · SALVAGE RIGHTS — the company signs it off and does not congratulate you
+  ["DISPATCH",    "FILING'S CLEAR. THE WRECK'S YOURS, {P}.|SO'S ANYTHING STILL ON IT."],
+  // 2 · THE FRAME — somebody saw the lights. First contact, and it is nobody important
+  ["HAULER",      "THAT YOU LIGHTING UP THE DEAD ONE?|RAN THAT LANE SIX YEARS. THOUGHT IT WAS A GHOST."],
+  // 3 · THE SPINE — the man who was there when it went dark has seen the picture
+  ["DUTCH",       "THEY PULLED US OFF THAT STATION IN A WEEK.|YOU'RE ALREADY PAST WHERE WE GOT."],
+  // 4 · THE DECKS — eight berths painted for traffic you don't have, and the Ark notices
+  ["RAIDERS ARK", "CUTE PAINT ON THEM BERTHS, {P}.|WHO EXACTLY IS COMING?"],
+  // 5 · POWER & DOCKS — the first customer, and it answers the Ark
+  ["INDEPENDENT", "BERTH THREE'S LIT AND I'M RUNNING ON FUMES.|YOU OPEN, OR YOU JUST SHOWING OFF?"],
+  // 6 · THE GATE — no hail, no banner. The signage lights, and that IS the beat
+  null,
+];
+
 /* ⭐ THE PER-ARM LADDER IS NOW ONE EDIT AWAY, and this is the note that says so.
    §9 wants the station to be its own progress bar — count the lit arms from 5km
    and you know how far in you are. v110 could not do it: the draw-call join had
@@ -11332,6 +11417,13 @@ function checkStageDone() {
   saveBuild();
   applyBuildLights(fcBody());
   stageDoneSound();
+  /* v114: the rung's beat. QUEUED, never spoken here — a rung closes while you
+     are parked at Fleet Command with a dock panel over the glass, and the beat
+     sheet is explicit that these arrive while you FLY. `buildStage` has already
+     been incremented above, so the rung that just closed is the one behind it.
+     Rung 6 is a null row and says nothing, which is the ending. */
+  const beat = RUNG_SAY[buildStage - 1];
+  if (beat) say(beat[0], beat[1]);
   buildDirty = true; dockBarSig = "";
   return true;
 }
@@ -12113,6 +12205,63 @@ let landedOn = null;           // the body we're parked on, or null
 let landedPad = null;
 let liftoff = null;            // v55 auto-liftoff in progress: { b, t } — see the collision loop
 const LIFTOFF_DUR = 2.0;       // seconds, deck to the hover point
+
+/* ============ CHARLESTON RENT (v114) — endgame plan §7d ============
+   25 credits off the bank every time you leave the home pad, itemised on the
+   message line. Against a measured ~1,776 cr / 20 min run rate this is
+   economically nothing, and that is the entire design: §4 says a recurring
+   drain with no decision attached is friction, so this one does not try to
+   hurt. Its whole job is to be a line you read a hundred times — and then one
+   day your own berths come online and it stops. That is the arc delivered in
+   one number.
+
+   ⛔ THIS IS A SINK, NOT A NEGATIVE INCOME KNOB. It takes credits out and puts
+   none back, which is the only direction of flow this economy allows.
+
+   WHY THE `home` FLAG AND NOT A PAD INDEX: exactly one pad in the game sets
+   `home:true`, and adding a world re-orders BODIES so every index quietly
+   means something else. That landmine has gone off three times here.
+
+   ⛔ AND WHY NOT `landedPad` EITHER, which is the obvious way to write this and
+   is wrong: `landedPad` is only filled in by the LANDING AUTOPILOT (:14457). A
+   manual touchdown sets it to null on purpose — "you landed where you landed" —
+   so a fee keyed on it would charge the pilots who press [G] and quietly let
+   everyone who flies it in by hand launch for free. Resolve the port from where
+   the ship IS, exactly the way the bank does two thousand lines down.
+
+   WHY RUNG 5: "your own berths come online" is POWER & DOCKS by name — the
+   rung where the berth lamps light and the arms go live. Clearing it is the
+   launch where the fee disappears, and it should disappear without comment. */
+const LAUNCH_FEE   = 25;
+const FEE_ENDS_AT  = 5;        // rungs COMPLETE — your own berths are lit
+// own scratch: one caller is the [G] keypress, the other is INSIDE the collision
+// loop, and borrowing that loop's vectors is how the junk-ram bug happened
+const feeTmp = new THREE.Vector3();
+function launchFeeDue(b) {
+  if (!b || !b.pads || buildStage >= FEE_ENDS_AT) return false;
+  feeTmp.subVectors(shipObj.position, b.group.position).normalize();
+  const port = onSpaceport(b, feeTmp);
+  return !!(port && port.home);
+}
+/* Charged the moment the gear leaves the deck, from BOTH departure paths —
+   the [G] assist and a throttle-up off the pad. Never blocks a launch and
+   never drives the bank negative: a broke pilot leaves owing nothing, because
+   debt is a system this game does not have and should not grow one for a nag.
+   The receipt says what was actually taken, not what was billed — a readout
+   that prints 25 while collecting 3 is the kind of lie this HUD doesn't tell. */
+function chargeLaunchFee(b) {
+  if (!launchFeeDue(b)) return 0;
+  const fee = Math.min(banked, LAUNCH_FEE);
+  if (fee > 0) {
+    banked -= fee;
+    bankEl.textContent = banked;
+    saveBank();
+  }
+  say("SPACESUCK", fee >= LAUNCH_FEE ? "BERTH FEE — " + fee + " CR"
+                : fee > 0            ? "BERTH FEE — " + fee + " CR OF " + LAUNCH_FEE
+                                     : "BERTH FEE — " + LAUNCH_FEE + " CR · BANK EMPTY");
+  return fee;
+}
 const GEAR_HEIGHT = 4;         // the ship rests this far above the terrain
 const SURFACE_G = 26;          // gravity at surface level, u/s²
 
@@ -12582,6 +12731,7 @@ function tryAssist() {
        depart", which on a planet is a kindness and on a station is how you get
        flown through the superstructure — the nose is still flat to the deck when
        control lands in your hands. Straight up, then it is your ship. */
+    chargeLaunchFee(b);                    // v114 §7d — one of TWO departure paths
     liftoff = { b, t: 0, rise: 0, pad: landedPad,
                 fromRel: shipObj.position.clone().sub(b.group.position) };
     return;
@@ -12852,6 +13002,54 @@ function drawNavHud(dt) {
     } else {
       c.fillStyle = "#7dffa8"; c.shadowColor = "#7dffa8";
       c.fillText(btn + " HIRE AS WINGMAN — " + ALLY_FEE + " BANK", cx, cy - r - 28);
+    }
+    c.restore();
+  }
+
+  /* --- C3: the message line (v114) — the story channel, in the hail's own
+     two rows. Violet, because that is already this game's DISPATCH colour and
+     a story is something a dispatcher hands you.
+
+     TICKED AND PUMPED UNCONDITIONALLY, drawn conditionally. If the timer only
+     ran while the line was visible, one outranked by a proximity hail would
+     freeze and then surface minutes later attached to nothing — the same class
+     of bug as a latched state that never clears.
+
+     DELIVERED ONLY WHILE FLYING. A rung closes while you are parked at Fleet
+     Command with a dock panel over the glass; holding the line until you are
+     airborne is both what makes it visible at all and what the beat sheet
+     asks for — "arrives while you fly, costs nothing to ignore". */
+  if (msgT > -MSG_GAP) msgT -= dt;
+  if (!landedOn && msgT <= -MSG_GAP && msgQ.length) {
+    const m = msgQ.shift();
+    msgFrom = m[0];
+    msgText = m[1].replace(/\{P\}/g, pilotName || "FLYER");   // same as the junker hail
+    msgT = MSG_DUR;
+  }
+  if (msgT > 0 && !hailTarget && !landedOn) {
+    const rows = msgRows();
+    /* ⚠ THE BUDGET IS NOT THE SCREEN WIDTH. The line is CENTRED on the radar's
+       column, and on a phone the scope sits in the bottom-LEFT corner — so the
+       usable width is twice the distance to the nearer edge, not the whole
+       canvas. Measured against W alone, a line that "fits" runs off the left
+       edge on an 844x390 phone with a centre at x=193. Third outing for this
+       shape after the v78 radar name and the v81 freight name. */
+    const maxW = Math.min(W - 24, 2 * Math.min(cx, W - cx) - 8);
+    const head = msgFrom + " ▸ " + rows[0];
+    c.save();
+    c.textAlign = "center";
+    c.globalAlpha = Math.min(1, msgT);          // holds, then fades over the last second
+    /* A BLACK shadow, not a violet glow. Glow reads beautifully against space
+       and turns to mush the moment the line is drawn over a sunlit planet,
+       which is most of the time you are near a pad — the same reason the radar
+       and freight names carry a dark halo instead of their own colour. */
+    c.fillStyle = NAV_CONTRACT;
+    c.shadowColor = "rgba(0,0,0,.95)"; c.shadowBlur = 4;
+    c.font = fitPx(c, head, maxW, 12) + "px " + navFont;
+    c.fillText(head, cx, cy - r - 44);
+    if (rows[1]) {
+      c.font = fitPx(c, rows[1], maxW, 12) + "px " + navFont;
+      c.fillText(rows[1], cx, cy - r - 28);
     }
     c.restore();
   }
@@ -14192,6 +14390,10 @@ function animate() {
           landedOn = null;
         } else if (ship.throttle > 0.05) {           // takeoff → the autopilot rises first
           landedOn = null;
+          /* v114 §7d — the OTHER departure path. Both are charged and the ditch
+             branch above is not: falling off a hazard is not a launch, and the
+             company does not bill you for crashing. */
+          chargeLaunchFee(b);
           // rise: last frame's climb, so the camera carry can subtract it out
           liftoff = { b, t: 0, rise: 0, pad: landedPad,
                       fromRel: shipObj.position.clone().sub(b.group.position) };
