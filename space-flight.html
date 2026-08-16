@@ -4361,8 +4361,18 @@ function initAudio() {
   vComp.threshold.value = -22; vComp.ratio.value = 6;
   vComp.attack.value = 0.004; vComp.release.value = 0.18;
   const voiceOut = ctx.createGain(); voiceOut.gain.value = VOICE_LEVEL;
+  /* ⛔ THE LIMITER IS NOT DECORATION — measured, not guessed. The first six
+     clips ALL came out of this chain over full scale (peaks 1.001 to 1.059,
+     up to 124 samples pinned), which is audible crackle on the loudest
+     syllable of every line. Trimming VOICE_LEVEL alone would fix today's six
+     and break the day one clip is regenerated hotter, so the trim handles the
+     normal case and this handles everything else. */
+  const vLim = ctx.createDynamicsCompressor();
+  vLim.threshold.value = -1.5; vLim.ratio.value = 20;
+  vLim.attack.value = 0.001; vLim.release.value = 0.09;
   voiceIn.connect(vHi); vHi.connect(vLo); vLo.connect(vGrit);
-  vGrit.connect(vComp); vComp.connect(voiceOut); voiceOut.connect(radioBus);
+  vGrit.connect(vComp); vComp.connect(voiceOut);
+  voiceOut.connect(vLim); vLim.connect(radioBus);
   const gain = ctx.createGain(); gain.gain.value = 0;
   const filter = ctx.createBiquadFilter();
   filter.type = "lowpass"; filter.frequency.value = 220;
@@ -4525,7 +4535,21 @@ const VOICE_EXT   = ".mp3";
 const VOICE_HP    = 320;    // telephone band. Together with VOICE_LP this is
 const VOICE_LP    = 3200;   // most of "it sounds like a radio" — before any grit.
 const VOICE_GRIT  = 1.9;    // tanh drive. Under ~1.2 it is clean, over ~3 it is a robot.
-const VOICE_LEVEL = 1.15;   // the chain's output trim; the compressor does the work
+const VOICE_LEVEL = 0.95;   // output trim. Was 1.15 and every one of the first
+                            // six clips clipped; the limiter below now backs it up.
+
+/* ⭐ EVERY CLIP IS LEVELLED AT DECODE, and this is measured rather than tidy:
+   the six delivered lines spanned 7.2 dB of RMS — fee-full was more than twice
+   as loud as rung1-dispatch, which is the FIRST voice in the game. TTS output
+   level drifts between generations, so this will keep happening every time a
+   line is regenerated. Normalising here means the cast stays even forever and
+   nobody has to match levels by ear in Runway.
+   ⚠ Clamped, because RMS normalisation is a bad idea unbounded: a clip that is
+   mostly silence, or one that failed to render, would otherwise be amplified
+   into a bang. */
+const VOICE_TARGET   = 0.14;   // the RMS every clip is pulled toward
+const VOICE_GAIN_MIN = 0.25;
+const VOICE_GAIN_MAX = 4;
 const VOICE_TAIL  = 0.28;   // s of duck held past the last word, so the squelch
                             // close does not clip the end of a sentence
 
@@ -4544,7 +4568,19 @@ function gritCurve(amount) {
   return c;
 }
 
-/* id -> AudioBuffer, or null for "asked, not there". Both outcomes are cached:
+/* Levelling gain for one decoded clip: what to multiply it by so its RMS lands
+   on VOICE_TARGET. Silence-safe (a zero-RMS buffer returns the clamp floor
+   rather than Infinity) and bounded at both ends. */
+function voiceGainFor(buf) {
+  const d = buf.getChannelData(0);
+  let s = 0;
+  for (let i = 0; i < d.length; i++) s += d[i] * d[i];
+  const rms = Math.sqrt(s / Math.max(1, d.length));
+  if (!(rms > 0)) return VOICE_GAIN_MIN;
+  return Math.max(VOICE_GAIN_MIN, Math.min(VOICE_GAIN_MAX, VOICE_TARGET / rms));
+}
+
+/* id -> {buf, gain}, or null for "asked, not there". Both outcomes are cached:
    a missing clip must cost one 404 for the session, not one per line. */
 const voiceClips = new Map();
 let voicePreloaded = false;
@@ -4573,7 +4609,9 @@ function loadVoice(id) {
   fetch(VOICE_DIR + id + VOICE_EXT)
     .then(r => r.ok ? r.arrayBuffer() : Promise.reject(r.status))
     .then(b => audio.ctx.decodeAudioData(b))
-    .then(buf => { voiceClips.set(id, buf); })
+    /* Levelled ONCE here, not per playback — the RMS walk is O(samples) and a
+       line can fire mid-dogfight. */
+    .then(buf => { voiceClips.set(id, { buf, gain: voiceGainFor(buf) }); })
     .catch(() => { /* stays null: text and a squelch, exactly as v116 */ });
 }
 
@@ -4582,13 +4620,14 @@ function loadVoice(id) {
    the plain RADIO_HOLD — so one code path covers voiced and unvoiced lines. */
 function playVoice(id) {
   if (!audio || !id) return 0;
-  const buf = voiceClips.get(id);
-  if (!buf) { loadVoice(id); return 0; }   // not here yet — ask, and stay quiet
+  const clip = voiceClips.get(id);
+  if (!clip) { loadVoice(id); return 0; }  // not here yet — ask, and stay quiet
   const src = audio.ctx.createBufferSource();
-  src.buffer = buf;
-  src.connect(audio.voice);
+  src.buffer = clip.buf;
+  const lvl = audio.ctx.createGain(); lvl.gain.value = clip.gain;
+  src.connect(lvl); lvl.connect(audio.voice);
   src.start(audio.ctx.currentTime + RADIO_DUCK_IN);   // start under the open squelch
-  return buf.duration + VOICE_TAIL;
+  return clip.buf.duration + VOICE_TAIL;
 }
 ["keydown", "mousedown", "touchstart"].forEach(ev => addEventListener(ev, initAudio));
 
