@@ -13904,6 +13904,16 @@ function loadYardShip() {
     const box = modelBox(m, new THREE.Box3());
     const len = box.max.z - box.min.z;
     if (len > 1e-3) m.scale.setScalar(def.len / len);   // the loader's own rule
+    /* ⛔ DRESS IT, exactly the way the flight loader does at :4858 — and skipping
+       this was a real defect that no assertion could ever have seen. A hull's two
+       main materials (DeepTeal, HullTeal) are authored with an almost-black base
+       and a near-full CYAN EMISSIVE, because dressHullMats is what decides how
+       much of that emission survives. Loaded raw, USS THUMM stood on Pad 01 as a
+       flat glowing cyan cutout of itself. ⭐ Found by taking a screenshot and
+       looking at it — 75 green assertions had nothing to say about it.
+       floor 0.15 not 0.5: this scene has actual lights, so the self-lit minimum
+       that a hull needs against a 1/r² sun would only wash it out again. */
+    dressHullMats(m, { floor: 0.15, weather: true, shipLen: def.len });
     if (park) m.position.copy(park);
     m.traverse(o => { if (o.isMesh) o.frustumCulled = false; });
     yardShip = m;
