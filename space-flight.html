@@ -13465,6 +13465,33 @@ const YARD_PIT_LO = -0.35, YARD_PIT_HI = 0.95;   // ⭐ YOU CAN LOOK UP IN HERE.
                            // and this scene never reaches that clamp — it has its own,
                            // at 0.35m, sized for a person instead of for landing gear
 const YARD_CAM_LO = 0.35;  // how far the lens stays off the floor
+/* Arrival standoff (v119.3a) — see enterYard. Not a distance: a distance is
+   what this exists to stop anyone writing down. It walks the spawn back along
+   the route until the chase boom clears, and these are the ends of that search.
+
+   ⚠️ BOOM IS WHAT "THE CAMERA HAS ROOM" MEANS, and 3.2 of 3.40 is deliberately
+   near the top. The first cut used 2.5, which was enough to keep the lens out
+   of the fuselage — the actual bug — and it left the four hulls stopping at
+   2.61 / 2.88 / 2.88 / 2.93. Which hull you happen to fly is not a reason for
+   the first second of the game to look different, so the bar is set where every
+   hull reaches the SAME shot: all four now land on 3.28.
+
+   ⚠️ AND A NOTE ON HOW THAT WAS CHECKED, because two measurements lied first.
+   `Box3.setFromObject` on a SkinnedMesh returns the BIND pose, so "how much of
+   the frame does he fill" came back as a confident 48% for a camera that had
+   not moved. And a screenshot loop that reboots the page per hull can capture a
+   frame from before the scene has settled — two of those images showed the lens
+   apparently inside the character and sent me looking for a bug that was not
+   there. ⭐ The trustworthy version is ONE boot, camera state read immediately
+   before and after the capture, and the two compared. Do that before believing
+   a screenshot taken inside a loop.
+
+   MAX is only a leash on the loop. The thing that actually keeps you on Pad 01
+   is the SAME-SURFACE guard in enterYard, which is generic — a walkable that
+   steps down is a different surface, on any world — where "stop after 5 metres"
+   would have been Charleston's pad radius written down in the loader. */
+const YARD_ARRIVE_BOOM = 3.2;
+const YARD_ARRIVE_MAX  = 6.0;
 const YARD_SKY   = 0x0b1119;
 /* The two numbers the whole look hangs on. Tuned by screenshot against the
    shipyard's own renders, because there is no way to reason your way to them:
@@ -13586,15 +13613,26 @@ function loadYard(then) {
   const L = new THREE.GLTFLoader();
   L.load(YARD_ART + ASSET_V, art => {
     L.load(YARD_RT + ASSET_V, rt => {
-      buildYard(art.scene, rt.scene);
-      yardLoading = false;
-      if (then) then();
+      /* ⛔ THE HULL IS PART OF THE SCENE, NOT A LATE ARRIVAL (v119.3a). This
+         used to release the callback as soon as the art and the contract were
+         up, and let the parked ship pop in whenever it finished. Two things
+         went wrong with that. The visible one: you walked in and your own hull
+         materialised in front of you a second later. The one that actually
+         mattered: the arrival spawn now BACKS OFF UNTIL THE CAMERA HAS ROOM
+         (see enterYard), and it measures that against `yardShipBox` — which was
+         still null on the first visit, the only visit where the standoff is
+         decided. It is a parse, not a fetch: the same .glb is already cached
+         from flight. */
+      buildYard(art.scene, rt.scene, () => {
+        yardLoading = false;
+        if (then) then();
+      });
     }, undefined, fail);
   }, undefined, fail);
 }
 
 /* Read the contract off the .glb and stand the scene up. Runs ONCE. */
-function buildYard(art, rt) {
+function buildYard(art, rt, then) {
   yardScene = new THREE.Scene();
   yardScene.background = new THREE.Color(YARD_SKY);
 
@@ -13657,15 +13695,19 @@ function buildYard(art, rt) {
     ops: ops ? new THREE.Box3().setFromObject(ops) : null,
     spawn: hook("PlayerSpawn"), park: hook("ShipPark"), exit: hook("ExitToFlight"),
   };
-  loadYardShip();
+  loadYardShip(then);
 }
 
 /* Your actual hull, on Pad 01. Not a prop: the sign behind it says USS THUMM
    because THUMM is the hull the opening hands you, but what stands on the deck
    is whatever you picked, so the pad never argues with the ship you fly. */
-function loadYardShip() {
+function loadYardShip(then) {
   const def = SHIPS[shipSel];
-  if (!def || !def.file || !THREE.GLTFLoader) return;
+  /* ⛔ AND IT STILL HAS TO RELEASE THE CALLER. A hull with no file is a broken
+     wire-in, not a reason to leave the door refusing to open — the yard is
+     perfectly walkable without a prop on Pad 01, and enterYard's standoff falls
+     back to the boarding spot when there is no box to measure against. */
+  if (!def || !def.file || !THREE.GLTFLoader) { if (then) then(); return; }
   new THREE.GLTFLoader().load(def.file + ASSET_V, gltf => {
     const m = gltf.scene, park = yardScene.userData.contract.park;
     const box = modelBox(m, new THREE.Box3());
@@ -13717,7 +13759,8 @@ function loadYardShip() {
        shape as the 41 the contract ships and coarse in the same way. */
     m.updateMatrixWorld(true);
     yardShipBox = new THREE.Box3().setFromObject(m);
-  }, undefined, () => {});
+    if (then) then();
+  }, undefined, () => { if (then) then(); });
 }
 
 /* [Y] / the door. `enterYard` owns the ONE rule about where this is allowed
@@ -13836,6 +13879,58 @@ function enterYard(from) {
     dir.y = 0;
     if (dir.lengthSq() > 1e-6) dir.normalize(); else dir.set(0, 0, -1);
   }
+  /* ⛔ AND BACK OFF UNTIL THE CAMERA HAS ROOM (v119.3a). MEASURED, NOT REASONED:
+     the boarding spot is by definition right at your own hull, so the 3.40m
+     chase boom collapses against it — swept all four hulls and it came back
+     0.85 / 0.90 / 0.60 / 2.61m, and on USS CHAR the lens ended up INSIDE the
+     fuselage. Standing in your own ship is the worst possible first frame of a
+     mode, and it is exactly what v118's disembark() went out of its way to
+     avoid one scale up.
+
+     So walk the spawn back along the route until the boom survives. Adaptive
+     rather than a constant because the answer depends on which hull is parked
+     and on where the yard's pad is — bake in the 3.0m the sweep found today and
+     it is wrong the first time a longer hull ships or the yard is re-modelled,
+     silently, in the one frame nobody re-checks. The loop is bounded and it
+     keeps the LAST valid ground, so a step that walks off the pad is discarded
+     rather than dropping you off the edge on arrival. */
+  if (n >= 2) {
+    const step = _ydV.copy(dir), probe = _ydM, eye = _ydC;
+    const startY = yardGround(spawn.x, spawn.z, spawn.y + 1.0);
+    let best = spawn.clone();
+    for (let d = 0; d <= YARD_ARRIVE_MAX; d += 0.25) {
+      probe.copy(spawn).addScaledVector(step, d);
+      const g = yardGround(probe.x, probe.z, probe.y + 1.0);
+      if (g === null) break;                       // ran out of floor — keep the last one
+      /* ⛔ AND STAY ON THE SURFACE YOU STARTED ON. Without this the search
+         happily walks off the raised deck and onto the yard slab below, and you
+         arrive 0.6m down and 10m away from the ship he asked you to be standing
+         next to. Generic on purpose: "a walkable that steps down is a different
+         surface" holds on any world, where "stop after N metres" would be
+         Charleston's pad radius written into the loader. */
+      if (startY !== null && Math.abs(g - startY) > YARD_STEP) break;
+      probe.y = g;
+      best.copy(probe);
+      eye.copy(probe); eye.y += YARD_EYE;
+      const clear = Math.abs(yardBoom(eye, _ydR.copy(step).negate(), YARD_CAM_D)) >= YARD_ARRIVE_BOOM;
+      /* ⛔ AND NOT STANDING IN A TRIGGER, WHICH IS THE SECOND HALF OF THE SAME
+         PROBLEM. The boarding spot IS TRIGGER_BoardShip — that is what it is for
+         — so arriving there would also put BOARD SHIP on the glass and let your
+         first [E] put you straight back in the ship you just got out of: a door
+         onto its own handle.
+
+         ⭐ ONE OWNER. The first cut of this fixed the camera here and muted the
+         volume separately, and that is the v102 shape exactly: two guards on one
+         invariant, where the redundant one can never be tested because the other
+         covers for it. Folded in, the search has a single stop condition and one
+         assertion can hold it. */
+      _ydT.copy(probe); _ydT.y += YARD_REACH;
+      let inTrigger = false;
+      for (const t of C.triggers) if (t.box.containsPoint(_ydT)) { inTrigger = true; break; }
+      if (clear && !inTrigger) break;
+    }
+    spawn.copy(best);
+  }
   /* and stand him clear of whatever he spawned touching, before the first frame
      can read a position that is inside a solid */
   yardPushOut(spawn, spawn.y);
@@ -13846,21 +13941,10 @@ function enterYard(from) {
     camPitch: 0.18,
     speed: 0,
     near: null,
-    /* ⛔ THE PAD SPAWN STANDS DEAD CENTRE OF TRIGGER_BoardShip, because that is
-       the same spot ExitToFlight marks — the place you board from. So on
-       arrival the glass would read BOARD SHIP and the first [E] you pressed
-       would put you straight back in the ship you just got out of: a door that
-       opens onto its own handle. Mute whatever volume the spawn lands inside
-       until he has stepped out of it once, and let the trigger arm normally
-       after that. Not "mute BoardShip" — mute whatever is HERE, so the same
-       rule holds when the second walkable world spawns you somewhere else. */
-    mute: null,
     said: {},
     chat: YARD_CHAT,
     inside: true,
   };
-  _ydT.copy(spawn); _ydT.y += YARD_REACH;
-  for (const t of C.triggers) if (t.box.containsPoint(_ydT)) { yard.mute = t.name; break; }
   if (footModel) { yardScene.add(footModel); footModel.visible = true; }
   footNow = null; footNowKey = "";
   footPlay("idle");
@@ -14145,16 +14229,6 @@ function updateYard(dt) {
   _ydT.copy(y.pos); _ydT.y += YARD_REACH;
   let near = null;
   for (const t of C.triggers) if (t.box.containsPoint(_ydT)) { near = t; break; }
-  /* ⛔ THE VOLUME YOU SPAWNED IN IS DEAD UNTIL YOU LEAVE IT — see enterYard's
-     `mute`. Cleared the first frame you are not in it, so it costs one string
-     compare per frame and can never latch: step off the pad and it arms, step
-     back on and it works. Written here rather than at the [E] handler because
-     `near` also drives the on-glass prompt, and a live prompt over a dead
-     button is worse than no prompt at all. */
-  if (y.mute) {
-    if (!near || near.name !== y.mute) y.mute = null;
-    else near = null;
-  }
   y.near = near;
   /* Beat 02, unprompted — and keyed on `yardSeen`, which OUTLIVES the visit.
      `yard.said` is rebuilt empty every time you walk in, which is right for the
