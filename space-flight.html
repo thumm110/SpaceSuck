@@ -11550,7 +11550,13 @@ function readyRoomLine() {
   if (lastChatter < 0) i = (Math.random() * n) | 0;
   else { i = (Math.random() * (n - 1)) | 0; if (i >= lastChatter) i++; }
   lastChatter = i;
-  say(READY_ROOM[i][0], READY_ROOM[i][1]);
+  /* ⛔ [2] IS THE VOICE, AND DROPPING IT IS WHY NOTHING IN HERE EVER SPOKE.
+     v119.2c gave all 26 lines ids and wired the PRELOADER to them, so the clips
+     were fetched, decoded and sat in memory while this line asked for none of
+     them. He recorded 25 of them and reported it: "I am still seeing the lines
+     I just recorded show up as text." Text was never the tell — the voice plays
+     OVER the subtitle by design — silence was. */
+  say(READY_ROOM[i][0], READY_ROOM[i][1], undefined, READY_ROOM[i][2]);
   return true;
 }
 
@@ -11865,7 +11871,12 @@ function checkStageDone() {
      been incremented above, so the rung that just closed is the one behind it.
      Rung 6 is a null row and says nothing, which is the ending. */
   const beat = RUNG_SAY[buildStage - 1];
-  if (beat) say(beat[0], beat[1]);
+  /* ⛔ AND THE SAME OMISSION HERE, SINCE v117.1. RUNG_SAY rows carry their id
+     in [2] exactly as READY_ROOM does, and this dropped it — so five of the six
+     clips shipped on 16 Aug could never play. His board note, "the only voice I
+     have heard is the 25 credit fee", was a BUG REPORT and was read as progress.
+     The fee was simply the one call site in the game that passed the argument. */
+  if (beat) say(beat[0], beat[1], undefined, beat[2]);
   buildDirty = true; dockBarSig = "";
   return true;
 }
