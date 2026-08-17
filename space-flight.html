@@ -13731,7 +13731,7 @@ let walkPadA = false;
 const yardSeen = {};
 
 /* own scratch, same rule as the walk's */
-const _ydP = new THREE.Vector3(), _ydF = new THREE.Vector3();
+const _ydP = new THREE.Vector3(), _ydF = new THREE.Vector3(), _ydK = new THREE.Vector3();
 const _ydC = new THREE.Vector3(), _ydR = new THREE.Vector3();
 const _ydM = new THREE.Vector3(), _ydT = new THREE.Vector3();
 const _ydV = new THREE.Vector3(), _ydO = new THREE.Vector3();
@@ -13914,7 +13914,34 @@ function loadYardShip() {
        floor 0.15 not 0.5: this scene has actual lights, so the self-lit minimum
        that a hull needs against a 1/r² sun would only wash it out again. */
     dressHullMats(m, { floor: 0.15, weather: true, shipLen: def.len });
-    if (park) m.position.copy(park);
+    /* ⭐ GEAR DOWN. A ship on a pad stands on its legs, and the two poses are
+       the ones updateGear() drives in flight — legs to 0 (their modelled
+       rotation IS the stowed angle), doors to their full swing. Applied once
+       rather than animated: nothing in here flies. A hull with no Gear* nodes
+       simply sits on its belly, same as it lands. */
+    for (const n of ["GearHingeNose", "GearHingeMainL", "GearHingeMainR"]) {
+      const h = m.getObjectByName(n); if (h) h.rotation.x = 0;
+    }
+    for (const n of ["GearDoorNoseLHinge", "GearDoorNoseRHinge", "GearDoorMainLHinge", "GearDoorMainRHinge"]) {
+      const d = m.getObjectByName(n);
+      if (d) d.rotation.x = d.userData.swing ?? THREE.MathUtils.degToRad(100);
+    }
+    if (park) {
+      /* ⛔ STAND IT ON ITS FEET, NOT ON ITS ORIGIN. Dropping the model straight
+         onto the ShipPark empty buries it: a hull's origin is its middle, so
+         copying the hook put USS THUMM's belly 1.65m UNDER the deck and left a
+         cabin roof and two cargo flaps sticking out of the concrete. Measure
+         where the lowest vertex actually is — after the gear is down, because
+         the gear is now the lowest thing — and rest THAT on the deck.
+         ⭐ And read the deck off the CONTRACT rather than off the hook's own
+         height: the hook is an authored number and the walkable is the thing
+         the player stands on, so this way the ship and the man are always on
+         the same surface even if one of the two moves. */
+      m.position.copy(park);
+      const deck = yardSurface(park.x, park.z, park.y + 8);
+      const stood = modelBox(m, new THREE.Box3());   // local frame — scale it back up
+      m.position.y = (deck === null ? park.y : deck) - stood.min.y * m.scale.y;
+    }
     m.traverse(o => { if (o.isMesh) o.frustumCulled = false; });
     yardShip = m;
     yardScene.add(m);
@@ -14171,6 +14198,16 @@ function updateYard(dt) {
   _ydC.y = 0;
   if (_ydC.lengthSq() < 1e-8) _ydC.set(0, 0, -1);
   _ydC.normalize();
+  /* ⛔ AND KEEP IT. Without this line the yaw computed above lasts exactly one
+     frame: yardCamera() opens by re-reading y.camF into this same scratch
+     vector, so every frame re-turned from the SAME stored heading by only that
+     frame's mouse delta and threw the result away. The pitch survived because
+     it is stored as a number on the object, which is why the symptom was "the
+     camera is stuck facing one way but I can still look up and down" rather
+     than "look is dead" — the half that worked hid the half that did not.
+     updateOnFoot has always frozen its camera vector back the same way; this
+     mode was the one that forgot. */
+  y.camF.copy(_ydC);
   _ydR.crossVectors(_ydC, YARD_UP).normalize();
 
   // ---- move: the stick is analog, the keyboard is not. Same deal as v118 ----
@@ -14208,8 +14245,19 @@ function updateYard(dt) {
   // ---- step, then leave anything you stepped into ----
   _ydP.copy(y.pos).addScaledVector(_ydF, y.speed * dt);
   yardPushOut(_ydP, y.pos.y);
-  // ...and refuse the step outright if it puts you under a kerb you cannot climb
-  if (yardTooHigh(_ydP.x, _ydP.z, y.pos.y)) { _ydP.x = y.pos.x; _ydP.z = y.pos.z; }
+  /* ...and refuse the step outright if it puts you under a kerb you cannot
+     climb. ⭐ TESTED AT THE LEADING EDGE, NOT AT THE CENTRE. A person is a
+     0.34m circle and this test is a point, so stopping when the CENTRE reaches
+     a kerb parks a third of a metre of him inside it — from behind, a man
+     standing at the pad with his shins in the concrete. Solids already push
+     out by the same radius (yardPushOut); a kerb is a solid the contract draws
+     as a floor, so it gets the same body.
+     ⚠ The `stuck` term is an escape hatch, not politeness: if you are ever
+     under a kerb already, refusing the step is the difference between a bug and
+     a soft-lock in a scene with no way to jump. */
+  _ydK.copy(_ydP).addScaledVector(_ydF, YARD_RAD);
+  const stuck = yardTooHigh(y.pos.x, y.pos.z, y.pos.y);
+  if (!stuck && yardTooHigh(_ydK.x, _ydK.z, y.pos.y)) { _ydP.x = y.pos.x; _ydP.z = y.pos.z; }
 
   // ---- height: snap up (floors are smooth), fall down (a lip is a drop) ----
   const g = yardGround(_ydP.x, _ydP.z, y.pos.y);
@@ -14285,12 +14333,19 @@ function yardCamera() {
   /* This scene's own floor. The game's CAM_GROUND_MARGIN never runs here — it
      is radial, planet-keyed, and 2.5u tall, which is a metre and a half over a
      man's head. 0.35 is the version sized for a person, and it is the reason
-     you can look up in here and nowhere else. */
-  const fg = yardGround(yardCam.position.x, yardCam.position.z, y.pos.y);
+     you can look up in here and nowhere else.
+     ⛔ DROP THE RAY IN FROM THE CAMERA'S OWN HEIGHT, NOT THE PLAYER'S FEET.
+     yardGround starts one step above whatever height you hand it, so passing
+     the player's feet meant that standing on the ground beside a 0.6m plinth
+     the ray began at 0.45 — UNDER the plinth top — missed it, found the slab
+     underneath and cleared the camera to swing out at 0.35, inside solid
+     concrete. The floor is a property of where the CAMERA is, and the two are
+     only the same height when the ground is flat. */
+  const cy = Math.max(yardCam.position.y, y.pos.y + YARD_BODY);
+  const fg = yardSurface(yardCam.position.x, yardCam.position.z, cy);
   if (fg !== null && yardCam.position.y < fg + YARD_CAM_LO) yardCam.position.y = fg + YARD_CAM_LO;
   yardCam.up.copy(YARD_UP);
   yardCam.lookAt(_ydT);
-  y.camF.copy(_ydC);
 }
 
 /* Say the next thing this spot has to say, and stop on the last one rather than
