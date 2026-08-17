@@ -1371,18 +1371,52 @@
      ⛔ #navhud is NOT in this list and must not be. The message line lives on
      that canvas and its timer ticks inside the draw — hide the canvas and a
      queued story line freezes rather than playing out. drawNavHud skips its own
-     instruments on foot instead (see drawFootHud). */
+     instruments on foot instead (see drawFootHud).
+
      The DOCK COLUMN goes too. The outfitter, the dispatch board, the market and
      the yard are all counters you work from the cockpit, and leaving them
      stacked down the glass while you walk around outside would cover the thing
      you got out to look at. Hidden, not closed: `dockBox` keeps its value, so
      boarding puts you back on the panel you were reading. (The drain keeps
      running — the ship is still parked at the port, and its hold emptying is
-     not something that should wait on where the pilot is standing.) */
+     not something that should wait on where the pilot is standing.)
+
+     ⛔ v119 — THIS COMMENT USED TO CLOSE TWICE, AND THE RULE BELOW WAS DEAD FOR
+     A WHOLE VERSION BECAUSE OF IT. A close-comment token landed after "see
+     drawFootHud", seven lines early, and the prose after it fell into the
+     stylesheet as live text. CSS recovers from that by swallowing everything up
+     to the next brace — so the prose AND the entire body.onfoot selector list
+     below became one invalid prelude, and the whole rule was thrown away. v118
+     therefore shipped with NOTHING hidden while you walk: crosshair, throttle,
+     thumbstick and dock columns all stayed on the glass over a man standing on
+     a pad. Measured, not guessed — with the class added by hand, all twelve
+     elements still computed to their normal display.
+
+     ⚠️ AND THE FIRST FIX REPRODUCED IT, which is the part worth remembering:
+     the replacement comment explained the bug by quoting the offending token,
+     which closed the comment in exactly the same place for exactly the same
+     reason. Do not write that token inside a CSS comment, not even to describe
+     it. Nothing warns: the JS syntax gate parses the scripts, and a stylesheet
+     that silently drops one rule is still a valid stylesheet. The check that
+     catches it is `getComputedStyle` with the class on, which is now pinned in
+     the yard suite for both classes. */
   body.onfoot #crosshair, body.onfoot #gunsight, body.onfoot #throttlewrap,
   body.onfoot #stick, body.onfoot #nearest, body.onfoot #dockcols,
   body.onfoot #landtag, body.onfoot #assisttag, body.onfoot #viewtag,
   body.onfoot .bracket { display: none !important; }
+
+  /* CHARLESTON OPERATIONS (v119) — a stronger version of the same idea. On foot
+     you are still standing next to your ship, so your bank and your hold are
+     still worth reading. In here the ship is a scene away and the flight world
+     is stopped: every instrument on the glass would be describing a simulation
+     that is not running. The message line survives, because it is the only
+     thing in the game that is talking to YOU, and in this room it is carrying
+     the entire script. #navhud stays for the same reason as above. */
+  body.inyard #hud, body.inyard #crosshair, body.inyard #gunsight,
+  body.inyard #throttlewrap, body.inyard #stick, body.inyard #nearest,
+  body.inyard #dockcols, body.inyard #landtag, body.inyard #assisttag,
+  body.inyard #viewtag, body.inyard .bracket,
+  body.inyard .touchbtn { display: none !important; }
 
   /* the readout used to sit exactly where the stick now lives — lift and
      tighten it so the two never share pixels. (#hud is pointer-events:none,
@@ -1528,6 +1562,14 @@
       <b>mouse</b> look around<br>
       <b>L-stick</b> walk — it's analog, so half a stick strolls and a full one
       runs · <b>R-stick</b> look around
+      <div class="grp">CHARLESTON OPERATIONS</div>
+      Land at <b>CHARLESTON</b>, get out of the ship, and press <b>E</b> — or
+      <b>A</b> on the pad — to walk inside. <b>Y</b> does it straight from the
+      seat.<br>
+      <b>E</b> / <b>A</b> works every counter in there: clock in, talk to
+      dispatch, read the board, and board your ship on Pad 01 to fly.<br>
+      <b>Y</b> or <b>L3</b> walks back out at any time. Same walking controls as
+      above — and you can look up in here.
       <div class="grp">MOUSE</div>
       <b>Click</b> capture — steer · <b>ESC</b> release<br>
       <b>Right-drag</b> orbit camera · <b>Wheel</b> zoom
@@ -12149,8 +12191,25 @@ addEventListener("keydown", e => {
      board through the menu backdrop, lift off, land again and re-roll the quote in
      3.6 seconds of game time with the drain stopped. A pause menu that leaves the
      launch button live is a hole whatever prices are doing. */
-  if (e.code === "KeyE" && !keys["KeyE"] && !paused) tryRecruit(); // answer a hail (v47)
-  if (e.code === "KeyG" && !keys["KeyG"] && !paused) tryAssist();  // landing assist / leave pad (v68)
+  /* v119 — [E] does the only thing there is to do in the room you are standing
+     in. In Charleston Operations that is the counter/clock/gate in front of
+     you; in flight it is answering a hail. Written as one if/else rather than
+     two guarded ifs so the two can never both fire off one press. */
+  if (e.code === "KeyE" && !keys["KeyE"] && !paused) {
+    if (yard) { if (yard.near) yardAct(yard.near); }
+    else if (footDoorHere()) toggleYard();                // walk inside (v119)
+    else tryRecruit();                                    // answer a hail (v47)
+  }
+  /* v119 — [Y] YARD: walk into Charleston Operations, and walk back out.
+     `toggleYard` owns whether it is allowed, and the answer is "only while
+     parked at Charleston", which is what makes the round trip free. */
+  if (e.code === "KeyY" && !keys["KeyY"] && !paused) toggleYard();
+  /* v119 — `!yard` for the same reason [G] is gated on `!paused`: it MOVES the
+     ship. Pressed in the locker room it would arm a liftoff on a hull the
+     player is not in and is not looking at, and the flight world is frozen, so
+     nothing would happen until they walked back out — at which point the ship
+     starts rising on its own with no input to blame it on. */
+  if (e.code === "KeyG" && !keys["KeyG"] && !paused && !yard) tryAssist();  // landing assist / leave pad (v68)
   /* v118 — [F] FOOT: get out of the ship, and get back in. Gated on `paused`
      with [E] and [G] for the same reason they are: it moves you. */
   if (e.code === "KeyF" && !keys["KeyF"] && !paused) toggleFoot();
@@ -13325,6 +13384,22 @@ function loadFootModel(then) {
   });
 }
 
+/* ⭐ THE ONE OWNER OF THE MEASURED STRIDE (v119). Pick the cycle, then play it
+   at the rate real ground speed says it should run at. Both walks in the game
+   call this — the radial one out on a deck and the flat one in Charleston
+   Operations — because this is where the two numbers that cannot be guessed
+   live, and a second copy would drift the day either one is re-measured.
+   Everything else about the two walks genuinely differs (one resolves height
+   off a planet radius, the other off a raycast), so only this is shared. */
+function footGait(speed, dt) {
+  const key = speed < 0.05 ? "idle" : (speed > FOOT_GAIT ? "run" : "walk");
+  footPlay(key);
+  // the clip's authored speed against the real one: feet stick to the ground
+  if (footNow && key !== "idle")
+    footNow.setEffectiveTimeScale(speed / (key === "run" ? FOOT_RUN : FOOT_WALK));
+  if (footMixer) footMixer.update(dt);
+}
+
 /* Crossfade, never cut. `current` is tracked by KEY rather than by action so a
    re-entry after boarding cannot fade an action into itself. */
 function footPlay(key) {
@@ -13347,6 +13422,11 @@ function footPlay(key) {
    still refuses correctly, and there is exactly one place the rule is written. */
 function toggleFoot() {
   if (paused) return;
+  /* v119 — not from inside Charleston Operations. That scene owns the character
+     model and has its own way out ([Y], or the ship on Pad 01); letting [F]
+     through here would reparent him into the flight scene mid-stride and leave
+     a walk running in a world that is not being drawn. */
+  if (yard) return;
   if (onFoot) { boardShip(); return; }
   if (!landedOn || landing || liftoff) return;    // only from a dead stop on a deck
   if (!footModel) { loadFootModel(toggleFoot); return; }   // re-enter, re-check
@@ -13507,14 +13587,8 @@ function updateOnFoot(dt) {
   _ftBY.crossVectors(_ftBZ, _ftBX);
   footModel.quaternion.setFromRotationMatrix(_ftBasis.makeBasis(_ftBX, _ftBY, _ftBZ));
 
-  // --- the gait ---
-  const key = f.speed < 0.05 ? "idle" : (f.speed > FOOT_GAIT ? "run" : "walk");
-  footPlay(key);
-  if (footNow && key !== "idle") {
-    // the clip's authored speed against the real one: feet stick to the ground
-    footNow.setEffectiveTimeScale(f.speed / (key === "run" ? FOOT_RUN : FOOT_WALK));
-  }
-  if (footMixer) footMixer.update(dt);
+  // --- the gait (v119: shared with the yard — see footGait) ---
+  footGait(f.speed, dt);
 
   // --- freeze back into the baked frame ---
   f.dir.copy(_ftDir).applyAxisAngle(SPIN_AXIS, -yaw);
@@ -13545,6 +13619,712 @@ function footCamera() {
 
   camera.up.copy(_ftUp);
   camera.lookAt(_ftTgt);
+}
+
+/* ==================== CHARLESTON OPERATIONS (v119) — THE ROUTE ============
+
+   The walk the game was always supposed to open on. You wake in a locker room,
+   read a wall nobody has updated in years, punch a clock, take a job off
+   Pearl, walk out through the operations door into the yard, and get in your
+   ship. Modelled and frozen in the shipyard on 9 August and untouched since,
+   because until v118 the player could not walk. Now he can.
+
+   ⚠️ NAME COLLISION, on purpose and worth knowing: [B] already opens "THE
+   YARD", the FLEET COMMAND build manifest (v113). This is a different place
+   with the same nickname — the company's operations yard at Charleston, on
+   the ground. It is `yard*` in code because that name was free; on the glass
+   it says CHARLESTON OPERATIONS so the two never have to be told apart.
+
+   ⭐ IT IS ITS OWN SCENE, AND THAT IS THE WHOLE ARCHITECTURE. Two rules out of
+   the on-foot pillar drive every decision below:
+
+     ① EVERY WALKABLE SCENE IS 1 UNIT = 1 METRE AND ITS OWN SCENE. The flight
+        game is not metre-scale — EARTH is a 2,500u ball — so a 46m yard cannot
+        hang off a planet without one of the two scales being a lie. It gets
+        its own THREE.Scene, its own camera and its own lights, and the launch
+        is a CUT rather than a continuous shot. Nothing in here touches `scene`.
+     ② IT IS A PIPELINE, NOT A LEVEL. Nothing about Charleston is written down
+        in this file. The place is DISCOVERED from node-name prefixes in a
+        second, never-rendered .glb — WALK_ is floor, BLOCK_ is solid, TRIGGER_
+        is a volume that talks, NAV_Route_* is the intended path — so FLEET
+        COMMAND's interior and every walkable after it is this same loader
+        pointed at a different file. Hard-coding a hook's coordinates here is
+        the single change that would throw that away.
+
+   ⛔ THE FLIGHT WORLD IS FROZEN IN HERE, and that is deliberate in a way
+   v118's walk deliberately was NOT. Out on a pad the world keeps running
+   because you can SEE it, and a frozen planet reads as a hang. In here you
+   cannot see it at all, and leaving it running would drain the hold, spawn
+   raiders and pay out a market while the player is in a room the flight camera
+   cannot reach. "Owned ships never earn while you are elsewhere" is
+   constitutional, and this is the most literal elsewhere the game has.
+
+   ⚠️ WHAT THE ART DOES NOT CONTAIN — checked in the file, not assumed:
+     · NO PEOPLE. Three NPCSpawn_ empties and nothing standing on them. Pearl
+       and Dutch are voices behind counters, which the counters support.
+     · NO SHIP. A ShipPark empty, so the hull below is loaded and placed by us
+       — and it is YOUR hull, not a prop, so the pad shows what you actually fly.
+     · NO LIGHTS OF ANY KIND. 25 dark PBR materials and five *Glow emissives
+       carrying the entire character of the place. Hence the rig in buildYard.
+
+   ⚠️ THE GLOWS NEEDED RESCUING AND NOTHING WOULD HAVE SAID SO. Blender wrote
+   them with KHR_materials_emissive_strength (×1.8 to ×3.4); this game runs
+   three.js r128, which predates that extension and drops it SILENTLY. Every
+   sign, lane marking and pad ring would have loaded at a third of its authored
+   brightness and read as merely dim rather than as broken. Restored by the
+   game's own convention — a material whose name ends in "Glow" is a lamp, the
+   same rule dressHullMats has used on every hull since v64. */
+
+const YARD_ART   = "yard/charleston-operations-yard-greybox.glb";   // what you see
+const YARD_RT    = "yard/charleston-operations-yard-runtime.glb";   // what you hit
+
+/* ⭐ EVERY ONE OF THESE IS MEASURED OFF THE FROZEN ASSET, not chosen. The two
+   that matter most are STEP and BODY, and each is doing a job that is invisible
+   until it is wrong. */
+const YARD_STEP  = 0.45;   // the tallest rise you can walk up, metres. The
+                           // service stair rises 0.40 a tread and the pad deck
+                           // stands 0.60 over the slab — so the RAMP is the only
+                           // way onto the pad, which is what the ramp is FOR.
+const YARD_BODY  = 1.80;   // ⛔ COLLISION IS 3D, AND THIS IS WHY. A solid only
+                           // stops you if its box overlaps you ankle to head.
+                           // Test the footprint alone and BLOCK_OperationsRoof —
+                           // one box, 30m × 16m, floor-to-ceiling coverage of the
+                           // entire operations building at 4.4m up — becomes an
+                           // invisible wall you cannot take ONE STEP inside. The
+                           // maintenance roof does the same to the mechanic's bay.
+const YARD_RAD   = 0.34;   // shoulder radius for the push-out
+const YARD_FALL  = 6;      // m/s off a lip. A tenth of the flight number, because
+                           // here a unit is a metre and a person is 1.8 of them
+const YARD_REACH = 0.90;   // where the trigger probe rides — chest, not soles, so
+                           // a volume that starts above the floor still catches
+const YARD_CAM_D = 3.40;   // chase boom. Half the flight one: 6.2m of boom in a
+                           // 15.5m room spends the whole scene inside a wall
+const YARD_EYE   = 1.35;
+const YARD_PIT_LO = -0.35, YARD_PIT_HI = 0.95;   // ⭐ YOU CAN LOOK UP IN HERE. The
+                           // 2.5u floor that forbids it outdoors is CAM_GROUND_MARGIN,
+                           // and this scene never reaches that clamp — it has its own,
+                           // at 0.35m, sized for a person instead of for landing gear
+const YARD_CAM_LO = 0.35;  // how far the lens stays off the floor
+const YARD_SKY   = 0x0b1119;
+/* The two numbers the whole look hangs on. Tuned by screenshot against the
+   shipyard's own renders, because there is no way to reason your way to them:
+   the art is authored dark (base albedo 0.05–0.34) on the assumption of lamps
+   that do not survive the export. */
+const YARD_SKYLIGHT = 2.2;
+const YARD_KEYLIGHT = 0.8;
+const YARD_CHAT  = 7.0;    // seconds between rolls of the ready-room chatter
+
+const YARD_UP = new THREE.Vector3(0, 1, 0);      // flat scene: up is up, forever
+
+let yard = null;            // null = not in here. The mode flag AND the state.
+let yardScene = null, yardCam = null, yardShip = null;
+let yardLoading = false;
+/* ⭐ ONE [A] edge flag for every mode you are on your feet in — the deck outside
+   and the yard inside. Two separate ones let the press that carries you between
+   them count twice. padL3Held already works exactly this way, for exactly this
+   reason, and splitting it was the mistake this name exists to prevent. */
+let walkPadA = false;
+/* Auto beats that must fire ONCE, not once per visit. The conversations reset
+   each time you come in — a new shift, and Pearl handing you the job again is
+   right — but the notice board is a DISCOVERY, and discovering the same wall
+   every time you clock on is how a story beat becomes wallpaper. */
+const yardSeen = {};
+
+/* own scratch, same rule as the walk's */
+const _ydP = new THREE.Vector3(), _ydF = new THREE.Vector3();
+const _ydC = new THREE.Vector3(), _ydR = new THREE.Vector3();
+const _ydM = new THREE.Vector3(), _ydT = new THREE.Vector3();
+const _ydV = new THREE.Vector3(), _ydO = new THREE.Vector3();
+const _ydBX = new THREE.Vector3(), _ydBY = new THREE.Vector3(), _ydBZ = new THREE.Vector3();
+const _ydBasis = new THREE.Matrix4();
+const _ydRay = new THREE.Raycaster();
+const _ydDown = new THREE.Vector3(0, -1, 0);
+
+/* ============ THE TEN BEATS ============
+
+   Beat sheet draft 01, written 15 Aug, wired 16 Aug. The rules the rung lines
+   and the ready room already obey apply here without exception:
+
+     · NO BEAT PAYS. Income is frozen; Pearl hands you a shift, never a fee.
+     · NOTHING IMPLIES A SYSTEM THE BUILD CANNOT BACK UP. There is no contract
+       board behind Pearl because there is no contract board in the game.
+     · NOBODY EXPLAINS THE GAME TO YOU. The notice board and the cargo scale are
+       the only tutorial in here and both are written as furniture.
+
+   ⛔ DUTCH DOES NOT MENTION THE DERELICT HERE, and that is a rule rather than an
+   oversight. The ready room says "HE DON'T BRING IT UP AND YOU DON'T EITHER",
+   and his rung-3 line — the one that lands ten hours later, when the station is
+   half lit — only works because he volunteered nothing on day one. */
+const YARD_SPOTS = {
+  /* beat 04. The first button you press in this game is a timeclock. */
+  TRIGGER_ClockIn: { label: "CLOCK IN", lines: [
+    ["TIMECLOCK", "0641. YOU'RE ON THE CLOCK.|HAVE A PRODUCTIVE SHIFT."],
+    ["TIMECLOCK", "YOU'RE ALREADY ON THE CLOCK.|PRESSING IT AGAIN DOESN'T HELP."],
+  ]},
+  /* beats 05 and 06. She gives you the shift and takes your callsign for the
+     manifest; the poster is the one thing she will not discuss. */
+  TRIGGER_Dispatch: { label: "DISPATCH", lines: [
+    ["PEARL", "{P}. PAD ONE, SHE'S FUELLED.|BRING HER BACK WITH THE SAME NUMBER OF WINGS."],
+    ["PEARL", "HOLD'S EMPTY. THAT'S YOUR PROBLEM NOW.|SCALE'S BY THE DOOR IF YOU'VE FORGOTTEN HOW."],
+    ["PEARL", "THE POSTER'S BEEN THERE LONGER THAN YOU HAVE.|NEXT."],
+    ["PEARL", "STILL NEXT."],
+  ]},
+  /* beat 08. Optional, and the whole game is downstream of it. */
+  TRIGGER_Maintenance: { label: "MAINTENANCE", lines: [
+    ["DUTCH", "YOU'RE THE NEW ONE.|DON'T LET DISPATCH TELL YOU IT'S A SHORT HOP."],
+    ["DUTCH", "GEAR STRUT ON ONE'S WEEPING.|IT'LL HOLD. THEY ALL WEEP."],
+    ["DUTCH", "ASK ME SOMETHING I CAN FIX."],
+  ]},
+  /* beat 09. The first hint that the hold is the game, as yard furniture.
+     Reads the LIVE hold rather than a written number, so it cannot go stale. */
+  TRIGGER_CargoBank: { label: "CARGO SCALE", make: () =>
+    ["CARGO SCALE", "HOLD: " + Math.round(cargo) + " OF " + Math.round(holdMax) +
+                    ".|THEY WEIGH IT GOING OUT AND COMING BACK."] },
+  /* the locked door that is a story anchor. It has to REFUSE, not be missing —
+     a gate that does nothing reads as unfinished, a gate that turns you away
+     reads as a city you have not earned yet. */
+  TRIGGER_CityGate: { label: "THE GATE", lines: [
+    ["YARD GATE", "CITY SIDE. BADGE REQUIRED.|YOURS ISN'T THAT KIND OF BADGE."],
+  ]},
+  /* beat 10. No line — the CUT is the beat. */
+  TRIGGER_BoardShip: { label: "BOARD SHIP", board: true },
+  /* beat 07: the indoor→outdoor reveal. Deliberately silent and deliberately
+     not an [E] — it is a doorway, and the yard on the other side of it is the
+     whole payoff. It still earns its entry here because crossing it is what
+     tells the room to stop talking. */
+  TRIGGER_YardDoor: null,
+};
+
+/* Beat 02 — the notices. ⚠️ THE RUNTIME CONTRACT HAS NO TRIGGER FOR THIS, so
+   this one volume is derived from the ART node instead (PROP_SafetyBoard) and
+   is the only place this file reaches into the greybox for collision. It fires
+   its first line on PROXIMITY with no prompt and no press, because a player who
+   never touches a button must still walk past "FLEET COMMAND OPERATIONS —
+   SUSPENDED" in the first ten seconds. That is the entire job of beat 02: the
+   endgame is on the wall before anyone tells you there is one, and it looks
+   like paperwork. [E] then reads the rest. */
+const YARD_BOARD_NODE = "PROP_SafetyBoard";
+const YARD_NOTICES = { label: "THE BOARD", auto: true, lines: [
+  ["NOTICE BOARD", "FLEET COMMAND OPERATIONS — SUSPENDED.|NOBODY'S TAKEN IT DOWN."],
+  ["NOTICE BOARD", "BERTH FEE 25CR. NO EXCEPTIONS.|SOMEBODY'S WRITTEN UNDER IT IN PEN."],
+  ["NOTICE BOARD", "SAFETY IS EVERYONE'S JOB!|THE CORNER'S CURLED. IT'S BEEN EVERYONE'S JOB A WHILE."],
+]};
+
+/* Lazy — the pair is 2.8 MB and most sessions never come in here. */
+function loadYard(then) {
+  if (yardLoading || !THREE.GLTFLoader) return;
+  yardLoading = true;
+  say("SPACESUCK", "CHARLESTON OPERATIONS…", MSG_SHORT);
+  const fail = () => { yardLoading = false; say("SPACESUCK", "OPERATIONS IS LOCKED UP", MSG_SHORT); };
+  const L = new THREE.GLTFLoader();
+  L.load(YARD_ART + ASSET_V, art => {
+    L.load(YARD_RT + ASSET_V, rt => {
+      buildYard(art.scene, rt.scene);
+      yardLoading = false;
+      if (then) then();
+    }, undefined, fail);
+  }, undefined, fail);
+}
+
+/* Read the contract off the .glb and stand the scene up. Runs ONCE. */
+function buildYard(art, rt) {
+  yardScene = new THREE.Scene();
+  yardScene.background = new THREE.Color(YARD_SKY);
+
+  /* The light rig the art does not carry — and it has to carry ALL of it.
+     ⚠️ The shipyard's renders were lit by real Blender lamps that do not export,
+     and the ceiling strips and pad rings that look like they are lighting the
+     place are emissive MATERIALS: three.js has no global illumination, so they
+     light exactly nothing. Two lights and no more, because a per-room rig would
+     be Charleston-specific and this loader has to work on the next walkable
+     too — so the sky does the work and the emissives keep the character. */
+  yardScene.add(new THREE.HemisphereLight(0x9db6d2, 0x141a20, YARD_SKYLIGHT));
+  const key = new THREE.DirectionalLight(0xcfe0ff, YARD_KEYLIGHT);
+  key.position.set(-16, 24, 12);
+  yardScene.add(key, key.target);
+
+  /* ⚠️ see the header — r128 drops the emissive-strength extension, so the
+     lamps come back by name. `emissiveIntensity` and not a colour rewrite, so
+     re-exporting the yard with different glow colours still just works. */
+  art.traverse(o => {
+    if (!o.isMesh || !o.material) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) if (m.name && m.name.endsWith("Glow")) m.emissiveIntensity = 3.0;
+  });
+  yardScene.add(art);
+
+  /* ⛔ THE RUNTIME SCENE IS NEVER ADDED TO ANYTHING. It is harvested into plain
+     arrays and dropped. Adding it hidden would work today and is a trap: r128's
+     raycaster does not skip invisible objects (that check landed in r152), so
+     "hidden" and "not there" are the same thing in this version and different
+     in the next one. Detached is true in every version. */
+  rt.updateMatrixWorld(true);
+  const walk = [], blocks = [], triggers = [], nav = [];
+  rt.traverse(o => {
+    if (!o.isMesh) {
+      if (/^NAV_Route_/.test(o.name))
+        nav.push({ name: o.name, pos: o.getWorldPosition(new THREE.Vector3()) });
+      return;
+    }
+    if (/^WALK_/.test(o.name))   { walk.push(o); return; }
+    const box = new THREE.Box3().setFromObject(o);
+    if (/^BLOCK_/.test(o.name))   blocks.push(box);
+    else if (/^TRIGGER_/.test(o.name)) triggers.push({ name: o.name, box, spot: YARD_SPOTS[o.name] });
+  });
+  /* Sorted by NAME, which is why the exporter numbers them 00..06 — traversal
+     order is whatever the file happens to say, and the route is a sequence. */
+  nav.sort((a, z) => a.name.localeCompare(z.name));
+
+  art.updateMatrixWorld(true);
+  const hook = n => { const o = art.getObjectByName(n); return o ? o.getWorldPosition(new THREE.Vector3()) : null; };
+  const boardNode = art.getObjectByName(YARD_BOARD_NODE);
+  const notices = boardNode ? new THREE.Box3().setFromObject(boardNode).expandByScalar(1.6) : null;
+  if (notices) triggers.push({ name: "NOTICES", box: notices, spot: YARD_NOTICES });
+
+  /* WALK_OperationsFloor is the building's floor, so it is also the answer to
+     "am I indoors" — which is what the ready room's chatter keys on. Resolved
+     BY NAME off the contract rather than by an X/Z box written down here. */
+  const ops = walk.find(o => o.name === "WALK_OperationsFloor");
+  yardScene.userData.contract = {
+    walk, blocks, triggers, nav,
+    ops: ops ? new THREE.Box3().setFromObject(ops) : null,
+    spawn: hook("PlayerSpawn"), park: hook("ShipPark"), exit: hook("ExitToFlight"),
+  };
+  loadYardShip();
+}
+
+/* Your actual hull, on Pad 01. Not a prop: the sign behind it says USS THUMM
+   because THUMM is the hull the opening hands you, but what stands on the deck
+   is whatever you picked, so the pad never argues with the ship you fly. */
+function loadYardShip() {
+  const def = SHIPS[shipSel];
+  if (!def || !def.file || !THREE.GLTFLoader) return;
+  new THREE.GLTFLoader().load(def.file + ASSET_V, gltf => {
+    const m = gltf.scene, park = yardScene.userData.contract.park;
+    const box = modelBox(m, new THREE.Box3());
+    const len = box.max.z - box.min.z;
+    if (len > 1e-3) m.scale.setScalar(def.len / len);   // the loader's own rule
+    if (park) m.position.copy(park);
+    m.traverse(o => { if (o.isMesh) o.frustumCulled = false; });
+    yardShip = m;
+    yardScene.add(m);
+  }, undefined, () => {});
+}
+
+/* [Y] / the door. `enterYard` owns the ONE rule about where this is allowed
+   from, and re-enters itself after the async load so the rule is written once
+   and still holds across the callback — the v118 lesson, applied on the way in
+   rather than after the fact. */
+function toggleYard() {
+  if (paused) return;
+  if (yard) { leaveYard(); return; }
+  if (!atCharleston()) { say("SPACESUCK", "OPERATIONS IS AT CHARLESTON", MSG_SHORT); return; }
+  /* Two assets, both async, and the gate above is re-checked on every callback
+     because this function re-enters ITSELF rather than handing enterYard to a
+     loader. Written once, holds on every path — v118 learned this the hard way
+     when the same rule lived in two functions and neither could be tested. */
+  if (!footModel) { loadFootModel(toggleYard); return; }
+  if (!yardScene) { loadYard(toggleYard); return; }
+  enterYard();
+}
+
+/* ⭐ THE DOOR YOU WALK TO — and it is the reason this needed no new button.
+
+   ⚠️ EVERY BUTTON ON THE PAD IS ALREADY SPOKEN FOR. v118.1 took L3, the last
+   free one, and R3 is the look-back. So a pad-only player had no way in here at
+   all — which is precisely the complaint that produced v118.1 in the first
+   place ("which button is [F] on the controller pad?" — it was none), and
+   shipping it twice would be worse than shipping it once.
+
+   The answer is that OPERATIONS IS A PLACE, so you reach it the way you reach a
+   place: get out of your ship at Charleston and walk. ⭐ On foot the entire
+   flight pad block is skipped, which means [A] is doing nothing at all out
+   there — so the same [E] / [A] that works every counter INSIDE the yard is
+   what opens the door to it, and the control scheme does not grow by one key.
+
+   The whole spaceport deck is the doorway rather than a modelled door, because
+   the flight-side Charleston has no operations building standing on it — the
+   yard is a separate metre-scale scene, which is the entire architecture. A fake
+   door would be Charleston knowledge living in the loader. */
+function footDoorHere() { return !!onFoot && !yard && atCharleston(); }
+
+/* ⚠️ THE DEV DOOR, and the only thing that separates it from the real one is
+   the missing atCharleston() check. Kept as its own function rather than a flag
+   on toggleYard so that gate can never be skipped by accident — you have to
+   call the one that says "dev" in its name. Used by #yard and by the tests. */
+function devYardBoot() {
+  if (!footModel) { loadFootModel(devYardBoot); return; }
+  if (!yardScene) { loadYard(devYardBoot); return; }
+  enterYard();
+}
+
+/* ⭐ THE FICTION IS THE GATE. You may only walk into Charleston's yard while
+   your ship is parked at Charleston, which means entering and leaving mutates
+   NOTHING about the flight world — you walk out of the building, get in the
+   same ship, on the same pad, and fly. No save, no restore, no teleport, and
+   therefore nothing that can desync. When this becomes the opening rather than
+   a place you visit, this predicate is what changes and nothing else does. */
+function atCharleston() {
+  if (!landedOn || landing || liftoff || !landedOn.pads) return false;
+  _ydV.subVectors(shipObj.position, landedOn.group.position).normalize();
+  const port = onSpaceport(landedOn, _ydV);
+  return !!(port && port.home);
+}
+
+function enterYard() {
+  if (yard || !yardScene) return;
+  if (onFoot) leaveFoot();            // one walk at a time; this scene owns the model
+  const C = yardScene.userData.contract;
+  const spawn = (C.spawn || new THREE.Vector3()).clone();
+  /* ⭐ FACE HIM DOWN THE ROUTE, AND TAKE THAT FROM THE CONTRACT. NAV_Route_00 is
+     the spawn and 01 is the clock, so the leg between them is the direction the
+     person who built this room meant you to set off in — which is what those
+     seven empties were put in the file for. Facing PlayerSpawn's own yaw
+     instead points him at the ready-room bench he just stood up off: hold W as
+     your first act in the game and you walk into furniture and stop. */
+  const dir = new THREE.Vector3(0, 0, -1);
+  if (C.nav.length >= 2) {
+    dir.subVectors(C.nav[1].pos, C.nav[0].pos);
+    dir.y = 0;
+    if (dir.lengthSq() > 1e-6) dir.normalize(); else dir.set(0, 0, -1);
+  }
+  /* and stand him clear of whatever he spawned touching, before the first frame
+     can read a position that is inside a solid */
+  yardPushOut(spawn, spawn.y);
+  yard = {
+    pos: spawn,
+    fwd: dir.clone(),
+    camF: dir.clone(),
+    camPitch: 0.18,
+    speed: 0,
+    near: null,
+    said: {},
+    chat: YARD_CHAT,
+    inside: true,
+  };
+  if (footModel) { yardScene.add(footModel); footModel.visible = true; }
+  footNow = null; footNowKey = "";
+  footPlay("idle");
+  yardCam = yardCam || new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 400);
+  document.body.classList.add("inyard");
+  mouseDX = 0; mouseDY = 0;
+  /* A hard cut wants a clean channel: a receipt queued on the pad landing
+     three minutes ago must not be the first thing said in the locker room. */
+  msgQ.length = 0; msgT = -MSG_GAP;
+}
+
+function leaveYard() {
+  if (!yard) return;
+  yard = null;
+  /* The character goes back to the flight scene rather than being dropped, so
+     stepping out onto a pad after this is the same instant [F] it always was. */
+  if (footModel) { scene.add(footModel); footModel.visible = false; }
+  footNow = null; footNowKey = "";
+  document.body.classList.remove("inyard");
+  mouseDX = 0; mouseDY = 0;
+  msgQ.length = 0; msgT = -MSG_GAP;
+}
+
+/* --- the ground: the highest WALK_ surface you could actually step onto ---
+   Cast from STEP above the soles, so a 0.40 tread is caught and the pad deck's
+   0.60 lip is not — which is exactly why the ramp exists.
+   ⛔ NO HIT MEANS HOLD, NOT FALL, and that is not defensive coding. The two
+   floor slabs are flush at Y=0 but they do not touch: WALK_YardSlab stops at
+   Z=7.75 and WALK_OperationsFloor starts at Z=8.25, leaving a 0.5m seam of
+   nothing directly under the operations door — the doorway every single player
+   walks through, twice. Falling into it would be the first bug anyone found. */
+function yardSurface(x, z, from) {
+  _ydO.set(x, from, z);
+  _ydRay.set(_ydO, _ydDown);
+  _ydRay.far = 80;
+  const hit = _ydRay.intersectObjects(yardScene.userData.contract.walk, false);
+  return hit.length ? hit[0].point.y : null;
+}
+/* Drop the ray in at STEP above the soles, so the highest thing it can find is
+   by definition the highest thing you could have stepped onto. */
+function yardGround(x, z, feetY) { return yardSurface(x, z, feetY + YARD_STEP); }
+
+/* ⭐ A FLOOR YOU CANNOT STEP ONTO IS A WALL, and the contract does not say so.
+   The pad deck stands 0.6m over the yard slab and has no BLOCK_ along its rim —
+   correct, because its rim is not a fence, it is a kerb. Without this you walk
+   straight under the overhang and end up waist-deep inside the deck, which is
+   not a Charleston bug: EVERY raised platform in every walkable after this one
+   has the same rim. So the rule is geometric rather than authored — look for
+   walkable surface above the top of your step, and if there is any, that is not
+   somewhere a person can be. The ramp is unaffected because a ramp's surface is
+   never more than a step above you while you are climbing it, which is the
+   definition of a ramp. */
+function yardTooHigh(x, z, feetY) {
+  const top = yardSurface(x, z, feetY + YARD_BODY + 1.2);
+  return top !== null && top > feetY + YARD_STEP + 1e-4;
+}
+
+/* --- the solids: a circle against 41 boxes, in 3D ---
+   See YARD_BODY. A box only counts if it overlaps you between the top of your
+   step and the top of your head, which is what lets you stand under a roof and
+   walk over a scale plate. */
+function yardPushOut(p, feetY) {
+  const lo = feetY + YARD_STEP, hi = feetY + YARD_BODY;
+  for (const b of yardScene.userData.contract.blocks) {
+    if (b.max.y <= lo || b.min.y >= hi) continue;
+    const cx = Math.max(b.min.x, Math.min(p.x, b.max.x));
+    const cz = Math.max(b.min.z, Math.min(p.z, b.max.z));
+    const dx = p.x - cx, dz = p.z - cz;
+    const d2 = dx * dx + dz * dz;
+    if (d2 > YARD_RAD * YARD_RAD) continue;
+    if (d2 > 1e-8) {
+      const d = Math.sqrt(d2);
+      p.x += dx / d * (YARD_RAD - d);
+      p.z += dz / d * (YARD_RAD - d);
+    } else {
+      // dead centre inside a box — leave by the nearest face rather than by zero
+      const ex = Math.min(p.x - b.min.x, b.max.x - p.x);
+      const ez = Math.min(p.z - b.min.z, b.max.z - p.z);
+      if (ex < ez) p.x += (p.x >= (b.min.x + b.max.x) * 0.5 ? 1 : -1) * (ex + YARD_RAD);
+      else         p.z += (p.z >= (b.min.z + b.max.z) * 0.5 ? 1 : -1) * (ez + YARD_RAD);
+    }
+  }
+}
+
+/* How far the chase boom may extend before it is inside something. Slab test
+   against every solid INCLUDING the roofs — the camera is a point, so unlike
+   the body it does care about a ceiling, and indoors it cares constantly. */
+function yardBoom(from, dir, maxD) {
+  let best = maxD;
+  for (const b of yardScene.userData.contract.blocks) {
+    let t0 = 0, t1 = best;
+    for (let a = 0; a < 3; a++) {
+      const o = a === 0 ? from.x : a === 1 ? from.y : from.z;
+      const d = a === 0 ? dir.x  : a === 1 ? dir.y  : dir.z;
+      const lo = a === 0 ? b.min.x : a === 1 ? b.min.y : b.min.z;
+      const hi = a === 0 ? b.max.x : a === 1 ? b.max.y : b.max.z;
+      if (Math.abs(d) < 1e-8) { if (o < lo || o > hi) { t0 = 1; t1 = 0; break; } continue; }
+      let n = (lo - o) / d, f = (hi - o) / d;
+      if (n > f) { const s = n; n = f; f = s; }
+      if (n > t0) t0 = n;
+      if (f < t1) t1 = f;
+      if (t0 > t1) break;
+    }
+    if (t0 <= t1 && t0 < best) best = t0;
+  }
+  return Math.max(0.6, best - 0.12);
+}
+
+function updateYard(dt) {
+  const y = yard, C = yardScene.userData.contract;
+
+  /* ---- this scene reads its OWN pad, and nothing else on it does anything ----
+     The flight poll is on the far side of animate()'s yard return and is never
+     reached, which is the strongest gate there is: a flight input here is not
+     ignored, it is never sampled. */
+  let px = 0, pz = 0, cx = 0, cy = 0, act = false;
+  if (padIndex !== null) {
+    const gp = navigator.getGamepads()[padIndex];
+    if (gp) {
+      /* ⛔ SAMPLE THE MENU EDGE DETECTOR EVEN THOUGH NOTHING IN HERE USES IT.
+         That is v105's rule, written on navEdges itself: it runs every frame a
+         pad is connected, "including in flight, where nothing acts on the
+         result — so the held state is never stale." This scene returns out of
+         animate() before the main poll, so it is the ONE mode that stopped
+         calling it, and the consequence is worse than the swallowed press the
+         original comment warns about. You leave the yard by HOLDING [A] on Pad
+         01. Skip these samples and `navActHeld` is still false from before you
+         walked in, so the first frame back in flight reads that held button as
+         a fresh press — and `dockBox` is untouched by the round trip, so it
+         lands in whatever panel was open when you left: `buyUpgrade()` on the
+         OUTFITTER, `acceptJob()` on the board, a SELL/HOLD flip on the market.
+         Boarding your ship would silently spend your credits. */
+      navEdges(gp);
+      px = padAxis(gp.axes[0]); pz = -padAxis(gp.axes[1]);
+      cx = padAxis(gp.axes[2]); cy = padAxis(gp.axes[3]);
+      /* ⭐ ONE held flag for [A] across BOTH walking modes, the way padL3Held is
+         one flag across the seat and the deck. Two would mean the press that
+         walks you in through the door is still held on this scene's first frame
+         with its own flag starting false — a fresh edge, firing a counter you
+         never chose. Same class of bug as the nav flags above, one button over. */
+      const a = !!(gp.buttons[0] && gp.buttons[0].pressed);
+      if (a && !walkPadA) act = true;
+      walkPadA = a;
+      const l3 = !!(gp.buttons[10] && gp.buttons[10].pressed);
+      if (l3 && !padL3Held) toggleYard();
+      padL3Held = l3;
+      if (!yard) return;                       // L3 just walked us out
+    }
+  } else walkPadA = false;
+
+  // ---- look ----
+  _ydC.copy(y.camF);
+  _ydC.applyAxisAngle(YARD_UP, -mouseDX * FOOT_MOUSE - cx * FOOT_PAD_LOOK * dt);
+  y.camPitch = Math.max(YARD_PIT_LO, Math.min(YARD_PIT_HI,
+                 y.camPitch + mouseDY * FOOT_MOUSE + cy * FOOT_PAD_LOOK * dt));
+  mouseDX = 0; mouseDY = 0;
+  _ydC.y = 0;
+  if (_ydC.lengthSq() < 1e-8) _ydC.set(0, 0, -1);
+  _ydC.normalize();
+  _ydR.crossVectors(_ydC, YARD_UP).normalize();
+
+  // ---- move: the stick is analog, the keyboard is not. Same deal as v118 ----
+  let mz = 0, mx = 0, want = 0;
+  const mag = Math.min(1, Math.hypot(px, pz));
+  if (mag > 0) { mx = px; mz = pz; want = mag * FOOT_RUN; }
+  else {
+    if (keys["KeyW"]) mz += 1;
+    if (keys["KeyS"]) mz -= 1;
+    if (keys["KeyD"]) mx += 1;
+    if (keys["KeyA"]) mx -= 1;
+    if (mz !== 0 || mx !== 0) want = (keys["ShiftLeft"] || keys["ShiftRight"]) ? FOOT_RUN : FOOT_WALK;
+  }
+  const moving = (mz !== 0 || mx !== 0);
+  y.speed += (want - y.speed) * (1 - Math.exp(-FOOT_EASE * dt));
+  if (y.speed < 0.02) y.speed = 0;
+
+  _ydF.copy(y.fwd);
+  if (moving) {
+    _ydM.copy(_ydC).multiplyScalar(mz).addScaledVector(_ydR, mx);
+    _ydM.y = 0;
+    if (_ydM.lengthSq() > 1e-8) {
+      _ydM.normalize();
+      _ydV.crossVectors(_ydF, YARD_UP);
+      const ang = Math.atan2(_ydM.dot(_ydV), _ydM.dot(_ydF));
+      const lim = FOOT_TURN * dt;
+      _ydF.applyAxisAngle(YARD_UP, -Math.max(-lim, Math.min(lim, ang)));
+    }
+  }
+  _ydF.y = 0;
+  if (_ydF.lengthSq() < 1e-8) _ydF.set(0, 0, -1);
+  _ydF.normalize();
+  y.fwd.copy(_ydF);
+
+  // ---- step, then leave anything you stepped into ----
+  _ydP.copy(y.pos).addScaledVector(_ydF, y.speed * dt);
+  yardPushOut(_ydP, y.pos.y);
+  // ...and refuse the step outright if it puts you under a kerb you cannot climb
+  if (yardTooHigh(_ydP.x, _ydP.z, y.pos.y)) { _ydP.x = y.pos.x; _ydP.z = y.pos.z; }
+
+  // ---- height: snap up (floors are smooth), fall down (a lip is a drop) ----
+  const g = yardGround(_ydP.x, _ydP.z, y.pos.y);
+  if (g === null) _ydP.y = y.pos.y;                        // the door seam. Hold.
+  else if (g >= y.pos.y) _ydP.y = g;
+  else _ydP.y = Math.max(g, y.pos.y - YARD_FALL * dt);
+  y.pos.copy(_ydP);
+
+  // ---- draw him. glTF forward is -Z, so local +Z is his back (v118's basis) ----
+  if (footModel) {
+    footModel.position.copy(y.pos);
+    _ydBZ.copy(_ydF).negate();
+    _ydBX.crossVectors(YARD_UP, _ydBZ).normalize();
+    _ydBY.crossVectors(_ydBZ, _ydBX);
+    footModel.quaternion.setFromRotationMatrix(_ydBasis.makeBasis(_ydBX, _ydBY, _ydBZ));
+  }
+  footGait(y.speed, dt);
+
+  // ---- triggers ----
+  _ydT.copy(y.pos); _ydT.y += YARD_REACH;
+  let near = null;
+  for (const t of C.triggers) if (t.box.containsPoint(_ydT)) { near = t; break; }
+  y.near = near;
+  /* Beat 02, unprompted — and keyed on `yardSeen`, which OUTLIVES the visit.
+     `yard.said` is rebuilt empty every time you walk in, which is right for the
+     counters (you come back on a new shift and Pearl gives you the job again)
+     and wrong for this: the wall would announce FLEET COMMAND OPERATIONS —
+     SUSPENDED at you every single time you clocked on. */
+  if (near && near.spot && near.spot.auto && !yardSeen[near.name]) {
+    yardSeen[near.name] = true;
+    y.said[near.name] = 0;
+    yardSpeak(near);
+  }
+  if (act && near) yardAct(near);
+  /* ⛔ AND THE ACT MAY HAVE ENDED THE SCENE. TRIGGER_BoardShip calls leaveYard(),
+     which nulls `yard` — and everything below here dereferences it, so without
+     this the pad's [A] on Pad 01 throws a TypeError inside the frame loop every
+     single time. It survived the first test pass because [E] boards through the
+     KEYDOWN handler, which runs outside this function and lets the next frame
+     take the flight path cleanly; only the pad reaches the crash, and the
+     controller test happened to press [A] at the timeclock. Same shape as the L3
+     guard above, and the same reason it is written twice: two different presses
+     can both end the scene from inside its own update. */
+  if (!yard) return;
+
+  /* ---- the ready room talks, and only in the ready room ----
+     ⭐ THESE 26 LINES WERE WRITTEN FOR THIS ROOM. v115 played them on launch
+     from Charleston as an honest stand-in — "you just walked out through the
+     yard" — and said in its own header that they move here when the rig lands.
+     The rig landed. Crossing the operations door is what shuts them up, which
+     is the one thing a launch-side stand-in could never do. */
+  const inside = C.ops ? (y.pos.x > C.ops.min.x && y.pos.x < C.ops.max.x &&
+                          y.pos.z > C.ops.min.z && y.pos.z < C.ops.max.z) : false;
+  y.inside = inside;
+  y.chat -= dt;
+  if (y.chat <= 0) { y.chat = YARD_CHAT; if (inside) readyRoomLine(); }
+
+  yardCamera();
+  yardCam.aspect = innerWidth / innerHeight;               // cheaper than a resize hook
+  yardCam.updateProjectionMatrix();
+  renderer.render(yardScene, yardCam);
+  drawYardHud(dt);
+}
+
+function yardCamera() {
+  const y = yard;
+  _ydC.copy(y.camF); _ydC.y = 0; _ydC.normalize();
+  _ydR.crossVectors(_ydC, YARD_UP).normalize();
+  _ydT.copy(y.pos); _ydT.y += YARD_EYE;
+  _ydV.copy(_ydC).applyAxisAngle(_ydR, -y.camPitch).normalize().negate();
+  const d = yardBoom(_ydT, _ydV, YARD_CAM_D);
+  yardCam.position.copy(_ydT).addScaledVector(_ydV, d);
+  /* This scene's own floor. The game's CAM_GROUND_MARGIN never runs here — it
+     is radial, planet-keyed, and 2.5u tall, which is a metre and a half over a
+     man's head. 0.35 is the version sized for a person, and it is the reason
+     you can look up in here and nowhere else. */
+  const fg = yardGround(yardCam.position.x, yardCam.position.z, y.pos.y);
+  if (fg !== null && yardCam.position.y < fg + YARD_CAM_LO) yardCam.position.y = fg + YARD_CAM_LO;
+  yardCam.up.copy(YARD_UP);
+  yardCam.lookAt(_ydT);
+  y.camF.copy(_ydC);
+}
+
+/* Say the next thing this spot has to say, and stop on the last one rather than
+   looping — a man who repeats his fourth line forever is a vending machine. */
+function yardSpeak(t) {
+  const s = t.spot;
+  if (!s) return;
+  if (s.make) { const row = s.make(); say(row[0], row[1]); return; }
+  if (!s.lines) return;
+  const i = Math.min(yard.said[t.name] || 0, s.lines.length - 1);
+  say(s.lines[i][0], s.lines[i][1]);
+  yard.said[t.name] = i + 1;
+}
+
+function yardAct(t) {
+  if (!t.spot) return;
+  if (t.spot.board) { yardBoard(); return; }
+  yardSpeak(t);
+}
+
+/* Beat 10 — the hard cut. Nothing is saved and nothing is restored, because
+   nothing moved: see atCharleston(). You get into the ship you walked out of. */
+function yardBoard() {
+  leaveYard();
+  say("SPACESUCK", "ABOARD — CHARLESTON OPERATIONS", MSG_SHORT);
+}
+
+function drawYardHud(dt) {
+  const W = innerWidth, H = innerHeight, c = navCtx;
+  c.clearRect(0, 0, W, H);
+  const y = yard;
+  /* The prompt. Nothing else — no radar, no reticle, no bracket. There is no
+     ship to fly and no world to navigate; there is a room and a thing you can
+     do in it. */
+  if (y.near && y.near.spot) {
+    c.save();
+    c.font = "13px " + navFont;
+    c.textAlign = "center";
+    c.fillStyle = NAV_AMBER; c.shadowColor = NAV_AMBER; c.shadowBlur = 6;
+    c.fillText("[E]  " + y.near.spot.label, W / 2, H * 0.62);
+    c.restore();
+  }
+  const r = navRadarR, cx = navRadarCx < 0 ? W / 2 : navRadarCx, cy = H - navRadarUp;
+  drawMsgLine(dt, c, W, cx, cy, r);
 }
 
 function drawPadMarker(c, W, H, dt) {
@@ -13665,6 +14445,16 @@ function drawPadField(c, W, H) {
    comment on drawMsgLine warns about. */
 function drawFootHud(dt, c, W, H) {
   const r = navRadarR, cx = navRadarCx < 0 ? W / 2 : navRadarCx, cy = H - navRadarUp;
+  /* v119 — the door. Standing on Charleston's deck out of your ship, you can go
+     inside, and the ONLY way anyone finds that out is by being told here. */
+  if (footDoorHere()) {
+    c.save();
+    c.font = "13px " + navFont;
+    c.textAlign = "center";
+    c.fillStyle = NAV_AMBER; c.shadowColor = NAV_AMBER; c.shadowBlur = 6;
+    c.fillText("[E]  CHARLESTON OPERATIONS", W / 2, H * 0.62);
+    c.restore();
+  }
   drawMsgLine(dt, c, W, cx, cy, r);
 }
 
@@ -13836,7 +14626,17 @@ function drawNavHud(dt) {
    the SHIP, and on foot the ship is parked behind you. This one is addressed to
    the pilot, so it is the one thing that keeps drawing. */
 function drawMsgLine(dt, c, W, cx, cy, r) {
-  const reaches = !landedOn || !!onFoot;
+  /* ⛔ v119 — `yard` BELONGS IN THIS LIST AND THE OMISSION WOULD HAVE BEEN
+     SILENT. The gate's reason was never flight: it is that a line landing while
+     you sit at FLEET COMMAND gets buried under a dock panel. In Charleston
+     Operations `landedOn` is true (your ship is parked outside, which is the
+     entry condition) and `onFoot` is null (that is the other walk), so without
+     this clause every beat in the yard would queue and NEVER PLAY — the whole
+     ten-beat script, silently, with the scene otherwise working perfectly.
+     This is the third time this one gate has caught a new mode; the pattern is
+     that anything which is "landed" but has no dock panel to bury a line under
+     needs to be named here. */
+  const reaches = !landedOn || !!onFoot || !!yard;
   if (msgT > -MSG_GAP) msgT -= dt;
   if (reaches && msgT <= -MSG_GAP && msgQ.length) {
     const m = msgQ.shift();
@@ -14878,9 +15678,30 @@ function animate() {
     }
   }
   if (paused) {
-    renderer.render(scene, camera);
+    // v119: pause has to freeze whichever world you are standing in
+    if (yard) renderer.render(yardScene, yardCam);
+    else      renderer.render(scene, camera);
     return;
   }
+
+  /* ---- CHARLESTON OPERATIONS (v119): a different world, and a full stop ----
+
+     ⛔ THE RETURN IS THE FEATURE, and it is placed here on purpose — below the
+     pause gate so [P] still works in the locker room, and above EVERYTHING
+     ELSE so not one line of the flight game runs while you are in there. The
+     market does not tick, the hold does not drain, no raider spawns, no hauler
+     flies and nothing gets shot at.
+
+     v118's walk did the exact opposite and was right to: out on a pad you can
+     SEE the world, so freezing it would read as a hang. In here you cannot see
+     it at all, and a world that keeps paying you while you are somewhere the
+     camera cannot reach is the income rule broken in the most literal way the
+     game has ever been able to break it.
+
+     One return, one owner. Everything the yard needs — its own pad poll, its
+     own camera, its own render, its own HUD — lives inside updateYard, so
+     there is no second place for a flight input to leak through. */
+  if (yard) { updateYard(dt); return; }
 
   /* ---- the market ticks (v84, §1.1c) ----
      Deliberately BELOW both gates above: prices don't move at the start screen
@@ -14934,7 +15755,13 @@ function animate() {
         footPadY = -padAxis(gp.axes[1]);            // stick up = forward
         footPadCamX = padAxis(gp.axes[2]);
         footPadCamY = padAxis(gp.axes[3]);
+        /* v119 — [A] walks you inside at Charleston. Free out here for the same
+           reason the whole block above is skipped: on foot, A fires nothing. */
+        const fa = !!(gp.buttons[0] && gp.buttons[0].pressed);
+        if (fa && !walkPadA && footDoorHere()) toggleYard();
+        walkPadA = fa;
       } else {
+        walkPadA = false;
       padLX = padAxis(gp.axes[0]);
       const padLY = padAxis(gp.axes[1]);
       /* left stick = a real flight stick at ANY speed: X rolls, Y
@@ -16496,10 +17323,19 @@ setTimeout(() => {
   }
   document.getElementById("loading").style.display = "none";
 
+  /* v119 dev route: #yard opens CHARLESTON OPERATIONS directly, without flying
+     to Charleston and landing first. ⚠️ IT IS THE ONE PATH THAT SKIPS
+     atCharleston(), which is deliberate and is the only reason it is worth
+     having — and it is also why LEAVING this way drops you wherever the ship
+     happens to be rather than on Pad 01. The played route is [Y] on the deck at
+     Charleston, where the round trip costs nothing because nothing moved. */
+  const devYard = location.hash === "#yard";
+
   // Front door (v53): a plain launch opens the START menu; a dev doorstep
   // hash (#earth, #rubicon, …) skips it and flies straight in for testing.
-  if (doorstep) {
+  if (doorstep || devYard) {
     startGame();
+    if (devYard) devYardBoot();
   } else {
     document.body.classList.add("menu");         // hide the flight HUD
     startScreenEl.style.display = "flex";
