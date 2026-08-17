@@ -13718,6 +13718,8 @@ const YARD_UP = new THREE.Vector3(0, 1, 0);      // flat scene: up is up, foreve
 
 let yard = null;            // null = not in here. The mode flag AND the state.
 let yardScene = null, yardCam = null, yardShip = null;
+/* the parked hull's solid, built once when it loads — see yardSolids() */
+let yardShipBox = null;
 let yardLoading = false;
 /* ⭐ ONE [A] edge flag for every mode you are on your feet in — the deck outside
    and the yard inside. Two separate ones let the press that carries you between
@@ -13945,6 +13947,11 @@ function loadYardShip() {
     m.traverse(o => { if (o.isMesh) o.frustumCulled = false; });
     yardShip = m;
     yardScene.add(m);
+    /* and it is a SOLID now — see yardSolids(). Built after the scale, the gear
+       pose and the lift, because all three move it. One AABB, which is the same
+       shape as the 41 the contract ships and coarse in the same way. */
+    m.updateMatrixWorld(true);
+    yardShipBox = new THREE.Box3().setFromObject(m);
   }, undefined, () => {});
 }
 
@@ -14102,7 +14109,7 @@ function yardTooHigh(x, z, feetY) {
    walk over a scale plate. */
 function yardPushOut(p, feetY) {
   const lo = feetY + YARD_STEP, hi = feetY + YARD_BODY;
-  for (const b of yardScene.userData.contract.blocks) {
+  for (const b of yardSolids()) {
     if (b.max.y <= lo || b.min.y >= hi) continue;
     const cx = Math.max(b.min.x, Math.min(p.x, b.max.x));
     const cz = Math.max(b.min.z, Math.min(p.z, b.max.z));
@@ -14123,12 +14130,27 @@ function yardPushOut(p, feetY) {
   }
 }
 
+/* ⭐ YOUR OWN HULL IS A SOLID, and it did not used to be one. The contract's 41
+   blockers come out of the .glb, and the ship is not in the .glb — it is your
+   hull, loaded at runtime and stood on the pad. That was survivable while the
+   model sat with its origin on the deck hook and most of its mass BELOW the
+   floor; standing it on its feet at v119.2 lifted it 2.31m into exactly the
+   band a chase camera and a person occupy. USS THUMM now fills 0.695 to 4.07
+   over the deck and USS SAMSAM reaches 5.82, so at the BOARD SHIP prompt the
+   lens was inside your own fuselage — and the new opening spawns you right
+   beside it. One box, rebuilt when the hull loads, appended to the same two
+   tests everything else in this scene goes through. */
+const yardSolids = () => {
+  const C = yardScene.userData.contract;
+  return yardShipBox ? C.blocks.concat(yardShipBox) : C.blocks;
+};
+
 /* How far the chase boom may extend before it is inside something. Slab test
    against every solid INCLUDING the roofs — the camera is a point, so unlike
    the body it does care about a ceiling, and indoors it cares constantly. */
 function yardBoom(from, dir, maxD) {
   let best = maxD;
-  for (const b of yardScene.userData.contract.blocks) {
+  for (const b of yardSolids()) {
     let t0 = 0, t1 = best;
     for (let a = 0; a < 3; a++) {
       const o = a === 0 ? from.x : a === 1 ? from.y : from.z;
@@ -14255,9 +14277,31 @@ function updateYard(dt) {
      ⚠ The `stuck` term is an escape hatch, not politeness: if you are ever
      under a kerb already, refusing the step is the difference between a bug and
      a soft-lock in a scene with no way to jump. */
+  /* ⚠ AND THE PROBE IS MEASURED FROM THE GROUND YOU ARE STEPPING ONTO, not from
+     the ground you are standing on. By the time your leading edge is out there,
+     your feet are at the DESTINATION's height — so using the current height
+     spends the whole of a rising step's clearance before you have taken it.
+     On the main ramp that is not academic: the ramp climbs THROUGH the pad
+     foundation's footprint, so while you are at ~0.2m the plinth and rim tops
+     (0.60 / 0.65) are already overhead and this test is looking straight at
+     them. Measured against the current height the margin falls to 34mm at the
+     tightest lateral offset — and that ramp is the ONLY route to the pad, which
+     is the only way back to flight. Measured against the destination it grows
+     as he climbs, which is what a ramp is. */
   _ydK.copy(_ydP).addScaledVector(_ydF, YARD_RAD);
+  const gStep = yardGround(_ydP.x, _ydP.z, y.pos.y);
+  const from  = gStep === null ? y.pos.y : Math.max(gStep, y.pos.y - YARD_FALL * dt);
   const stuck = yardTooHigh(y.pos.x, y.pos.z, y.pos.y);
-  if (!stuck && yardTooHigh(_ydK.x, _ydK.z, y.pos.y)) { _ydP.x = y.pos.x; _ydP.z = y.pos.z; }
+  if (!stuck && yardTooHigh(_ydK.x, _ydK.z, from)) {
+    /* ⛔ REVERT THE STEP, NOT THE PUSH-OUT. `_ydP` already carries yardPushOut's
+       correction from two lines up, and copying the old position back threw it
+       away — so a refused step beside a solid left you standing clipped INTO it
+       rather than sliding along it. 385 poses on a 0.25m sweep of the yard did
+       exactly that, one of them on the route at the ramp's east railing. Undo
+       the forward motion and then push out again from where you actually are. */
+    _ydP.copy(y.pos);
+    yardPushOut(_ydP, y.pos.y);
+  }
 
   // ---- height: snap up (floors are smooth), fall down (a lip is a drop) ----
   const g = yardGround(_ydP.x, _ydP.z, y.pos.y);
