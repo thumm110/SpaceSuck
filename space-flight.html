@@ -11497,38 +11497,65 @@ const RUNG_SAY = [
 
    ⛔ NOT rung-gated, unlike the berth fee. The rent stops when the station is
    yours; the room does not. People keep working there. */
+/* ⭐ THE THIRD ELEMENT IS THE VOICE ID, and every line now has one — his call
+   on 17 Aug: "The ready room lines are fine I just want them spoken."
+   voiceIds() already scans this table for r[2], so the game needs nothing else:
+   drop <id>.mp3 into sounds/voice/ and that line speaks. A clip that is not
+   there yet simply does not play — the line still prints with its squelch — so
+   these can arrive one at a time.
+
+   ⛔ THE IDS ARE SEMANTIC, NEVER POSITIONAL. `ready01`..`ready26` would look
+   tidier and would silently play the wrong clip the first time anyone reorders,
+   inserts or cuts a line — the array index is not a name and this array is
+   explicitly grouped by subject, which is an invitation to reorder it.
+
+   ⚠️ EVERY ONE OF THESE IS A TWO-HANDER. The `|` is a SPEAKER CHANGE, not a
+   line break — you are overhearing a room, not receiving an announcement. Two
+   voices per clip, or one performer doing both sides.
+
+   ⚠️ AND THE README IN sounds/voice/ USED TO ARGUE AGAINST DOING THIS, on the
+   grounds that 26 clips of 4-6s would "mute the flight for half a minute a
+   session" because the channel ducks for as long as a clip runs. That reason
+   was true when v115 played these on LAUNCH from Charleston as a stand-in —
+   while you were flying. They play in the ready room now, where the flight
+   world is stopped and there is nothing to duck. The objection died with the
+   stand-in; the README has been corrected. */
 const READY_ROOM = [
   // --- the lanes, and what they cost ---
-  ["READY ROOM", "—AND NOBODY RUNS RUBICON AT NIGHT.|NOBODY RUNS IT IN THE DAYTIME EITHER."],
-  ["READY ROOM", "VERDANT'S SAFE. VERDANT'S REAL SAFE.|JUST REMEMBER WHOSE SKY YOU'RE SAFE IN."],
-  ["READY ROOM", "RUSTHOLLOW PAYS TRIPLE. DON'T ASK FOR WHAT.|DON'T ASK WHO'S ASKING."],
-  ["READY ROOM", "KID RAN A FULL LOAD OF ALLOY TO CHARLESTON.|FULL LOAD. CHARLESTON PAYS FLAT, DUMBASS."],
-  ["READY ROOM", "BELT'S GOT ORE ALL RIGHT.|ALSO GOT FOUR HUNDRED ROCKS COMING BACK."],
-  ["READY ROOM", "CINDER AIN'T A LANDING. CINDER'S A DARE."],
-  ["READY ROOM", "YOU EVER SEEN SHRINKAGE UP CLOSE?|NO. YOU'D KNOW."],
-  ["READY ROOM", "HALF THAT SCRAP WAS SOMEBODY'S SHIP ONCE.|AIN'T A GHOST STORY. IT'S JUST INVENTORY."],
+  ["READY ROOM", "—AND NOBODY RUNS RUBICON AT NIGHT.|NOBODY RUNS IT IN THE DAYTIME EITHER.", "ready-rubicon"],
+  ["READY ROOM", "VERDANT'S SAFE. VERDANT'S REAL SAFE.|JUST REMEMBER WHOSE SKY YOU'RE SAFE IN.", "ready-verdant"],
+  ["READY ROOM", "RUSTHOLLOW PAYS TRIPLE. DON'T ASK FOR WHAT.|DON'T ASK WHO'S ASKING.", "ready-rusthollow"],
+  ["READY ROOM", "KID RAN A FULL LOAD OF ALLOY TO CHARLESTON.|FULL LOAD. CHARLESTON PAYS FLAT, DUMBASS.", "ready-alloy"],
+  ["READY ROOM", "BELT'S GOT ORE ALL RIGHT.|ALSO GOT FOUR HUNDRED ROCKS COMING BACK.", "ready-belt"],
+  ["READY ROOM", "CINDER AIN'T A LANDING. CINDER'S A DARE.", "ready-cinder"],
+  ["READY ROOM", "YOU EVER SEEN SHRINKAGE UP CLOSE?|NO. YOU'D KNOW.", "ready-shrinkage"],
+  ["READY ROOM", "HALF THAT SCRAP WAS SOMEBODY'S SHIP ONCE.|AIN'T A GHOST STORY. IT'S JUST INVENTORY.", "ready-scrap"],
   // --- the company ---
-  ["READY ROOM", "THEY DIDN'T CLOSE FLEET COMMAND.|THEY JUST STOPPED GOING."],
-  ["READY ROOM", "TWENTY-FIVE TO LEAVE. I DID THE MATH ONCE,|ELEVEN YEARS IN, AND THEN I QUIT DOING MATH."],
-  ["READY ROOM", "TWENTY-FIVE A LAUNCH. I BREATHE THEIR AIR|AND THEY CHARGE ME FOR THE FUCKING DOOR."],
-  ["READY ROOM", "THEY GOT A BOAT CALLED TAXMAN AND ONE|CALLED SHRINKAGE. THAT'S A CRY FOR HELP."],
-  ["READY ROOM", "ASKED FOR A RAISE. GOT A LANYARD."],
-  ["READY ROOM", "THIS HULL'S HELD TOGETHER WITH ZIP TIES|AND THEY'RE ASKING WHY IT READS 80 PERCENT."],
-  ["READY ROOM", "SAFETY SAYS WEAR THE HARNESS.|SAFETY AIN'T NEVER BEEN IN A FUCKING AIRLOCK."],
-  ["READY ROOM", "THEY DOCKED ME FOR A CRACKED VISOR.|I CRACKED IT ON THEIR SHIT DOOR FRAME."],
-  ["READY ROOM", "GUY IN DISPATCH SAID WORK SMARTER.|GUY IN DISPATCH NEVER MOVED A CRATE."],
+  ["READY ROOM", "THEY DIDN'T CLOSE FLEET COMMAND.|THEY JUST STOPPED GOING.", "ready-fc"],
+  ["READY ROOM", "TWENTY-FIVE TO LEAVE. I DID THE MATH ONCE,|ELEVEN YEARS IN, AND THEN I QUIT DOING MATH.", "ready-math"],
+  ["READY ROOM", "TWENTY-FIVE A LAUNCH. I BREATHE THEIR AIR|AND THEY CHARGE ME FOR THE FUCKING DOOR.", "ready-air"],
+  ["READY ROOM", "THEY GOT A BOAT CALLED TAXMAN AND ONE|CALLED SHRINKAGE. THAT'S A CRY FOR HELP.", "ready-boats"],
+  ["READY ROOM", "ASKED FOR A RAISE. GOT A LANYARD.", "ready-lanyard"],
+  ["READY ROOM", "THIS HULL'S HELD TOGETHER WITH ZIP TIES|AND THEY'RE ASKING WHY IT READS 80 PERCENT.", "ready-ziptie"],
+  ["READY ROOM", "SAFETY SAYS WEAR THE HARNESS.|SAFETY AIN'T NEVER BEEN IN A FUCKING AIRLOCK.", "ready-safety"],
+  ["READY ROOM", "THEY DOCKED ME FOR A CRACKED VISOR.|I CRACKED IT ON THEIR SHIT DOOR FRAME.", "ready-visor"],
+  ["READY ROOM", "GUY IN DISPATCH SAID WORK SMARTER.|GUY IN DISPATCH NEVER MOVED A CRATE.", "ready-smarter"],
   // --- the room itself. Nothing in these three. That is the point of them ---
-  ["READY ROOM", "MICROWAVE'S BUSTED. THIRD TIME THIS MONTH.|SOMEBODY KEEPS PUTTING METAL IN IT."],
-  ["READY ROOM", "WHOEVER'S LEAVING BOOTS IN MY LOCKER —|I KNOW WHOSE THEY ARE AND I AIN'T SAYING."],
-  ["READY ROOM", "HE CLOCKED IN, SAT DOWN, CLOCKED OUT.|EIGHT HOURS. BEST SHIFT HE EVER RAN."],
-  ["READY ROOM", "DON'T DRINK THE COFFEE.|I'M NOT EXPLAINING IT. JUST DON'T."],
+  ["READY ROOM", "MICROWAVE'S BUSTED. THIRD TIME THIS MONTH.|SOMEBODY KEEPS PUTTING METAL IN IT.", "ready-microwave"],
+  ["READY ROOM", "WHOEVER'S LEAVING BOOTS IN MY LOCKER —|I KNOW WHOSE THEY ARE AND I AIN'T SAYING.", "ready-boots"],
+  ["READY ROOM", "HE CLOCKED IN, SAT DOWN, CLOCKED OUT.|EIGHT HOURS. BEST SHIFT HE EVER RAN.", "ready-bestshift"],
+  ["READY ROOM", "DON'T DRINK THE COFFEE.|I'M NOT EXPLAINING IT. JUST DON'T.", "ready-coffee"],
   // --- seeds. These two are doing structural work and still cost nothing ---
-  ["READY ROOM", "MY COUSIN BOUGHT HIS OWN TRUCK.|STILL PARKS HERE. STILL PAYS THE TWENTY-FIVE."],
-  ["READY ROOM", "{P}'S STILL FLYING THE COMPANY HULL.|WE'VE ALL BEEN THERE. MOST OF US STILL ARE."],
-  ["READY ROOM", "—YEAH, THAT'S {P}. NEW.|GIVE IT A WEEK."],
+  ["READY ROOM", "MY COUSIN BOUGHT HIS OWN TRUCK.|STILL PARKS HERE. STILL PAYS THE TWENTY-FIVE.", "ready-cousin"],
+  /* ⚠️ These two carry {P}, your callsign, and NOBODY SAYS YOUR CALLSIGN — a
+     recording cannot know it. The printed line still shows it; the spoken take
+     says "THAT ONE" and "HIM", which is the README's existing rule and the
+     reason the spoken wordings there are not word-for-word the table. */
+  ["READY ROOM", "{P}'S STILL FLYING THE COMPANY HULL.|WE'VE ALL BEEN THERE. MOST OF US STILL ARE.", "ready-companyhull"],
+  ["READY ROOM", "—YEAH, THAT'S {P}. NEW.|GIVE IT A WEEK.", "ready-new"],
   // --- pointers at the two people you can actually talk to ---
-  ["READY ROOM", "PEARL'S BEEN ON THAT DESK SINCE BEFORE I WAS.|ASK HER ABOUT IT. SHE WON'T TELL YOU."],
-  ["READY ROOM", "DUTCH WORKED THE DERELICT, YOU KNOW.|HE DON'T BRING IT UP AND YOU DON'T EITHER."],
+  ["READY ROOM", "PEARL'S BEEN ON THAT DESK SINCE BEFORE I WAS.|ASK HER ABOUT IT. SHE WON'T TELL YOU.", "ready-pearl"],
+  ["READY ROOM", "DUTCH WORKED THE DERELICT, YOU KNOW.|HE DON'T BRING IT UP AND YOU DON'T EITHER.", "ready-dutchdesk"],
 ];
 /* Often enough that the yard feels staffed, rare enough that it never becomes
    wallpaper you stop reading — which is the only way this room fails. One
