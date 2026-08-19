@@ -4425,6 +4425,48 @@ function initAudio() {
   voiceIn.connect(vHi); vHi.connect(vLo); vLo.connect(vGrit);
   vGrit.connect(vComp); vComp.connect(voiceOut);
   voiceOut.connect(vLim); vLim.connect(radioBus);
+
+  /* ---- v120: THE CHATTER CHAIN — a SECOND voice path, and the whole point is
+     that it does not sound like the first one.
+
+     ⭐ His call, 18 Aug: "these call lines come in over the ship comms. We need
+     to add the walkie talkie radio effects to these hard." That is the right
+     instinct and it is doing more work than a level change could. Crew chatter
+     and dispatch are both "a voice on the radio", and if they share a timbre
+     the player has to work out from the WORDS whose traffic this is. Make the
+     chatter thinner, tinnier and more driven and the answer arrives before the
+     first syllable is over: dispatch is a company channel talking TO you, this
+     is somebody's handheld you happen to be sharing a band with.
+
+     So the two classes now differ on three axes, not one:
+       TIMBRE  — this chain: narrower band, more grit, harder squash
+       LEVEL   — CHAT_LEVEL sits it under the mix
+       DUCK    — CHAT_BED_DUCK barely dips the score (see radioTransmit)
+     ⛔ A wingman, a rung beat, the berth fee and the junker hail all stay on
+     the chain above with the full duck, because those are addressed to YOU.
+
+     Same nodes, different numbers, feeding the same radioBus — so it inherits
+     the squelch and the never-duck-yourself bypass for free. */
+  const chatIn = ctx.createGain(); chatIn.gain.value = 1;
+  const cHi = ctx.createBiquadFilter(); cHi.type = "highpass"; cHi.frequency.value = CHAT_HP;
+  const cLo = ctx.createBiquadFilter(); cLo.type = "lowpass";  cLo.frequency.value = CHAT_LP;
+  const cGrit = ctx.createWaveShaper(); cGrit.curve = gritCurve(CHAT_GRIT);
+  /* Harder than the voice compressor on purpose: a handheld has essentially no
+     dynamic range, everything arrives at one flat level whether the man is
+     muttering or shouting. -30/10 is what makes it read as CHEAP rather than
+     merely quiet, which is the difference between "under the mix" and "in
+     another room". */
+  const cComp = ctx.createDynamicsCompressor();
+  cComp.threshold.value = -30; cComp.ratio.value = 10;
+  cComp.attack.value = 0.003; cComp.release.value = 0.14;
+  const chatOut = ctx.createGain(); chatOut.gain.value = CHAT_LEVEL;
+  chatIn.connect(cHi); cHi.connect(cLo); cLo.connect(cGrit);
+  cGrit.connect(cComp); cComp.connect(chatOut);
+  /* ⛔ THROUGH THE SAME LIMITER, not a second one. vLim is the one thing
+     standing between a hot regenerated clip and audible crackle, and the
+     chatter chain drives HARDER than the voice chain does — routing it around
+     the limiter would put the louder of the two paths on the unprotected one. */
+  chatOut.connect(vLim);
   const gain = ctx.createGain(); gain.gain.value = 0;
   const filter = ctx.createBiquadFilter();
   filter.type = "lowpass"; filter.frequency.value = 220;
@@ -4452,7 +4494,8 @@ function initAudio() {
   for (let i = 0; i < rd.length; i++) rd[i] = Math.random() * 2 - 1;
 
   audio = { ctx, gain, filter, osc1, osc2, rumble: ngain, engineBus, sfx: sfxBus,
-            bedDuck, sfxDuck, radio: radioBus, noise: rbuf, voice: voiceIn };
+            bedDuck, sfxDuck, radio: radioBus, noise: rbuf, voice: voiceIn,
+            voiceChat: chatIn };
   preloadVoices();          // v117 — background, best-effort, never blocks flight
 
   /* v48: the score. Shares THIS ctx (one context, one hardware stream) and
@@ -4540,12 +4583,19 @@ function squelch(at, open) {
 /* Open the channel, hold a carrier, close it — and duck the room underneath.
    Everything is scheduled up front off ctx.currentTime, so this survives a
    frame hitch or the tab losing focus mid-transmission. */
-function radioTransmit(hold) {
+function radioTransmit(hold, chat) {
   if (!audio) return;
   hold = hold || RADIO_HOLD;
   const { ctx } = audio, t = ctx.currentTime;
-  duckNode(audio.bedDuck, BED_DUCK, hold);
-  duckNode(audio.sfxDuck, SFX_DUCK, hold);
+  /* v120: which class of traffic this is decides how hard the room gets out of
+     its way. Chatter barely dips the bed and does not touch the SFX bus at all;
+     everything addressed to the player keeps the full v116 duck. */
+  if (chat) {
+    duckNode(audio.bedDuck, CHAT_BED_DUCK, hold);
+  } else {
+    duckNode(audio.bedDuck, BED_DUCK, hold);
+    duckNode(audio.sfxDuck, SFX_DUCK, hold);
+  }
 
   squelch(t, true);
   squelch(t + RADIO_DUCK_IN + hold, false);
@@ -4604,6 +4654,39 @@ const VOICE_GAIN_MIN = 0.25;
 const VOICE_GAIN_MAX = 4;
 const VOICE_TAIL  = 0.28;   // s of duck held past the last word, so the squelch
                             // close does not clip the end of a sentence
+
+/* ============ v120: THE CHATTER CLASS — the "hard walkie talkie" knobs ========
+   ⭐ His ask, verbatim: "these call lines come in over the ship comms. We need
+   to add the walkie talkie radio effects to these hard." Everything below is
+   deliberately MORE extreme than the VOICE_* set 30 lines up, and each one has
+   a reason rather than being the same numbers nudged:
+
+     HP 520 (vs 320) — a handheld has no chest in it. Cutting another octave of
+       low end is most of what separates "a man on a radio" from "a man".
+     LP 2300 (vs 3200) — takes the sibilance off. Consonants go soft and the
+       voice stops sounding present in the cockpit with you.
+     GRIT 2.8 (vs 1.9) — the README's own note says over ~3 is a robot, so this
+       sits just under it on purpose: the loudest syllables break up, the quiet
+       ones do not. That IS a cheap radio.
+     LEVEL 0.62 — under the mix. It is nobody's business but theirs.
+
+   ⚠️ These four are the tuning surface. If it lands too harsh, LP up and GRIT
+   down before touching anything structural — the chain shape is not the knob. */
+const CHAT_HP    = 520;
+const CHAT_LP    = 2300;
+const CHAT_GRIT  = 2.8;
+const CHAT_LEVEL = 0.62;
+
+/* ⛔ THE DUCK IS THE THING THAT WOULD KILL THIS FEATURE, and it is why the
+   number is 0.86 and not BED_DUCK's 0.36. Every voice line today pulls the
+   score and engine back about 9 dB for its whole length, which is correct for
+   six lines an hour that are ABOUT YOU. Nineteen ambient lines on a timer doing
+   the same thing means the music keeps stepping aside for strangers — the
+   fastest possible route to the voices getting switched off. 0.86 is about
+   -1.3 dB: enough for the words to cut, not enough to notice the score move.
+   The SFX bus is not ducked by chatter AT ALL — your own gun going quiet
+   because two dockworkers are talking is indefensible. */
+const CHAT_BED_DUCK = 0.86;
 
 /* Voiced lines that are NOT rows in RUNG_SAY or READY_ROOM. Today that is the
    berth fee, and only its full-price case: the partial and bank-empty variants
@@ -4670,16 +4753,33 @@ function loadVoice(id) {
 /* Play a decoded line and report how long the channel should stay open for it.
    Returns 0 when there is nothing to play, which is the caller's signal to use
    the plain RADIO_HOLD — so one code path covers voiced and unvoiced lines. */
-function playVoice(id) {
+function playVoice(id, chat) {
   if (!audio || !id) return 0;
   const clip = voiceClips.get(id);
   if (!clip) { loadVoice(id); return 0; }  // not here yet — ask, and stay quiet
   const src = audio.ctx.createBufferSource();
   src.buffer = clip.buf;
   const lvl = audio.ctx.createGain(); lvl.gain.value = clip.gain;
-  src.connect(lvl); lvl.connect(audio.voice);
+  /* v120: the class picks the chain. Everything else about playback is
+     identical, which is the point — one path, two timbres. */
+  src.connect(lvl); lvl.connect(chat ? audio.voiceChat : audio.voice);
   src.start(audio.ctx.currentTime + RADIO_DUCK_IN);   // start under the open squelch
+  /* ⛔ CHATTER IS THE ONE VOICE THIS GAME KEEPS A HANDLE ON, and only because it
+     is the one voice that can be INTERRUPTED. playVoice has been fire-and-forget
+     since v117 and stays that way for everything addressed to the player — a
+     rung beat is never cut off by anything. But chatter yields, and yielding
+     silently in the TEXT while the audio carries on talking over the line that
+     preempted it would be worse than not yielding at all. */
+  if (chat) { stopChatVoice(); chatSrc = src; src.onended = () => { if (chatSrc === src) chatSrc = null; }; }
   return clip.buf.duration + VOICE_TAIL;
+}
+
+/* Cut whatever chatter is talking. Safe to call when nothing is. */
+let chatSrc = null;
+function stopChatVoice() {
+  if (!chatSrc) return;
+  try { chatSrc.stop(); } catch (e) { /* already ended — onended may not have run yet */ }
+  chatSrc = null;
 }
 ["keydown", "mousedown", "touchstart"].forEach(ev => addEventListener(ev, initAudio));
 
@@ -8133,7 +8233,51 @@ let msgT = -MSG_GAP;
 /* v117: the 4th slot is a VOICE ID, not a filename and not the text. It rides
    the queue rather than being resolved at say() time, because a line queued on
    the deck may not play for minutes and the clip may not have landed yet. */
-function say(from, text, dur, voice) { msgQ.push([from, text, dur || MSG_DUR, voice || null]); }
+/* ⛔ THE RECORD IS FIVE WIDE NOW: [from, text, dur, voice, chat].
+   v119.3b's bug was that 31 of 32 voice lines could never play, and the reason
+   three green suites had nothing to say about it is that every probe read this
+   record and projected it to [m[0], m[1]] — the two columns that were never
+   broken. m[3] was the empty one. A fifth column is a fifth way for that to
+   happen, so any test touching the queue reads the WHOLE row or it is testing
+   the two fields nobody got wrong. */
+function say(from, text, dur, voice) {
+  /* v120: anything addressed to the player yields NOTHING — it takes the
+     channel, and pending chatter gets out of the way rather than queueing up
+     behind it. See yieldChatter for why this is the safe direction. */
+  yieldChatter();
+  msgQ.push([from, text, dur || MSG_DUR, voice || null, 0]);
+}
+/* v120: crew chatter — a SECOND CLASS of traffic. Same queue, same glass, its
+   own timbre and its own duck, and it loses every argument it is in. */
+function sayChat(from, text, voice) { msgQ.push([from, text, MSG_DUR, voice || null, 1]); }
+
+/* How long a preempted chatter line stays on the glass. Not zero: msgT drives
+   the alpha, so 0 would SNAP the line off mid-word, and the thing arriving is
+   about to open a squelch anyway. 0.3s reads as "he stopped talking because
+   somebody keyed over him", which is what a radio does. */
+const CHAT_YIELD_T = 0.3;
+let msgIsChat = false;           // is the line CURRENTLY on the glass chatter?
+/* Get chatter out of the way of something that matters. Two halves, and the
+   second is the one that is easy to forget: dropping the QUEUED lines is
+   obvious, but a chatter line already talking would otherwise carry on over
+   the top of the rung beat that just preempted it — two voices at once, which
+   is worse than the burying this whole mechanism exists to prevent. */
+function yieldChatter() {
+  for (let i = msgQ.length - 1; i >= 0; i--) if (msgQ[i][4]) msgQ.splice(i, 1);
+  /* ⛔ THE AUDIO CUT IS UNCONDITIONAL AND THE TEXT CUT IS NOT, and tying them
+     together is the bug D4b caught on this suite's first run. The first version
+     stopped the clip only inside the `msgIsChat && msgT > CHAT_YIELD_T` branch,
+     which reads as reasonable and quietly makes a VOICE decision out of a TEXT
+     state. They are two different lifetimes: the subtitle holds for MSG_DUR of
+     game time, the clip runs for however long the man talks. Any clip that
+     outlives its own subtitle — or any path that starts one without the pump —
+     then carries on speaking over the top of the line that just preempted it.
+     Two voices at once is worse than the burying this whole mechanism exists to
+     prevent. If chatter is talking and something addressed to the player has
+     arrived, it stops. Full stop. */
+  stopChatVoice();
+  if (msgIsChat && msgT > CHAT_YIELD_T) msgT = CHAT_YIELD_T;
+}
 /* Split on "|" — the second half lands on the hail's own second row rather
    than inventing a layout. A long line is the norm here, not the exception. */
 function msgRows() { return msgText.split("|"); }
@@ -11498,38 +11642,64 @@ const RUNG_SAY = [
    while you were flying. They play in the ready room now, where the flight
    world is stopped and there is nothing to duck. The objection died with the
    stand-in; the README has been corrected. */
+/* ⭐ v120 — THE FOURTH COLUMN IS WHERE THE LINE PLAYS. `T` means it TRAVELS:
+   it has left the ready room and become traffic on the ship's comms, other
+   employees talking to each other on a channel you happen to be on. No flag
+   means it stays in the room.
+
+   ⭐ HIS IDEA, 17 Aug: "What if we have some of them voice lines come through
+   while the player is flying the ship. Like it is other employees using the
+   comms and chatting back and fourth." Answered as c-chatter on 18 Aug —
+   SPLIT 19 / 7 AS PROPOSED — and it fixes a problem it was not aimed at. He
+   had reported an hour earlier that "the voices sit funny right now without
+   other bodies", and that is a ROOM problem, not an audio one: a human voice
+   from nowhere reads as a fault. ⭐ A RADIO voice from nowhere reads as a
+   radio. Every line that travels stops needing a body to come out of.
+
+   The split follows the groups these were authored in, which is why the seams
+   are clean: the LANES and the COMPANY gripes are about flying and about the
+   firm, and land harder in the lane than in a room you are walking out of.
+   What stays is what is genuinely ABOUT THE ROOM — the four that are about
+   nothing on purpose, the one that is people watching you cross it, and the
+   two that point at a desk you can walk up to.
+
+   ⛔ A NEW LINE DEFAULTS TO STAYING, which is silent. `harness/tests/comms-
+   chatter.js` pins the split at exactly 19/7 and pins both pools by ID, so
+   adding a line and forgetting to classify it fails a suite instead of quietly
+   never being heard — the v119.3b failure mode, one column over. */
+const T = 1;
 const READY_ROOM = [
   // --- the lanes, and what they cost ---
-  ["READY ROOM", "—AND NOBODY RUNS RUBICON AT NIGHT.|NOBODY RUNS IT IN THE DAYTIME EITHER.", "ready-rubicon"],
-  ["READY ROOM", "VERDANT'S SAFE. VERDANT'S REAL SAFE.|JUST REMEMBER WHOSE SKY YOU'RE SAFE IN.", "ready-verdant"],
-  ["READY ROOM", "RUSTHOLLOW PAYS TRIPLE. DON'T ASK FOR WHAT.|DON'T ASK WHO'S ASKING.", "ready-rusthollow"],
-  ["READY ROOM", "KID RAN A FULL LOAD OF ALLOY TO CHARLESTON.|FULL LOAD. CHARLESTON PAYS FLAT, DUMBASS.", "ready-alloy"],
-  ["READY ROOM", "BELT'S GOT ORE ALL RIGHT.|ALSO GOT FOUR HUNDRED ROCKS COMING BACK.", "ready-belt"],
-  ["READY ROOM", "CINDER AIN'T A LANDING. CINDER'S A DARE.", "ready-cinder"],
-  ["READY ROOM", "YOU EVER SEEN SHRINKAGE UP CLOSE?|NO. YOU'D KNOW.", "ready-shrinkage"],
-  ["READY ROOM", "HALF THAT SCRAP WAS SOMEBODY'S SHIP ONCE.|AIN'T A GHOST STORY. IT'S JUST INVENTORY.", "ready-scrap"],
+  ["READY ROOM", "—AND NOBODY RUNS RUBICON AT NIGHT.|NOBODY RUNS IT IN THE DAYTIME EITHER.", "ready-rubicon", T],
+  ["READY ROOM", "VERDANT'S SAFE. VERDANT'S REAL SAFE.|JUST REMEMBER WHOSE SKY YOU'RE SAFE IN.", "ready-verdant", T],
+  ["READY ROOM", "RUSTHOLLOW PAYS TRIPLE. DON'T ASK FOR WHAT.|DON'T ASK WHO'S ASKING.", "ready-rusthollow", T],
+  ["READY ROOM", "KID RAN A FULL LOAD OF ALLOY TO CHARLESTON.|FULL LOAD. CHARLESTON PAYS FLAT, DUMBASS.", "ready-alloy", T],
+  ["READY ROOM", "BELT'S GOT ORE ALL RIGHT.|ALSO GOT FOUR HUNDRED ROCKS COMING BACK.", "ready-belt", T],
+  ["READY ROOM", "CINDER AIN'T A LANDING. CINDER'S A DARE.", "ready-cinder", T],
+  ["READY ROOM", "YOU EVER SEEN SHRINKAGE UP CLOSE?|NO. YOU'D KNOW.", "ready-shrinkage", T],
+  ["READY ROOM", "HALF THAT SCRAP WAS SOMEBODY'S SHIP ONCE.|AIN'T A GHOST STORY. IT'S JUST INVENTORY.", "ready-scrap", T],
   // --- the company ---
-  ["READY ROOM", "THEY DIDN'T CLOSE FLEET COMMAND.|THEY JUST STOPPED GOING.", "ready-fc"],
-  ["READY ROOM", "TWENTY-FIVE TO LEAVE. I DID THE MATH ONCE,|ELEVEN YEARS IN, AND THEN I QUIT DOING MATH.", "ready-math"],
-  ["READY ROOM", "TWENTY-FIVE A LAUNCH. I BREATHE THEIR AIR|AND THEY CHARGE ME FOR THE FUCKING DOOR.", "ready-air"],
-  ["READY ROOM", "THEY GOT A BOAT CALLED TAXMAN AND ONE|CALLED SHRINKAGE. THAT'S A CRY FOR HELP.", "ready-boats"],
-  ["READY ROOM", "ASKED FOR A RAISE. GOT A LANYARD.", "ready-lanyard"],
-  ["READY ROOM", "THIS HULL'S HELD TOGETHER WITH ZIP TIES|AND THEY'RE ASKING WHY IT READS 80 PERCENT.", "ready-ziptie"],
-  ["READY ROOM", "SAFETY SAYS WEAR THE HARNESS.|SAFETY AIN'T NEVER BEEN IN A FUCKING AIRLOCK.", "ready-safety"],
-  ["READY ROOM", "THEY DOCKED ME FOR A CRACKED VISOR.|I CRACKED IT ON THEIR SHIT DOOR FRAME.", "ready-visor"],
-  ["READY ROOM", "GUY IN DISPATCH SAID WORK SMARTER.|GUY IN DISPATCH NEVER MOVED A CRATE.", "ready-smarter"],
+  ["READY ROOM", "THEY DIDN'T CLOSE FLEET COMMAND.|THEY JUST STOPPED GOING.", "ready-fc", T],
+  ["READY ROOM", "TWENTY-FIVE TO LEAVE. I DID THE MATH ONCE,|ELEVEN YEARS IN, AND THEN I QUIT DOING MATH.", "ready-math", T],
+  ["READY ROOM", "TWENTY-FIVE A LAUNCH. I BREATHE THEIR AIR|AND THEY CHARGE ME FOR THE FUCKING DOOR.", "ready-air", T],
+  ["READY ROOM", "THEY GOT A BOAT CALLED TAXMAN AND ONE|CALLED SHRINKAGE. THAT'S A CRY FOR HELP.", "ready-boats", T],
+  ["READY ROOM", "ASKED FOR A RAISE. GOT A LANYARD.", "ready-lanyard", T],
+  ["READY ROOM", "THIS HULL'S HELD TOGETHER WITH ZIP TIES|AND THEY'RE ASKING WHY IT READS 80 PERCENT.", "ready-ziptie", T],
+  ["READY ROOM", "SAFETY SAYS WEAR THE HARNESS.|SAFETY AIN'T NEVER BEEN IN A FUCKING AIRLOCK.", "ready-safety", T],
+  ["READY ROOM", "THEY DOCKED ME FOR A CRACKED VISOR.|I CRACKED IT ON THEIR SHIT DOOR FRAME.", "ready-visor", T],
+  ["READY ROOM", "GUY IN DISPATCH SAID WORK SMARTER.|GUY IN DISPATCH NEVER MOVED A CRATE.", "ready-smarter", T],
   // --- the room itself. Nothing in these three. That is the point of them ---
   ["READY ROOM", "MICROWAVE'S BUSTED. THIRD TIME THIS MONTH.|SOMEBODY KEEPS PUTTING METAL IN IT.", "ready-microwave"],
   ["READY ROOM", "WHOEVER'S LEAVING BOOTS IN MY LOCKER —|I KNOW WHOSE THEY ARE AND I AIN'T SAYING.", "ready-boots"],
   ["READY ROOM", "HE CLOCKED IN, SAT DOWN, CLOCKED OUT.|EIGHT HOURS. BEST SHIFT HE EVER RAN.", "ready-bestshift"],
   ["READY ROOM", "DON'T DRINK THE COFFEE.|I'M NOT EXPLAINING IT. JUST DON'T.", "ready-coffee"],
   // --- seeds. These two are doing structural work and still cost nothing ---
-  ["READY ROOM", "MY COUSIN BOUGHT HIS OWN TRUCK.|STILL PARKS HERE. STILL PAYS THE TWENTY-FIVE.", "ready-cousin"],
+  ["READY ROOM", "MY COUSIN BOUGHT HIS OWN TRUCK.|STILL PARKS HERE. STILL PAYS THE TWENTY-FIVE.", "ready-cousin", T],
   /* ⚠️ These two carry {P}, your callsign, and NOBODY SAYS YOUR CALLSIGN — a
      recording cannot know it. The printed line still shows it; the spoken take
      says "THAT ONE" and "HIM", which is the README's existing rule and the
      reason the spoken wordings there are not word-for-word the table. */
-  ["READY ROOM", "{P}'S STILL FLYING THE COMPANY HULL.|WE'VE ALL BEEN THERE. MOST OF US STILL ARE.", "ready-companyhull"],
+  ["READY ROOM", "{P}'S STILL FLYING THE COMPANY HULL.|WE'VE ALL BEEN THERE. MOST OF US STILL ARE.", "ready-companyhull", T],
   ["READY ROOM", "—YEAH, THAT'S {P}. NEW.|GIVE IT A WEEK.", "ready-new"],
   // --- pointers at the two people you can actually talk to ---
   ["READY ROOM", "PEARL'S BEEN ON THAT DESK SINCE BEFORE I WAS.|ASK HER ABOUT IT. SHE WON'T TELL YOU.", "ready-pearl"],
@@ -11539,16 +11709,34 @@ const READY_ROOM = [
    wallpaper you stop reading — which is the only way this room fails. One
    number to tune, and 0 switches it off. */
 const CHATTER_ODDS = 0.35;
-let lastChatter = -1;            // never the same line twice running
+/* v120: two pools off the one table, built once. The room picker and the comms
+   picker share every line of logic below and differ only in which array they
+   are handed — so the no-repeat rule, the shift-past trick and the voice column
+   cannot drift apart between them. */
+const COMMS_BAND = "OPEN BAND";   // who a travelling line is FROM, on the glass
+const ROOM_LINES = READY_ROOM.filter(r => !r[3]);
+const COMMS_LINES = READY_ROOM.filter(r => r[3]);
+let lastChatter = -1;            // never the same line twice running, in the room
+let lastComms = -1;              // ...and its own counterpart on the comms
+/* Pick from the OTHER n-1 lines and shift past the one just played, rather than
+   re-rolling until it differs. Same distribution, no loop — a retry loop here
+   is one degenerate Math.random() away from hanging the frame. */
+function pickLine(pool, last) {
+  const n = pool.length;
+  if (n < 2) return n === 1 ? 0 : -1;
+  if (last < 0) return (Math.random() * n) | 0;
+  let i = (Math.random() * (n - 1)) | 0;
+  if (i >= last) i++;
+  return i;
+}
 function readyRoomLine() {
-  const n = READY_ROOM.length;
+  const n = ROOM_LINES.length;
   if (Math.random() >= CHATTER_ODDS || n < 2) return false;
   /* Pick from the OTHER n-1 lines and shift past the one just played, rather
      than re-rolling until it differs. Same distribution, no loop — a retry
      loop here is one degenerate Math.random away from hanging the frame. */
-  let i;
-  if (lastChatter < 0) i = (Math.random() * n) | 0;
-  else { i = (Math.random() * (n - 1)) | 0; if (i >= lastChatter) i++; }
+  const i = pickLine(ROOM_LINES, lastChatter);
+  if (i < 0) return false;
   lastChatter = i;
   /* ⛔ [2] IS THE VOICE, AND DROPPING IT IS WHY NOTHING IN HERE EVER SPOKE.
      v119.2c gave all 26 lines ids and wired the PRELOADER to them, so the clips
@@ -11556,7 +11744,52 @@ function readyRoomLine() {
      them. He recorded 25 of them and reported it: "I am still seeing the lines
      I just recorded show up as text." Text was never the tell — the voice plays
      OVER the subtitle by design — silence was. */
-  say(READY_ROOM[i][0], READY_ROOM[i][1], undefined, READY_ROOM[i][2]);
+  say(ROOM_LINES[i][0], ROOM_LINES[i][1], undefined, ROOM_LINES[i][2]);
+  return true;
+}
+
+/* Often enough that the band feels live, rare enough that it never becomes
+   wallpaper — the same tuning question the room's CHATTER_ODDS answers, asked
+   in seconds instead of odds because flight is continuous and a launch is an
+   event. ~105s ± 35 puts about eleven lines in a twenty-minute run and walks
+   the whole 19 in roughly half an hour, so you are unlikely to hear a repeat
+   inside one session. ⛔ Set CHAT_EVERY to 0 to switch the whole feature off —
+   one number, same as the room. */
+const CHAT_EVERY = 105;
+const CHAT_JITTER = 35;
+let chatT = 0;
+function resetChatT() { chatT = CHAT_EVERY + (Math.random() * 2 - 1) * CHAT_JITTER; }
+resetChatT();
+/* ⛔ IT YIELDS, AND THIS IS WHERE THAT IS ACTUALLY ENFORCED — the yieldChatter()
+   in say() handles a beat arriving DURING chatter; these gates handle the far
+   more common case of chatter trying to arrive during something else. A rung
+   beat, a berth receipt, a junker hail or a wingman bark all own the glass and
+   the band while they are on it, and chatter simply waits its turn rather than
+   queueing up behind them and firing into the gap the moment they finish.
+   ⚠️ The timer is NOT reset when a gate blocks it, on purpose: a line held off
+   by a dogfight should land shortly after the dogfight, not a full period
+   later. It only re-arms when one actually plays. */
+function commsChatterTick(dt) {
+  if (!CHAT_EVERY || landedOn) return;
+  chatT -= dt;
+  if (chatT > 0) return;
+  if (msgQ.length || msgT > -MSG_GAP || hailTarget) return;   // the channel is busy — hold
+  if (commsChatterLine()) resetChatT();
+}
+
+/* ⭐ v120: the same line, on the radio, while you fly. `sayChat` rather than
+   `say` is the entire difference at this level — the thin chain, the shallow
+   duck and the yielding all hang off that one call. */
+function commsChatterLine() {
+  const i = pickLine(COMMS_LINES, lastComms);
+  if (i < 0) return false;
+  lastComms = i;
+  /* ⛔ THE SENDER IS NOT "READY ROOM" ANY MORE, and leaving it would have been
+     the quiet bug in this whole feature: you are three worlds out with the
+     label of a room you left telling you where the voice is from. It is a band
+     you are sharing, so it says so. The table keeps its own [0] because the 7
+     that stayed behind really are in the ready room. */
+  sayChat(COMMS_BAND, COMMS_LINES[i][1], COMMS_LINES[i][2]);
   return true;
 }
 
@@ -12767,7 +13000,15 @@ function chargeLaunchFee(b) {
 function leavePad(b) {
   if (!atHomePad(b)) return;      // Charleston is the only yard with a break room
   chargeLaunchFee(b);             // rung-gated inside
-  readyRoomLine();                // never gated
+  /* ⛔ v120 DELETED THE readyRoomLine() THAT USED TO SIT HERE, and it is a
+     deliberate un-doing of v115 rather than a tidy-up. That call played a
+     ready-room line at the moment you LAUNCHED, on the fiction that you had
+     overheard it on the way out — a stand-in written when the yard was not
+     walkable and said so in its own header. The yard is walkable (v119), the 7
+     room lines play in the room they are about, and the other 19 are now live
+     traffic on a band you are on, which is a better fiction than a memory you
+     are having at 200 u/s. Nothing replaces it here; commsChatterLine runs on
+     its own clock in the flight loop. */
 }
 const GEAR_HEIGHT = 4;         // the ship rests this far above the terrain
 const SURFACE_G = 26;          // gravity at surface level, u/s²
@@ -14648,6 +14889,7 @@ function drawMsgLine(dt, c, W, cx, cy, r) {
     msgFrom = m[0];
     msgText = m[1].replace(/\{P\}/g, pilotName || "FLYER");   // same as the junker hail
     msgT = m[2];
+    msgIsChat = !!m[4];          // v120: which class is on the glass right now
     /* v116: the radio fires HERE, not in say(). say() only queues, and a line
        queued while you are parked waits — sometimes minutes — for you to get
        airborne. Sounding the squelch at the queue would put a transmission on
@@ -14658,7 +14900,11 @@ function drawMsgLine(dt, c, W, cx, cy, r) {
        silent one run the same code and the duck always matches what you hear.
        ⛔ The text hold (msgT) is NOT touched: a line you can hear still has to
        stay readable, and a 1.4s clip must not yank its own subtitle. */
-    radioTransmit(playVoice(m[3]));
+    /* v120: the class rides all the way through — it picks the voice chain
+       (thin and driven vs the full one) AND the duck depth. One call site, so
+       the timbre and the duck can never disagree about what kind of line this
+       is, which is exactly the split that would rot first. */
+    radioTransmit(playVoice(m[3], msgIsChat), msgIsChat);
   }
   if (msgT > 0 && !hailTarget && reaches) {
     const rows = msgRows();
@@ -15707,6 +15953,12 @@ function animate() {
      own camera, its own render, its own HUD — lives inside updateYard, so
      there is no second place for a flight input to leak through. */
   if (yard) { updateYard(dt); return; }
+
+  /* ---- v120: crew chatter on the comms ----
+     Deliberately below the yard gate: inside Charleston Operations the flight
+     world is STOPPED and the 7 room lines have their own clock in updateYard,
+     so a travelling line must never be able to reach you in there. */
+  commsChatterTick(dt);
 
   /* ---- the market ticks (v84, §1.1c) ----
      Deliberately BELOW both gates above: prices don't move at the start screen
