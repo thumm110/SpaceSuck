@@ -93,6 +93,60 @@ those), and **nobody says your callsign**.
 drops it** — `ready-companyhull` and `ready-new` say "that one" and "him" where
 the screen says your name. That is the same rule as the six, applied.
 
+## ⭐ THE WINGMAN — 15 clips, and he is the reason this section exists
+
+**His note, 17 Aug:** *"I still dont have the wingman hailing in the comms wired
+in yet."* Right now you fly close to a neutral, press **[E]**, **150 credits
+leave the bank** — and the man you just bought never says another word for the
+rest of his life. **You pay for a character and get a silent turret.**
+
+⭐ **He is worth more than more ambient chatter, because he is addressed to YOU
+and you paid for him.** He is also the contrast that makes the new two-class
+radio legible: crew chatter sits *under* the mix and yields, **the wingman gets
+the full duck**, same as dispatch and the berth fee.
+
+**Who he is:** a junker. Five minutes ago he was picking scrap out of a field,
+and now he is on your wing because you gave him money. **He is not a soldier** —
+he is a working stiff with a gun, same crowd as the ready room. Play him that
+way and he belongs in this game; play him as a fighter ace and he does not.
+
+⚠️ **Nobody says your callsign — and nobody says HIS either.** His name is
+generated per-NPC (`p.name`), so a clip cannot know it any more than it can know
+yours. Keep both out.
+
+| file | when it fires | say this |
+|---|---|---|
+| `wing-hired1.mp3` | **HIRED** — the 150 just left your bank | "One fifty. Yeah, alright. Where we going?" |
+| `wing-hired2.mp3` | HIRED | "Money's money. I'm on your wing." |
+| `wing-form1.mp3` | **FORMED UP** — he settles onto your wing | "Tucked in on your left. Don't stop quick." |
+| `wing-form2.mp3` | FORMED UP | "I'm on you. Try not to fly like the last one." |
+| `wing-engage1.mp3` | **BREAKING OFF TO FIGHT** — he leaves the wing for a target | "Got him. Breaking." |
+| `wing-engage2.mp3` | ENGAGING | "He's mine. Stay on your line." |
+| `wing-engage3.mp3` | ENGAGING | "Peeling off. Don't follow me in." |
+| `wing-hit1.mp3` | **TAKING FIRE** — his hull is coming apart | "I'm taking rounds! Somebody look at me!" |
+| `wing-hit2.mp3` | TAKING FIRE | "That's my paint! That's my paint!" |
+| `wing-hit3.mp3` | TAKING FIRE | "Hey — hey! I'm hit back here." |
+| `wing-kill1.mp3` | **HE GOT ONE** | "Splash. That's one." |
+| `wing-kill2.mp3` | HE GOT ONE | "He's done. Scrap's yours." |
+| `wing-kill3.mp3` | HE GOT ONE | "Got him. You owe me another fifty." |
+| `wing-down1.mp3` | ⛔ **HE DIES** — the one that matters most | "No— no, I'm hit hard, I'm—" |
+| `wing-down2.mp3` | HE DIES | "Ah, hell. Hell. That's it, that's—" |
+
+⛔ **THE DEATH PAIR IS THE POINT OF THE SET.** He can die — that shipped at v103
+and you flew it — and today he dies to a toast that says WINGMAN DOWN and
+nothing else. **Record these two last and give them the takes.** They should be
+cut off, not finished: a man mid-sentence when the hull goes. If Runway will not
+end a clip abruptly, record it long and it gets trimmed on this end.
+
+⚠️ **The three that repeat most are engage / hit / kill** — those get three
+variants each for that reason. Hired, formed and down are rare, so two each is
+plenty. **If you run out of time, record in table order and stop wherever** —
+every missing clip just falls back to text, exactly as before.
+
+Same two rules as everything above: **clean speech, no radio effects** (the game
+applies the telephone band, the grit and the compressor at runtime), and **no
+callsigns**.
+
 ## Deliberately not voiced
 
 - **Rung 6 is silent.** Five rungs of people talking at you, then the name

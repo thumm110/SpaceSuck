@@ -4725,6 +4725,9 @@ function voiceIds() {
   for (const r of RUNG_SAY) if (r && r[2]) out.push(r[2]);
   for (const r of READY_ROOM) if (r && r[2]) out.push(r[2]);
   for (const id of VOICE_EXTRA) out.push(id);
+  /* v120.1: the wingman's 15. Same preloader as everything else — a clip that
+     has not landed yet just plays as text, so this never blocks flight. */
+  for (const k in WING_SAY) for (const r of WING_SAY[k]) out.push(r[1]);
   return out;
 }
 
@@ -8200,6 +8203,79 @@ const HAIL_LINES = [             // junker chatter — the raider's name goes in
 ];
 let hailTarget = null;           // nearest in-range neutral this frame — the [E] target
 
+/* ============ v120.1: THE WINGMAN SPEAKS ============
+   ⭐ His note, 17 Aug: "I still dont have the wingman hailing in the comms
+   wired in yet." He was right, and it was worse than missing — you fly close
+   to a neutral, press [E], 150 CREDITS LEAVE THE BANK, and the man you just
+   bought never says another word for the rest of his life. The hail pipe has
+   been built since v47 and hiring was the only thing it ever did.
+
+   ⭐ WHY HE IS WORTH MORE THAN MORE AMBIENT CHATTER: he is addressed to YOU,
+   and you paid for him. He is also the contrast that makes v120's two classes
+   legible — crew chatter sits under the mix on its own thin chain and yields,
+   a wingman comes through the front door on the voice chain with the full
+   duck, because he is talking to you and not near you.
+
+   WHO HE IS: a junker. Five minutes ago he was picking scrap out of a field
+   and now he is on your wing because you gave him money. Not a soldier — a
+   working stiff with a gun, the same crowd as the ready room. That is the
+   register these are written in and it is what makes him belong here.
+
+   ⚠️ NOBODY SAYS A NAME. His is generated per-NPC and yours cannot be known by
+   a recording, so neither appears in a line. The GLASS carries his name (it is
+   the message's sender), which is where a callsign belongs anyway. */
+const WING_SAY = {
+  hired: [
+    ["ONE FIFTY. YEAH, ALRIGHT. WHERE WE GOING?", "wing-hired1"],
+    ["MONEY'S MONEY. I'M ON YOUR WING.",          "wing-hired2"],
+  ],
+  form: [
+    ["TUCKED IN ON YOUR LEFT. DON'T STOP QUICK.",   "wing-form1"],
+    ["I'M ON YOU. TRY NOT TO FLY LIKE THE LAST ONE.", "wing-form2"],
+  ],
+  engage: [
+    ["GOT HIM. BREAKING.",              "wing-engage1"],
+    ["HE'S MINE. STAY ON YOUR LINE.",   "wing-engage2"],
+    ["PEELING OFF. DON'T FOLLOW ME IN.", "wing-engage3"],
+  ],
+  hit: [
+    ["I'M TAKING ROUNDS! SOMEBODY LOOK AT ME!", "wing-hit1"],
+    ["THAT'S MY PAINT! THAT'S MY PAINT!",       "wing-hit2"],
+    ["HEY — HEY! I'M HIT BACK HERE.",           "wing-hit3"],
+  ],
+  kill: [
+    ["SPLASH. THAT'S ONE.",              "wing-kill1"],
+    ["HE'S DONE. SCRAP'S YOURS.",        "wing-kill2"],
+    ["GOT HIM. YOU OWE ME ANOTHER FIFTY.", "wing-kill3"],
+  ],
+  down: [
+    ["NO— NO, I'M HIT HARD, I'M—",   "wing-down1"],
+    ["AH, HELL. HELL. THAT'S IT, THAT'S—", "wing-down2"],
+  ],
+};
+/* One wingman line per this many seconds. He is on your wing for the whole
+   flight and every one of these fires off a combat event, so without a gap a
+   single scrap has him narrating each burst — which turns the man you paid for
+   into the wallpaper CHATTER_ODDS exists to stop the ready room becoming. */
+const WING_BARK_GAP = 7;
+let wingBarkT = 0;
+function wingSay(p, kind) {
+  const pool = WING_SAY[kind];
+  if (!pool || !p) return false;
+  /* ⛔ DEATH ALWAYS SPEAKS. It is rare, it is the one that matters, and being
+     swallowed by the gap because he said "got him" four seconds earlier is
+     precisely the wrong line to lose — that is the sequence, and it is the
+     good one. Everything else takes its turn. */
+  if (kind !== "down" && wingBarkT > 0) return false;
+  wingBarkT = WING_BARK_GAP;
+  const r = pool[(Math.random() * pool.length) | 0];
+  /* say(), never sayChat(): he gets the full duck and the voice chain. The
+     sender is his name, so the glass says who is talking while the clip does
+     not have to. */
+  say(p.name, r[0], undefined, r[1]);
+  return true;
+}
+
 /* ============ THE MESSAGE LINE (v114) — the story channel ============
    v47's hail above draws one line over the radar when a neutral is inside
    HAIL_R. That is a PROXIMITY PROMPT bound to a live NPC: no NPC, no channel.
@@ -10222,7 +10298,12 @@ function pirateProvoke(p) {
   pirateWarnSound();
 }
 
-function pirateDamage(p, at, boltVel) {
+/* v120.1: `byAlly` is the wingman whose bolt this is, or null for yours. It is
+   threaded rather than stashed in a module-level "last shooter" because the
+   kill path runs pirateDestroy → junkRespawn ×44 in some cases, and anything
+   left lying in a shared slot across that is the scratch-vector trap wearing a
+   different hat. */
+function pirateDamage(p, at, boltVel, byAlly) {
   if (p.faction === "neutral") pirateProvoke(p);
   const dist = shipObj.position.distanceTo(p.group.position);
   if (--p.hp > 0) {
@@ -10234,7 +10315,7 @@ function pirateDamage(p, at, boltVel) {
        flinch. BREAK is a hostile state (it is the extend off a firing pass,
        the player's window) and dropping him into it would leave him running an
        attack rhythm against nothing. He is yours; he stays on the job. */
-    if (p.faction === "ally") return;
+    if (p.faction === "ally") { wingSay(p, "hit"); return; }
     // getting shot makes it flinch: break off NOW and come back around —
     // reads as a living thing, and gives you a beat to line up the next shot
     pirTmpC.subVectors(shipObj.position, p.group.position).normalize();
@@ -10246,6 +10327,10 @@ function pirateDamage(p, at, boltVel) {
   }
   if (p.faction === "ally") { allyDown(p, dist); return; }
   pirateKill(p, dist);
+  /* ⛔ AFTER pirateKill, not before: it despawns the wreck and pays the scrap,
+     and a bark queued first would sit ahead of a bounty completion on the same
+     channel. He gets the credit for the kill, not the announcement of it. */
+  if (byAlly && byAlly.alive && byAlly.faction === "ally") wingSay(byAlly, "kill");
 }
 
 /* v103: a wingman dies like anything else in the sky — the bang, and nothing
@@ -10255,6 +10340,16 @@ function pirateDamage(p, at, boltVel) {
    into a payday, which is the exact shape of income this project has frozen. */
 function allyDown(p, dist) {
   const who = p.name;
+  /* Spoken before the despawn because that is the clearer order to read, NOT
+     because it is load-bearing — and the difference is worth writing down.
+     The first version of this comment claimed pirateDestroy would tear the
+     name out from under wingSay, the same trap `who` is cached for one line
+     up. Falsification refused it: swapping the two lines changes nothing,
+     because pirateDespawn clears `alive` and hides the group and never touches
+     `name`. A guard against an impossible bug is decoration, so the assertion
+     that used to police this order now polices something real instead — that
+     the bark and the toast name the same pilot. */
+  wingSay(p, "down");
   pirateDestroy(p, dist);
   wingFlash = 3; wingFlashMsg = "✖ WINGMAN DOWN — " + who;
 }
@@ -10388,8 +10483,11 @@ function tryRecruit() {
   p.foe = null;
   p.wingSide = leftTaken ? 1 : -1; // first hire takes the left wing — a vic fills outward
   p.beacon.material.color.setHex(BEACON_ALLY);
+  p.formed = false;              // v120.1: he has not reached the wing yet
   hailTarget = null;
   shopBuySound();
+  wingBarkT = 0;                 // the hire is the first thing he ever says
+  wingSay(p, "hired");
 }
 
 // blasterSound an octave down, faded with range — a pew you duck, not yours
@@ -10658,6 +10756,8 @@ function updateEnemies(dt) {
                shots. He'd routinely fly a whole fight without firing. */
             p.burstLeft = ALLY_BURST; p.fireT = 0.8;
             randUnit(p.aimErr).multiplyScalar(Math.random() * 300 * ALLY_AIM_ERR);
+            wingSay(p, "engage");     // v120.1: he tells you he is leaving the wing
+            p.formed = false;         // ...so coming back says "tucked in" again
           }
           // his flight line IS his firing solution, the same way a bandit's
           // ATTACK is — crude lead, and the gun's own slop does the missing
@@ -10673,6 +10773,12 @@ function updateEnemies(dt) {
           p.wanderPt.copy(shipObj.position).add(pirTmpC);
           shipObj.getWorldDirection(p.faceDir).negate();   // on station he flies YOUR line
           stationKeep(p);
+          /* v120.1: "tucked in" is said when he IS tucked in. Keying it to the
+             FORM state instead would fire the moment he is hired, while he is
+             still a speck closing from 400u — the line would be a lie for four
+             seconds. stationKeep sets `holding` only inside STATION_DEAD of the
+             slot, so this is his own arrival telling us, not a timer. */
+          if (p.holding && !p.formed) { p.formed = true; wingSay(p, "form"); }
         }
       }
     } else if (p.state === "HUNT") {
@@ -10949,7 +11055,7 @@ function updateEnemies(dt) {
         if (b.owner && b.owner.alive && b.owner.faction === "ally") {
           q.grudge = b.owner; q.grudgeT = GRUDGE_T;
         }
-        pirateDamage(q, pirNearPt, b.vel);
+        pirateDamage(q, pirNearPt, b.vel, b.owner);
         break;
       }
     } else if (boltNear(shipObj.position, SHIP_HIT_R, segLen2)) {
@@ -15959,6 +16065,7 @@ function animate() {
      world is STOPPED and the 7 room lines have their own clock in updateYard,
      so a travelling line must never be able to reach you in there. */
   commsChatterTick(dt);
+  if (wingBarkT > 0) wingBarkT -= dt;    // v120.1: the wingman's own bark gap
 
   /* ---- the market ticks (v84, §1.1c) ----
      Deliberately BELOW both gates above: prices don't move at the start screen
