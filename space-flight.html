@@ -4597,20 +4597,37 @@ function radioTransmit(hold, chat) {
     duckNode(audio.sfxDuck, SFX_DUCK, hold);
   }
 
-  squelch(t, true);
-  squelch(t + RADIO_DUCK_IN + hold, false);
+  const end = t + RADIO_DUCK_IN + hold;
+  squelch(t, true);              // the PTT click in — both classes key up alike
 
-  /* The carrier: a narrow band of noise around the telephone band, sitting
-     just above nothing. It is meant to be felt, not heard — if you can name
-     it as "hiss" it is too loud. */
+  /* ⭐ v120.2 — HOW THE CHANNEL CLOSES IS THE OTHER HALF OF WHOSE CHANNEL IT IS.
+     Chatter gets the CB close: the man's thumb comes off the key (a courtesy
+     beep) and the squelch chunks shut behind it. Everything addressed to the
+     player keeps v116's clean tick, because a roger beep on a story beat is
+     comedy. ⚠️ TO PUT BEEPS ON EVERYTHING, make this `if (true)` — the two
+     helpers take a time and nothing else and do not care who is talking. */
+  if (chat) {
+    rogerBeep(end - CHAT_BEEP_LEAD);
+    squelchTail(end);
+  } else {
+    squelch(end, false);
+  }
+
+  /* The carrier. On the clean channel it is meant to be FELT, NOT HEARD — if
+     you can name it as "hiss" it is too loud. ⭐ On the chatter channel that
+     rule is exactly inverted: hiss is the point, because a handheld that is
+     silent between words sounds like a telephone. Louder, lower and WIDER (a
+     lower Q), so it reads as noise rather than as a tone you could hum. */
   const src = ctx.createBufferSource(); src.buffer = audio.noise; src.loop = true;
   const bp = ctx.createBiquadFilter();
-  bp.type = "bandpass"; bp.frequency.value = 1650; bp.Q.value = 1.1;
+  bp.type = "bandpass";
+  bp.frequency.value = chat ? CHAT_STATIC_HZ : 1650;
+  bp.Q.value = chat ? CHAT_STATIC_Q : 1.1;
+  const lvl = chat ? CHAT_STATIC : 0.022;
   const g = ctx.createGain();
-  const end = t + RADIO_DUCK_IN + hold;
   g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(0.022, t + 0.05);
-  g.gain.setValueAtTime(0.022, end - 0.06);
+  g.gain.exponentialRampToValueAtTime(lvl, t + 0.05);
+  g.gain.setValueAtTime(lvl, end - 0.06);
   g.gain.exponentialRampToValueAtTime(0.0001, end);
   src.connect(bp); bp.connect(g); g.connect(audio.radio);
   src.start(t); src.stop(end + 0.02);
@@ -4687,6 +4704,71 @@ const CHAT_LEVEL = 0.62;
    The SFX bus is not ducked by chatter AT ALL — your own gun going quiet
    because two dockworkers are talking is indefensible. */
 const CHAT_BED_DUCK = 0.86;
+
+/* ============ v120.2: THE CB FURNITURE ============
+   ⭐ His verdict after flying v120: "I think the lines that come through the
+   radio are decent. I feel like it could use a little squelch or maybe some
+   beeps and static. Make it more walkie talkie like."
+
+   There WAS already a squelch — v116 built one and it fires on every
+   transmission — so the note is not "add one", it is "that one is too polite
+   for this channel." And it is, on purpose: the v116 carrier's own comment
+   says it is meant to be FELT, NOT HEARD, and the close is 0.03s at 0.11.
+   That is right for a company channel talking to you and wrong for two
+   dockworkers on handhelds, which is the whole distinction v120 introduced.
+
+   ⭐ SO THE FURNITURE SPLITS THE SAME WAY THE TIMBRE DID. Chatter gets the
+   full CB treatment — an audible static bed, a courtesy BEEP when the man lets
+   go of the key, and a proper squelch tail behind it. Dispatch, the berth fee,
+   the hail and the wingman keep v116's clean open-and-close untouched: a roger
+   beep after "they pulled us off that station in a week" would be comedy.
+   ⚠️ One flag flips that if he wants beeps everywhere — see radioTransmit.
+
+   ⭐ AND IT ALL GOES THROUGH THE CHATTER CHAIN, not the raw radio bus like the
+   v116 squelch does. A beep that has not been through the same 520-2300 band
+   and the same grit is a beep sitting ON TOP of the radio instead of coming
+   OUT of it — which is exactly the tell that makes cheap radio SFX sound fake. */
+const CHAT_STATIC   = 0.055;  // carrier level, vs 0.022 for the clean channel.
+const CHAT_STATIC_HZ = 1400;  // and wider (lower Q) so it reads as HISS rather
+const CHAT_STATIC_Q = 0.7;    // than as a tone you can hum.
+const CHAT_BEEP_HZ  = 1480;   // the courtesy tone. Repeater beeps live ~1.2-1.8k.
+const CHAT_BEEP_T   = 0.075;  // short. A long one is a doorbell, not a radio.
+const CHAT_BEEP_LVL = 0.055;
+const CHAT_BEEP_LEAD = 0.12;  // s before the channel closes, so the beep lands in
+                              // the gap VOICE_TAIL already leaves after the words
+const CHAT_TAIL_LVL = 0.2;    // the kerchunk: louder and longer than the polite
+const CHAT_TAIL_T   = 0.09;   // close it replaces (0.11 / 0.03).
+
+/* The courtesy beep — the sound of a thumb coming off the key. */
+function rogerBeep(at) {
+  if (!audio) return;
+  const { ctx } = audio;
+  const o = ctx.createOscillator(); o.type = "triangle";
+  o.frequency.value = CHAT_BEEP_HZ;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(CHAT_BEEP_LVL, at + 0.006);
+  g.gain.setValueAtTime(CHAT_BEEP_LVL, at + CHAT_BEEP_T - 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + CHAT_BEEP_T);
+  o.connect(g); g.connect(audio.voiceChat);
+  o.start(at); o.stop(at + CHAT_BEEP_T + 0.01);
+}
+
+/* The squelch tail. Broadband noise with the low end left IN — the v116 close
+   highpasses at 1500, which is what makes it a tick rather than a chunk. */
+function squelchTail(at) {
+  if (!audio) return;
+  const { ctx } = audio;
+  const src = ctx.createBufferSource(); src.buffer = audio.noise;
+  const hp = ctx.createBiquadFilter();
+  hp.type = "highpass"; hp.frequency.value = 700;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(CHAT_TAIL_LVL, at + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + CHAT_TAIL_T);
+  src.connect(hp); hp.connect(g); g.connect(audio.voiceChat);
+  src.start(at); src.stop(at + CHAT_TAIL_T + 0.02);
+}
 
 /* Voiced lines that are NOT rows in RUNG_SAY or READY_ROOM. Today that is the
    berth fee, and only its full-price case: the partial and bank-empty variants
