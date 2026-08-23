@@ -4838,7 +4838,7 @@ function loadVoice(id) {
 /* Play a decoded line and report how long the channel should stay open for it.
    Returns 0 when there is nothing to play, which is the caller's signal to use
    the plain RADIO_HOLD — so one code path covers voiced and unvoiced lines. */
-function playVoice(id, chat) {
+function playVoice(id, cls) {
   if (!audio || !id) return 0;
   const clip = voiceClips.get(id);
   if (!clip) { loadVoice(id); return 0; }  // not here yet — ask, and stay quiet
@@ -4846,16 +4846,32 @@ function playVoice(id, chat) {
   src.buffer = clip.buf;
   const lvl = audio.ctx.createGain(); lvl.gain.value = clip.gain;
   /* v120: the class picks the chain. Everything else about playback is
-     identical, which is the point — one path, two timbres. */
-  src.connect(lvl); lvl.connect(chat ? audio.voiceChat : audio.voice);
+     identical, which is the point — one path, two timbres.
+     v122: class 2 (room speech) keeps the clean chain but gains a FADE node the
+     yard drives every frame off your distance to the bench. Started at the
+     RIGHT loudness rather than at 1 — a line that begins while you are at the
+     dispatch counter must begin faint, not blast and then duck. */
+  src.connect(lvl);
+  if (cls === 2) {
+    const fade = audio.ctx.createGain();
+    fade.gain.value = yardRoomFade();
+    lvl.connect(fade); fade.connect(audio.voice);
+    stopRoomVoice();                      // two bench conversations at once is nonsense
+    roomVoice = { g: fade, src };
+    src.onended = () => { if (roomVoice && roomVoice.src === src) roomVoice = null; };
+  } else {
+    lvl.connect(cls === 1 ? audio.voiceChat : audio.voice);
+  }
   src.start(audio.ctx.currentTime + RADIO_DUCK_IN);   // start under the open squelch
   /* ⛔ CHATTER IS THE ONE VOICE THIS GAME KEEPS A HANDLE ON, and only because it
      is the one voice that can be INTERRUPTED. playVoice has been fire-and-forget
      since v117 and stays that way for everything addressed to the player — a
      rung beat is never cut off by anything. But chatter yields, and yielding
      silently in the TEXT while the audio carries on talking over the line that
-     preempted it would be worse than not yielding at all. */
-  if (chat) { stopChatVoice(); chatSrc = src; src.onended = () => { if (chatSrc === src) chatSrc = null; }; }
+     preempted it would be worse than not yielding at all. (v122: room speech is
+     the second voice with a handle, for a different reason — its LOUDNESS is
+     live state, and leaving the scene has to be able to shut it up.) */
+  if (cls === 1) { stopChatVoice(); chatSrc = src; src.onended = () => { if (chatSrc === src) chatSrc = null; }; }
   return clip.buf.duration + VOICE_TAIL;
 }
 
@@ -4865,6 +4881,15 @@ function stopChatVoice() {
   if (!chatSrc) return;
   try { chatSrc.stop(); } catch (e) { /* already ended — onended may not have run yet */ }
   chatSrc = null;
+}
+
+/* v122: the one ROOM clip playing, with the fade gain the yard drives.
+   { g, src } or null. Same lifetime discipline as chatSrc. */
+let roomVoice = null;
+function stopRoomVoice() {
+  if (!roomVoice) return;
+  try { roomVoice.src.stop(); } catch (e) { /* already ended */ }
+  roomVoice = null;
 }
 ["keydown", "mousedown", "touchstart"].forEach(ev => addEventListener(ev, initAudio));
 
@@ -8408,6 +8433,15 @@ function say(from, text, dur, voice) {
 /* v120: crew chatter — a SECOND CLASS of traffic. Same queue, same glass, its
    own timbre and its own duck, and it loses every argument it is in. */
 function sayChat(from, text, voice) { msgQ.push([from, text, MSG_DUR, voice || null, 1]); }
+/* v122: ROOM SPEECH — the THIRD class, and the first one that is not radio at
+   all. The 7 ready-room lines are people talking in a room you are standing
+   in, so their loudness is a fact about WHERE YOU ARE STANDING — the yard
+   drives a fade gain on the playing clip every frame (his 17 Aug note: "the
+   voice should almost fade in and out as you get further/closer"). ⛔ Classes
+   0 and 1 are IN YOUR EAR, not in the room, and must never fade — that rule is
+   enforced by construction here: only class 2 ever gets a fade node. No
+   yieldChatter: room lines only play in the yard, chatter only in flight. */
+function sayRoom(from, text, voice) { msgQ.push([from, text, MSG_DUR, voice || null, 2]); }
 
 /* How long a preempted chatter line stays on the glass. Not zero: msgT drives
    the alpha, so 0 would SNAP the line off mid-word, and the thing arriving is
@@ -11932,7 +11966,9 @@ function readyRoomLine() {
      them. He recorded 25 of them and reported it: "I am still seeing the lines
      I just recorded show up as text." Text was never the tell — the voice plays
      OVER the subtitle by design — silence was. */
-  say(ROOM_LINES[i][0], ROOM_LINES[i][1], undefined, ROOM_LINES[i][2]);
+  /* v122: sayRoom, not say — the class is what buys the distance fade, and
+     what keeps this line from ever being mistaken for radio traffic. */
+  sayRoom(ROOM_LINES[i][0], ROOM_LINES[i][1], ROOM_LINES[i][2]);
   return true;
 }
 
@@ -13942,6 +13978,33 @@ const YARD_SKY   = 0x0b1119;
 const YARD_SKYLIGHT = 2.2;
 const YARD_KEYLIGHT = 0.8;
 const YARD_CHAT  = 7.0;    // seconds between rolls of the ready-room chatter
+/* v122: the room-speech falloff. NEAR is a conversation you are part of; FAR
+   is measured off the room itself — bench to the dispatch counter is ~14m, and
+   a bench conversation should be gone before you are standing at Pearl's
+   window. Squared so the last few metres die away rather than clicking off. */
+const ROOM_NEAR  = 2.5;
+const ROOM_FAR   = 13.0;
+/* Where the 7 room lines come FROM: the two crew at the bench, resolved by
+   name off the loaded bodies — never by index, and never a hand-typed point,
+   so re-hooking the shipyard moves the voice with the people. Falls back to
+   the ops-floor centre before the crew finish parsing. */
+function roomAnchor(out) {
+  const a = yardCrew.find(c => c.name === "NPCSpawn_ReadyCrewA");
+  const b = yardCrew.find(c => c.name === "NPCSpawn_ReadyCrewB");
+  if (a && b) return out.addVectors(a.model.position, b.model.position).multiplyScalar(0.5);
+  const C = yardScene && yardScene.userData.contract;
+  if (C && C.ops) return C.ops.getCenter(out);
+  return null;
+}
+const _raV = new THREE.Vector3();
+function yardRoomFade() {
+  if (!yard) return 1;                       // not in the scene — no opinion
+  const a = roomAnchor(_raV);
+  if (!a) return 1;
+  const d = Math.hypot(yard.pos.x - a.x, yard.pos.z - a.z);
+  const v = Math.min(1, Math.max(0, (ROOM_FAR - d) / (ROOM_FAR - ROOM_NEAR)));
+  return v * v;
+}
 
 const YARD_UP = new THREE.Vector3(0, 1, 0);      // flat scene: up is up, forever
 
@@ -14235,6 +14298,35 @@ function loadYardShip(then) {
    your hull because arriving inside either is broken, but a crewman finishing
    his parse half a beat after the cut is a shift change, not a bug. */
 let yardCrew = [];
+
+/* v122: the crew are NOT you — his verdict on v121: "they all look like me and
+   we cant have that." Each role gets its own work gear by retinting the rig's
+   named materials. Every GLTFLoader parse makes its own material instances, so
+   painting one body cannot bleed onto another — or onto the man you steer.
+   The armor is the read-at-a-glance colour; the accents are the chest/trim.
+   ⛔ PlayerHairGreen is HIS streak — every crew member loses it. */
+const CREW_PAINT = {
+  NPCSpawn_Dispatcher:  { armor: 0xd8d3c3, accent: 0x1a6e66, suit: 0x3a4047 }, // Pearl: cream + teal
+  NPCSpawn_Mechanic:    { armor: 0xb35410, accent: 0x2a2d33, suit: 0x23262b }, // safety orange
+  NPCSpawn_CargoWorker: { armor: 0xb9a915, accent: 0x1d1f24, suit: 0x2b2e26 }, // hi-vis yellow
+  NPCSpawn_ReadyCrewA:  { armor: 0x3d5a3a, accent: 0x4a3423, suit: 0x2c3134 }, // worn green
+  NPCSpawn_ReadyCrewB:  { armor: 0x4a5560, accent: 0x6e2f22, suit: 0x33302c }, // slate + rust
+};
+function paintCrew(m, p) {
+  if (!p) return;
+  m.traverse(o => {
+    if (!o.isMesh && !o.isSkinnedMesh) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const mt of mats) {
+      if (!mt || !mt.name) continue;
+      if (mt.name === "PlayerArmorBlue") mt.color.setHex(p.armor);
+      else if (/^PlayerArmor(Red|Orange)/.test(mt.name)) mt.color.setHex(p.accent);
+      else if (mt.name === "PlayerSuitBlue") mt.color.setHex(p.suit);
+      else if (mt.name === "PlayerHairGreen") mt.color.setHex(0x0a0705);
+    }
+  });
+}
+
 function loadYardCrew() {
   const C = yardScene.userData.contract;
   if (!THREE.GLTFLoader || !C.npcs) return;
@@ -14243,8 +14335,10 @@ function loadYardCrew() {
       const m = gltf.scene;
       /* the same dress as the man you steer, for the same reasons — no
          weathering (plating grooves read as damage on a person), same self-lit
-         floor so crew and player agree under the yard's lights */
+         floor so crew and player agree under the yard's lights — then the
+         role paint OVER the dress, so the dress can never wash it back out */
       dressHullMats(m, { floor: FOOT_FLOOR, weather: false });
+      paintCrew(m, CREW_PAINT[n.name]);
       m.traverse(o => { if (o.isSkinnedMesh || o.isMesh) o.frustumCulled = false; });
       /* feet on the contract's floor, not on the hook's authored height — the
          ship's rule at loadYardShip, one scale down */
@@ -14474,6 +14568,10 @@ function enterYard(from) {
 function leaveYard() {
   if (!yard) return;
   yard = null;
+  /* v122: a bench conversation does not follow you into the cockpit. Same
+     reason yieldChatter cuts the AUDIO unconditionally — the clip's life and
+     the scene's life are different clocks, and the hard cut ends the scene. */
+  stopRoomVoice();
   /* The character goes back to the flight scene rather than being dropped, so
      the next door you open is instant instead of a 2.1 MB reload. He is
      invisible out here — v119.3 deleted the deck walk, so there is nowhere in
@@ -14745,6 +14843,10 @@ function updateYard(dt) {
   }
   footGait(y.speed, dt);
   for (const c of yardCrew) c.mixer.update(dt);   // the crew breathe on the player's clock
+  /* v122: the fade IS this line — a playing room clip's loudness tracks where
+     you are standing, every frame, for the clip's whole life. Radio classes
+     never registered a handle here, so they cannot fade by construction. */
+  if (roomVoice) roomVoice.g.gain.value = yardRoomFade();
 
   // ---- triggers ----
   _ydT.copy(y.pos); _ydT.y += YARD_REACH;
@@ -15158,7 +15260,11 @@ function drawMsgLine(dt, c, W, cx, cy, r) {
     msgFrom = m[0];
     msgText = m[1].replace(/\{P\}/g, pilotName || "FLYER");   // same as the junker hail
     msgT = m[2];
-    msgIsChat = !!m[4];          // v120: which class is on the glass right now
+    /* ⛔ === 1, NOT !!. v122 added class 2 (room speech); a truthiness read
+       would hand the bench conversation the CB beep, the thin chain and the
+       chatter yield — everything that says "this is radio", on the one class
+       that is defined by not being radio. */
+    msgIsChat = m[4] === 1;      // v120: which class is on the glass right now
     /* v116: the radio fires HERE, not in say(). say() only queues, and a line
        queued while you are parked waits — sometimes minutes — for you to get
        airborne. Sounding the squelch at the queue would put a transmission on
@@ -15173,7 +15279,7 @@ function drawMsgLine(dt, c, W, cx, cy, r) {
        (thin and driven vs the full one) AND the duck depth. One call site, so
        the timbre and the duck can never disagree about what kind of line this
        is, which is exactly the split that would rot first. */
-    radioTransmit(playVoice(m[3], msgIsChat), msgIsChat);
+    radioTransmit(playVoice(m[3], m[4]), msgIsChat);   // raw class in, chat bool out
   }
   if (msgT > 0 && !hailTarget && reaches) {
     const rows = msgRows();
