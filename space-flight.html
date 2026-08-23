@@ -14011,7 +14011,7 @@ const YARD_UP = new THREE.Vector3(0, 1, 0);      // flat scene: up is up, foreve
 let yard = null;            // null = not in here. The mode flag AND the state.
 let yardScene = null, yardCam = null, yardShip = null;
 /* the parked hull's solid, built once when it loads — see yardSolids() */
-let yardShipBox = null;
+let yardShipBoxes = [];    // v123: THREE slabs along the hull, not one box
 let yardLoading = false;
 /* ⭐ THE [A] EDGE FLAG FOR WHILE YOU ARE ON YOUR FEET, and it is module-level
    for the reason padL3Held is: the press that carries you OUT of here (hold [A]
@@ -14124,9 +14124,9 @@ function loadYard(then) {
          went wrong with that. The visible one: you walked in and your own hull
          materialised in front of you a second later. The one that actually
          mattered: the arrival spawn now BACKS OFF UNTIL THE CAMERA HAS ROOM
-         (see enterYard), and it measures that against `yardShipBox` — which was
-         still null on the first visit, the only visit where the standoff is
-         decided. It is a parse, not a fetch: the same .glb is already cached
+         (see enterYard), and it measures that against the ship's solid slabs
+         (`yardShipBoxes`) — which were still empty on the first visit, the
+         only visit where the standoff is decided. It is a parse, not a fetch: the same .glb is already cached
          from flight. */
       buildYard(art.scene, rt.scene, () => {
         yardLoading = false;
@@ -14277,7 +14277,32 @@ function loadYardShip(then) {
        pose and the lift, because all three move it. One AABB, which is the same
        shape as the 41 the contract ships and coarse in the same way. */
     m.updateMatrixWorld(true);
-    yardShipBox = new THREE.Box3().setFromObject(m);
+    /* v123: THREE SLABS, NOT ONE BOX — his flag: "the ship hull collision is
+       way too big. I can not get close to the ship like I would want to."
+       One AABB over a tapered hull walls off its empty corners — the nose
+       third of USS THUMM is roughly half the beam of the mid, so the old box
+       held you a body-length off the actual metal at the bow quarters. Slice
+       the stood hull into thirds along its length and box each third from the
+       meshes that actually live there (a wing feeds the mid slab, not the
+       nose). Same coarse grammar as the contract's 44 blockers — just three
+       of them instead of one. Built AFTER the scale, the gear pose and the
+       lift, same as the old box, because all three move the metal. */
+    const full = new THREE.Box3().setFromObject(m);
+    const seg = (full.max.z - full.min.z) / 3;
+    const slabs = [new THREE.Box3(), new THREE.Box3(), new THREE.Box3()];
+    const _mb = new THREE.Box3();
+    m.traverse(o => {
+      if (!o.isMesh) return;
+      _mb.setFromObject(o);
+      for (let s = 0; s < 3; s++) {
+        const lo = full.min.z + s * seg, hi = lo + seg;
+        if (_mb.max.z < lo || _mb.min.z > hi) continue;
+        const c = _mb.clone();
+        c.min.z = Math.max(c.min.z, lo); c.max.z = Math.min(c.max.z, hi);
+        slabs[s].union(c);
+      }
+    });
+    yardShipBoxes = slabs.filter(s => !s.isEmpty());
     if (then) then();
   }, undefined, () => { if (then) then(); });
 }
@@ -14659,8 +14684,8 @@ const yardSolids = () => {
   const C = yardScene.userData.contract;
   /* the crew ride beside the contract for the same reason the hull does: they
      are loaded at runtime and the contract arrays are a frozen census */
-  if (!yardShipBox && !yardCrew.length) return C.blocks;
-  const s = yardShipBox ? C.blocks.concat(yardShipBox) : C.blocks.slice();
+  if (!yardShipBoxes.length && !yardCrew.length) return C.blocks;
+  const s = C.blocks.concat(yardShipBoxes);
   for (const c of yardCrew) s.push(c.box);
   return s;
 };
