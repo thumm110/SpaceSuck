@@ -13860,8 +13860,10 @@ function footPlay(key) {
    constitutional, and this is the most literal elsewhere the game has.
 
    ⚠️ WHAT THE ART DOES NOT CONTAIN — checked in the file, not assumed:
-     · NO PEOPLE. Three NPCSpawn_ empties and nothing standing on them. Pearl
-       and Dutch are voices behind counters, which the counters support.
+     · NO PEOPLE IN THE FILE — five NPCSpawn_ empties (dispatch, maintenance,
+       cargo, and since v121 two ready-room crew). The BODIES standing on them
+       are loaded by us: see loadYardCrew, which is where "the voices sit funny
+       without other bodies" got answered.
      · NO SHIP. A ShipPark empty, so the hull below is loaded and placed by us
        — and it is YOUR hull, not a prop, so the pad shows what you actually fly.
      · NO LIGHTS OF ANY KIND. 25 dark PBR materials and five *Glow emissives
@@ -14130,12 +14132,26 @@ function buildYard(art, rt, then) {
      "am I indoors" — which is what the ready room's chatter keys on. Resolved
      BY NAME off the contract rather than by an X/Z box written down here. */
   const ops = walk.find(o => o.name === "WALK_OperationsFloor");
+  /* ⭐ v121: THE CREW HOOKS, harvested at last — the asset shipped NPCSpawn_
+     empties at v119 and the loader ignored them for six versions. Position AND
+     yaw: the shipyard authors each spawn facing something (Pearl faces her
+     counter, the ready crew face each other across the bench), and an empty's
+     rotation is the only place that intent survives the export. Yaw 0 faces
+     -Z here, which is the exporter's +Y route direction — same convention the
+     man you steer uses in updateYard. */
+  const npcs = [];
+  art.traverse(o => {
+    if (o.isMesh || !/^NPCSpawn_/.test(o.name)) return;
+    const e = new THREE.Euler().setFromQuaternion(o.getWorldQuaternion(new THREE.Quaternion()), "YXZ");
+    npcs.push({ name: o.name, pos: o.getWorldPosition(new THREE.Vector3()), yaw: e.y });
+  });
   yardScene.userData.contract = {
-    walk, blocks, triggers, nav,
+    walk, blocks, triggers, nav, npcs,
     ops: ops ? new THREE.Box3().setFromObject(ops) : null,
     spawn: hook("PlayerSpawn"), park: hook("ShipPark"), exit: hook("ExitToFlight"),
   };
   loadYardShip(then);
+  loadYardCrew();
 }
 
 /* Your actual hull, on Pad 01. Not a prop: the sign behind it says USS THUMM
@@ -14201,6 +14217,65 @@ function loadYardShip(then) {
     yardShipBox = new THREE.Box3().setFromObject(m);
     if (then) then();
   }, undefined, () => { if (then) then(); });
+}
+
+/* --- the crew (v121): a body on every NPCSpawn_ hook the yard ships. ---
+   "The voices sit funny right now without other bodies" — his note after
+   playing v119.3c, and the c-chatter split answered half of it by moving 19
+   lines onto the flight comms. These are the bodies for what stayed: the
+   ready-room two-handers play between ReadyCrewA and ReadyCrewB, and Pearl and
+   Dutch's counters get a person behind them.
+
+   ⛔ LOADED ONCE PER HOOK, NOT CLONED. This three.js (r128) has no
+   SkeletonUtils, and a naive .clone() of a SkinnedMesh keeps pointing at the
+   ORIGINAL's bones — five men striking the same pose the moment one animates.
+   The fetch is browser-cached, so only the parse repeats.
+
+   Fire-and-forget on purpose, unlike the ship: the door gates on the room and
+   your hull because arriving inside either is broken, but a crewman finishing
+   his parse half a beat after the cut is a shift change, not a bug. */
+let yardCrew = [];
+function loadYardCrew() {
+  const C = yardScene.userData.contract;
+  if (!THREE.GLTFLoader || !C.npcs) return;
+  C.npcs.forEach((n, i) => {
+    new THREE.GLTFLoader().load(FOOT_GLB + ASSET_V, gltf => {
+      const m = gltf.scene;
+      /* the same dress as the man you steer, for the same reasons — no
+         weathering (plating grooves read as damage on a person), same self-lit
+         floor so crew and player agree under the yard's lights */
+      dressHullMats(m, { floor: FOOT_FLOOR, weather: false });
+      m.traverse(o => { if (o.isSkinnedMesh || o.isMesh) o.frustumCulled = false; });
+      /* feet on the contract's floor, not on the hook's authored height — the
+         ship's rule at loadYardShip, one scale down */
+      m.position.copy(n.pos);
+      const g = yardGround(n.pos.x, n.pos.z, n.pos.y);
+      if (g !== null) m.position.y = g;
+      m.rotation.y = n.yaw;
+      const mixer = new THREE.AnimationMixer(m);
+      /* by NAME — the loadFootModel contract: index the animations array and a
+         re-export in a different order swaps idle for walk, tests still green */
+      const idle = gltf.animations.find(c => /Idle/i.test(c.name));
+      if (idle) {
+        const a = mixer.clipAction(idle);
+        /* a deterministic stagger, not Math.random(): five men breathing in
+           lockstep read as mannequins, and a random phase cannot be asserted */
+        a.time = ((i * 0.37) % 1) * idle.duration;
+        a.play();
+      }
+      yardScene.add(m);
+      /* and each one is a SOLID — the hull's mechanism, person-sized: you can
+         talk through a coworker, you cannot walk through him. ⛔ Carried HERE
+         and not pushed into C.blocks: the contract arrays are a census of what
+         the FILE shipped (charleston-ops.js pins blocks at exactly 41), and
+         these five land asynchronously — a census that changes underneath its
+         own reader is a racy assertion factory. yardSolids() concatenates,
+         exactly the way it already does for the hull. */
+      yardCrew.push({ name: n.name, model: m, mixer, box: new THREE.Box3(
+        new THREE.Vector3(m.position.x - 0.35, m.position.y, m.position.z - 0.35),
+        new THREE.Vector3(m.position.x + 0.35, m.position.y + 1.8, m.position.z + 0.35)) });
+    });
+  });
 }
 
 /* [Y] / the door. `enterYard` owns the ONE rule about where this is allowed
@@ -14484,7 +14559,12 @@ function yardPushOut(p, feetY) {
    tests everything else in this scene goes through. */
 const yardSolids = () => {
   const C = yardScene.userData.contract;
-  return yardShipBox ? C.blocks.concat(yardShipBox) : C.blocks;
+  /* the crew ride beside the contract for the same reason the hull does: they
+     are loaded at runtime and the contract arrays are a frozen census */
+  if (!yardShipBox && !yardCrew.length) return C.blocks;
+  const s = yardShipBox ? C.blocks.concat(yardShipBox) : C.blocks.slice();
+  for (const c of yardCrew) s.push(c.box);
+  return s;
 };
 
 /* How far the chase boom may extend before it is inside something. Slab test
@@ -14664,6 +14744,7 @@ function updateYard(dt) {
     footModel.quaternion.setFromRotationMatrix(_ydBasis.makeBasis(_ydBX, _ydBY, _ydBZ));
   }
   footGait(y.speed, dt);
+  for (const c of yardCrew) c.mixer.update(dt);   // the crew breathe on the player's clock
 
   // ---- triggers ----
   _ydT.copy(y.pos); _ydT.y += YARD_REACH;
