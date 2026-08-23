@@ -4505,6 +4505,10 @@ function initAudio() {
   if (window.SpaceMusic) {
     music = new window.SpaceMusic(ctx, bedDuck);   // v116: the score ducks with the drone
     music.start();
+    /* v124: audio can be born INSIDE the yard — the first keypress of a
+       career that opens on foot. Without this the break room plays the
+       space score until you leave and come back. */
+    if (yard) music.setScene("yard", 0.2);
   }
   applyAudioSettings();   // the saved mixer applies from the first note
 }
@@ -14330,26 +14334,40 @@ let yardCrew = [];
    painting one body cannot bleed onto another — or onto the man you steer.
    The armor is the read-at-a-glance colour; the accents are the chest/trim.
    ⛔ PlayerHairGreen is HIS streak — every crew member loses it. */
+/* v124 widened the paint into a PERSON: hair colour (null = bald, the hair
+   MESHES are hidden), skin tone, and height (a straight scale about the feet).
+   His verdict on the paint alone: "we need to make the people not Tanner look
+   alikes" — same face is survivable at this art level, same hair, same skin
+   and same height are what read as clones. The REAL re-dress (different
+   builds) stays the Blender escalation if this doesn't carry it. */
 const CREW_PAINT = {
-  NPCSpawn_Dispatcher:  { armor: 0xd8d3c3, accent: 0x1a6e66, suit: 0x3a4047 }, // Pearl: cream + teal
-  NPCSpawn_Mechanic:    { armor: 0xb35410, accent: 0x2a2d33, suit: 0x23262b }, // safety orange
-  NPCSpawn_CargoWorker: { armor: 0xb9a915, accent: 0x1d1f24, suit: 0x2b2e26 }, // hi-vis yellow
-  NPCSpawn_ReadyCrewA:  { armor: 0x3d5a3a, accent: 0x4a3423, suit: 0x2c3134 }, // worn green
-  NPCSpawn_ReadyCrewB:  { armor: 0x4a5560, accent: 0x6e2f22, suit: 0x33302c }, // slate + rust
+  NPCSpawn_Dispatcher:  { armor: 0xd8d3c3, accent: 0x1a6e66, suit: 0x3a4047, hair: 0x3a2a18, skin: 0x7a4a2e, h: 0.97 }, // Pearl: cream + teal, brown hair
+  NPCSpawn_Mechanic:    { armor: 0xb35410, accent: 0x2a2d33, suit: 0x23262b, hair: null,     skin: 0x552a16, h: 1.05 }, // safety orange, BALD, tall
+  NPCSpawn_CargoWorker: { armor: 0xb9a915, accent: 0x1d1f24, suit: 0x2b2e26, hair: 0x0d0c0a, skin: 0x3a1c0e, h: 1.01 }, // hi-vis, black hair
+  NPCSpawn_ReadyCrewA:  { armor: 0x3d5a3a, accent: 0x4a3423, suit: 0x2c3134, hair: 0x6b655c, skin: 0x845238, h: 0.94 }, // worn green, grey — the old-timer
+  NPCSpawn_ReadyCrewB:  { armor: 0x4a5560, accent: 0x6e2f22, suit: 0x33302c, hair: 0x4a1f10, skin: 0x7a452a, h: 1.02 }, // slate + rust, auburn
+  NPCSpawn_BreakTable:  { armor: 0x6e5a2e, accent: 0x24303a, suit: 0x2e2a33, hair: 0x1c1712, skin: 0x5c3520, h: 0.99 }, // olive drab, at the table
 };
 function paintCrew(m, p) {
   if (!p) return;
   m.traverse(o => {
     if (!o.isMesh && !o.isSkinnedMesh) return;
     const mats = Array.isArray(o.material) ? o.material : [o.material];
+    /* bald = hide the hair MESH, not paint it — a scalp-coloured wig still
+       reads as a wig. A mesh counts as hair when every material on it is one
+       of the two hair materials. */
+    if (p.hair === null && mats.length &&
+        mats.every(mt => mt && /^PlayerHair/.test(mt.name || ""))) { o.visible = false; return; }
     for (const mt of mats) {
       if (!mt || !mt.name) continue;
       if (mt.name === "PlayerArmorBlue") mt.color.setHex(p.armor);
       else if (/^PlayerArmor(Red|Orange)/.test(mt.name)) mt.color.setHex(p.accent);
       else if (mt.name === "PlayerSuitBlue") mt.color.setHex(p.suit);
-      else if (mt.name === "PlayerHairGreen") mt.color.setHex(0x0a0705);
+      else if (/^PlayerHair/.test(mt.name)) mt.color.setHex(p.hair === null ? 0x0a0705 : p.hair);
+      else if (mt.name === "PlayerSkin") mt.color.setHex(p.skin);
     }
   });
+  if (p.h) m.scale.setScalar(p.h);   // about the feet, so nobody floats
 }
 
 function loadYardCrew() {
@@ -14580,6 +14598,9 @@ function enterYard(from) {
     inside: true,
   };
   if (footModel) { yardScene.add(footModel); footModel.visible = true; }
+  /* v124: the yard has its own music — his ask. The score crossfades to the
+     break-room radio on the way in; leaveYard hands it back. */
+  if (music) music.setScene("yard");
   footNow = null; footNowKey = "";
   footPlay("idle");
   yardCam = yardCam || new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 400);
@@ -14597,6 +14618,7 @@ function leaveYard() {
      reason yieldChatter cuts the AUDIO unconditionally — the clip's life and
      the scene's life are different clocks, and the hard cut ends the scene. */
   stopRoomVoice();
+  if (music) music.setScene("flight");   // v124: back under the space score
   /* The character goes back to the flight scene rather than being dropped, so
      the next door you open is instant instead of a 2.1 MB reload. He is
      invisible out here — v119.3 deleted the deck walk, so there is nowhere in

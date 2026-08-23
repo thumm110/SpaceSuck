@@ -54,13 +54,27 @@ export default class SpaceMusic {
     this.ambientBus.connect(this.master); this.ambientBus.connect(this.reverbSend);
     this.dangerBus.connect(this.master);  this.dangerBus.connect(this.reverbSend);
 
+    /* v124: the YARD bus — on-foot music for Charleston Operations. Same
+       grammar as the danger layer (always running, crossfaded by a gain), but
+       a different world: a break room is small and carpeted where space is
+       vast, so this bus is mostly DRY — only a whisper of the shared reverb,
+       or the coffee machine sounds like it's in a cathedral. */
+    this.yardBus = ctx.createGain(); this.yardBus.gain.value = 0.0;
+    this.yardBus.connect(this.master);
+    this._yardVerb = ctx.createGain(); this._yardVerb.gain.value = 0.12;
+    this.yardBus.connect(this._yardVerb).connect(this.reverbSend);
+
     // A minor palette (open + a touch wistful). Danger adds a tritone (Eb) for menace.
-    this.NOTES = { A2:110.00, C3:130.81, E3:164.81, A3:220.00, C4:261.63,
-                   Eb4:311.13, E4:329.63, A4:440.00, C5:523.25, E5:659.25, A5:880.00 };
+    // The yard vamp borrows the same family — Am7 / Fmaj7 — so walking out the
+    // door back under the score never sounds like a key change.
+    this.NOTES = { F2:87.31, A2:110.00, C3:130.81, E3:164.81, G3:196.00,
+                   A3:220.00, C4:261.63, D4:293.66, Eb4:311.13, E4:329.63,
+                   G4:392.00, A4:440.00, C5:523.25, E5:659.25, A5:880.00 };
     this._started = false;
     this._timers = [];
     this._drones = [];
     this._danger = false;
+    this._scene = 'flight';
   }
 
   /* ----- persistent drone made of detuned oscillators through one filter ----- */
@@ -175,6 +189,100 @@ export default class SpaceMusic {
       this._timers.push(setTimeout(pulse, beat*1000));
     };
     this._timers.push(setTimeout(pulse, 300));
+
+    // --- YARD (v124: always playing, muted until setScene('yard')) ---
+    // Break-room lo-fi: a warm two-chord vamp, a lazy swung beat, sparse keys
+    // and vinyl hiss. Everything at low gain — it's a radio on a shelf, not a
+    // score. Chords alternate Am7 / Fmaj7 every eight slow beats.
+    const yBeat = 60/72;                                  // ~72 BPM, lazy
+    // vinyl bed: looped noise, dark-filtered, barely there
+    const vlen = Math.floor(ctx.sampleRate * 2);
+    const vbuf = ctx.createBuffer(1, vlen, ctx.sampleRate);
+    const vd = vbuf.getChannelData(0);
+    for (let i = 0; i < vlen; i++) vd[i] = (Math.random()*2-1) * (Math.random() < 0.0004 ? 0.9 : 0.05);
+    const vsrc = ctx.createBufferSource(); vsrc.buffer = vbuf; vsrc.loop = true;
+    const vfil = ctx.createBiquadFilter(); vfil.type='lowpass'; vfil.frequency.value=2400;
+    const vg = ctx.createGain(); vg.gain.value = 0.05;
+    vsrc.connect(vfil).connect(vg).connect(this.yardBus); vsrc.start();
+    this._drones.push({filter:vfil, g:vg, lfo:{stop(){}}, oscs:[vsrc]});   // stop() reaches it
+    // the vamp
+    const CHORDS = [[N.A2,N.C3,N.E3,N.G3],[N.F2,N.A2,N.C3,N.E3]];
+    let bar = 0;
+    const vamp = () => {
+      this._pad(CHORDS[bar % 2], yBeat*8);
+      bar++;
+      this._timers.push(setTimeout(vamp, yBeat*8*1000));
+    };
+    this._timers.push(setTimeout(vamp, 200));
+    // the beat: kick on 1 and the swung 3-and, brushy snare on 2 and 4
+    let yStep = 0;
+    const groove = () => {
+      const s = yStep % 4;
+      if (s === 0) this._softKick();
+      if (s === 2) this._timers.push(setTimeout(()=>this._softKick(), yBeat*660)); // swung
+      if (s === 1 || s === 3) this._brush();
+      yStep++;
+      this._timers.push(setTimeout(groove, yBeat*1000));
+    };
+    this._timers.push(setTimeout(groove, 600));
+    // sparse keys: minor-pentatonic noodling with rests
+    const keys=[N.A3,N.C4,N.D4,N.E4,N.G4,N.A4];
+    const noodle=()=>{
+      if (Math.random() < 0.7) this._key(keys[(Math.random()*keys.length)|0]);
+      this._timers.push(setTimeout(noodle, (1.5+Math.random()*3)*1000));
+    };
+    this._timers.push(setTimeout(noodle, 2000));
+  }
+
+  /* ----- yard voices (v124): all deliver into yardBus ----- */
+  _pad(freqs, dur){                       // slow warm chord, triangle cluster
+    const ctx=this.ctx, now=ctx.currentTime;
+    const f=ctx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=900;
+    const g=ctx.createGain(); g.gain.value=0;
+    f.connect(g).connect(this.yardBus);
+    const oscs=[];
+    freqs.forEach(fr=>{ [-4,4].forEach(dt=>{
+      const o=ctx.createOscillator(); o.type='triangle'; o.frequency.value=fr; o.detune.value=dt;
+      o.connect(f); o.start(now); o.stop(now+dur+1.2); oscs.push(o);
+    });});
+    g.gain.setValueAtTime(0, now);
+    g.gain.linearRampToValueAtTime(0.055, now+1.4);
+    g.gain.setValueAtTime(0.055, now+dur-1.2);
+    g.gain.linearRampToValueAtTime(0.0001, now+dur+1.0);
+  }
+  _softKick(){                            // rounder, quieter cousin of _thud
+    const ctx=this.ctx, now=ctx.currentTime;
+    const o=ctx.createOscillator(); o.type='sine';
+    o.frequency.setValueAtTime(58, now); o.frequency.exponentialRampToValueAtTime(40, now+0.09);
+    const g=ctx.createGain(); g.gain.value=0;
+    o.connect(g).connect(this.yardBus);
+    g.gain.setValueAtTime(0, now);
+    g.gain.linearRampToValueAtTime(0.12, now+0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, now+0.20);
+    o.start(now); o.stop(now+0.24);
+  }
+  _brush(){                               // filtered-noise brush, not a crack
+    const ctx=this.ctx, now=ctx.currentTime;
+    const len=Math.floor(ctx.sampleRate*0.09);
+    const buf=ctx.createBuffer(1, len, ctx.sampleRate);
+    const d=buf.getChannelData(0);
+    for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*(1-i/len);
+    const s=ctx.createBufferSource(); s.buffer=buf;
+    const f=ctx.createBiquadFilter(); f.type='bandpass'; f.frequency.value=2600; f.Q.value=0.8;
+    const g=ctx.createGain(); g.gain.value=0.05;
+    s.connect(f).connect(g).connect(this.yardBus);
+    s.start(now);
+  }
+  _key(freq){                             // soft e-piano-ish pluck, longer tail
+    const ctx=this.ctx, now=ctx.currentTime;
+    const o=ctx.createOscillator(); o.type='triangle'; o.frequency.value=freq;
+    const f=ctx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=1150;
+    const g=ctx.createGain(); g.gain.value=0;
+    o.connect(f).connect(g).connect(this.yardBus);
+    g.gain.setValueAtTime(0, now);
+    g.gain.linearRampToValueAtTime(0.07, now+0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, now+0.9);
+    o.start(now); o.stop(now+1.0);
   }
 
   /* THE reactive call. Ramp danger in/out, duck the ambient a little under threat.
@@ -182,6 +290,10 @@ export default class SpaceMusic {
   setDanger(on, fade=2.2){
     if(on===this._danger) return;
     this._danger=on;
+    /* v124: in the yard there are no raiders and no score — record the state
+       for the walk back out, but never ramp the flight buses under the
+       break-room radio. setScene('flight') re-applies whatever is true. */
+    if(this._scene!=='flight') return;
     const t=this.ctx.currentTime, end=t+fade;
     this.dangerBus.gain.cancelScheduledValues(t);
     this.dangerBus.gain.setValueAtTime(this.dangerBus.gain.value, t);
@@ -189,6 +301,27 @@ export default class SpaceMusic {
     this.ambientBus.gain.cancelScheduledValues(t);
     this.ambientBus.gain.setValueAtTime(this.ambientBus.gain.value, t);
     this.ambientBus.gain.linearRampToValueAtTime(on?0.55:1.0, end);
+  }
+
+  /* v124: which WORLD the score plays for. 'flight' is the space bed (plus
+     danger, when set); 'yard' is the on-foot break-room radio. One master,
+     one duck chain — a radio transmission still drops whichever is up. */
+  setScene(scene, fade=1.6){
+    if(scene===this._scene) return;
+    this._scene=scene;
+    const t=this.ctx.currentTime, end=t+fade;
+    const ramp=(node,v)=>{
+      node.gain.cancelScheduledValues(t);
+      node.gain.setValueAtTime(node.gain.value, t);
+      node.gain.linearRampToValueAtTime(v, end);
+    };
+    if(scene==='yard'){
+      ramp(this.yardBus, 1.0); ramp(this.ambientBus, 0.0); ramp(this.dangerBus, 0.0);
+    } else {
+      ramp(this.yardBus, 0.0);
+      ramp(this.ambientBus, this._danger?0.55:1.0);
+      ramp(this.dangerBus, this._danger?1.0:0.0);
+    }
   }
 
   setMasterVolume(v){ this.master.gain.setTargetAtTime(v, this.ctx.currentTime, 0.05); }
@@ -205,6 +338,8 @@ export default class SpaceMusic {
   }
 
   get danger(){ return this._danger; }
+  get scene(){ return this._scene; }
   get ambientLevel(){ return this.ambientBus.gain.value; }
   get dangerLevel(){ return this.dangerBus.gain.value; }
+  get yardLevel(){ return this.yardBus.gain.value; }
 }
