@@ -13974,7 +13974,12 @@ const YARD_CAM_LO = 0.35;  // how far the lens stays off the floor
    would have been Charleston's pad radius written down in the loader. */
 const YARD_ARRIVE_BOOM = 3.2;
 const YARD_ARRIVE_MAX  = 6.0;
-const YARD_SKY   = 0x0b1119;
+/* v125: the horizon-haze colour, matching the SKY_ dome's lowest band — the
+   dome covers every normal sightline, so this only shows in the seam cases
+   (a stale cached glb, a sightline past the dome edge). It was 0x0b1119, and
+   that near-black is most of why the yard read as grey: the scene was lit
+   like an afternoon and backdropped like midnight. */
+const YARD_SKY   = 0xa8bdcc;
 /* The two numbers the whole look hangs on. Tuned by screenshot against the
    shipyard's own renders, because there is no way to reason your way to them:
    the art is authored dark (base albedo 0.05–0.34) on the assumption of lamps
